@@ -110,7 +110,15 @@ class _BaseMiterEstimator:
         p.lambda_l2 = float(self.lambda_l2)
         p.min_gain_to_split = float(self.min_gain_to_split)
         p.max_bin = int(self.max_bin)
-        p.m_mult = int(self.m_mult)
+        if self.preset == "fast":
+            p.m_mult = int(self.m_mult)
+            p.oblique_max_depth = 1
+        elif self.preset == "accurate":
+            p.m_mult = 4 if self.m_mult == 2 else int(self.m_mult)
+            p.oblique_max_depth = -1
+        else:
+            p.m_mult = int(self.m_mult)
+            p.oblique_max_depth = -1
         p.k_proj = int(self.k_proj)
         p.early_stopping_rounds = 0 if self.early_stopping_rounds is None else int(self.early_stopping_rounds)
         p.time_limit = 0.0 if self.time_limit is None else float(self.time_limit)
@@ -158,7 +166,7 @@ class _BaseMiterEstimator:
             valid_ds_inner = ds.transform(X_val)._inner
             y_val_arr = self._encode_targets(y_val, is_fit=False)
 
-        result = _core.fit_axis_booster(
+        result = _core.fit_booster(
             ds._inner,
             self._objective,
             y_arr,

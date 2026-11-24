@@ -27,6 +27,7 @@ class Params:
     max_bin: int
     m_mult: int
     k_proj: int
+    oblique_max_depth: int
     early_stopping_rounds: int
     time_limit: float
     n_jobs: int
@@ -108,6 +109,16 @@ def fit_mixed(
     min_data_per_group: int = 100,
     max_categories: int = 253,
 ) -> Dataset: ...
+def fit_booster(
+    ds: Dataset,
+    objective: Objective,
+    y: NDArray[np.float64],
+    sample_weight: NDArray[np.float64] | None = None,
+    valid_ds: TransformedData | None = None,
+    y_valid: NDArray[np.float64] | None = None,
+    valid_sample_weight: NDArray[np.float64] | None = None,
+    params: Params = ...,
+) -> TrainResult: ...
 def fit_axis_booster(
     ds: Dataset,
     objective: Objective,

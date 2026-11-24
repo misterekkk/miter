@@ -271,12 +271,12 @@ miter::Dataset fit_mixed_py(
 
 using F64Vec = nb::ndarray<const double, nb::ndim<1>, nb::c_contig, nb::device::cpu>;
 
-miter::TrainResult fit_axis_booster_py(const miter::Dataset& ds, miter::Objective obj,
-                                       const F64Vec& y, std::optional<F64Vec> sample_weight,
-                                       const miter::TransformedData* valid_ds,
-                                       std::optional<F64Vec> y_valid,
-                                       std::optional<F64Vec> valid_sample_weight,
-                                       const miter::Params& params) {
+miter::TrainResult fit_booster_py(const miter::Dataset& ds, miter::Objective obj, const F64Vec& y,
+                                  std::optional<F64Vec> sample_weight,
+                                  const miter::TransformedData* valid_ds,
+                                  std::optional<F64Vec> y_valid,
+                                  std::optional<F64Vec> valid_sample_weight,
+                                  const miter::Params& params) {
     const std::span<const double> y_span(y.data(), y.shape(0));
     const std::span<const double> w_span =
         sample_weight ? std::span<const double>(sample_weight->data(), sample_weight->shape(0))
@@ -290,7 +290,19 @@ miter::TrainResult fit_axis_booster_py(const miter::Dataset& ds, miter::Objectiv
             : std::span<const double>{};
 
     nb::gil_scoped_release release;
-    return miter::fit_axis_booster(ds, obj, y_span, w_span, valid_ds, yv_span, wv_span, params);
+    return miter::fit_booster(ds, obj, y_span, w_span, valid_ds, yv_span, wv_span, params);
+}
+
+miter::TrainResult fit_axis_booster_py(const miter::Dataset& ds, miter::Objective obj,
+                                       const F64Vec& y, std::optional<F64Vec> sample_weight,
+                                       const miter::TransformedData* valid_ds,
+                                       std::optional<F64Vec> y_valid,
+                                       std::optional<F64Vec> valid_sample_weight,
+                                       const miter::Params& params) {
+    miter::Params ax = params;
+    ax.m_mult = 0;
+    return fit_booster_py(ds, obj, y, std::move(sample_weight), valid_ds, std::move(y_valid),
+                          std::move(valid_sample_weight), ax);
 }
 
 template <typename FloatT>
@@ -367,6 +379,7 @@ NB_MODULE(_core, m) {
         .def_rw("max_bin", &miter::Params::max_bin)
         .def_rw("m_mult", &miter::Params::m_mult)
         .def_rw("k_proj", &miter::Params::k_proj)
+        .def_rw("oblique_max_depth", &miter::Params::oblique_max_depth)
         .def_rw("early_stopping_rounds", &miter::Params::early_stopping_rounds)
         .def_rw("time_limit", &miter::Params::time_limit)
         .def_rw("n_jobs", &miter::Params::n_jobs)
@@ -497,6 +510,11 @@ NB_MODULE(_core, m) {
     m.def("fit_numeric_f32", &fit_numeric_f32, nb::arg("arr").noconvert(), nb::arg("max_bin") = 255,
           nb::arg("feature_names") = std::vector<std::string>{});
     m.def("fit_mixed", &fit_mixed_py);
+
+    m.def("fit_booster", &fit_booster_py, nb::arg("ds"), nb::arg("objective"), nb::arg("y"),
+          nb::arg("sample_weight") = nb::none(), nb::arg("valid_ds") = nb::none(),
+          nb::arg("y_valid") = nb::none(), nb::arg("valid_sample_weight") = nb::none(),
+          nb::arg("params"));
 
     m.def("fit_axis_booster", &fit_axis_booster_py, nb::arg("ds"), nb::arg("objective"),
           nb::arg("y"), nb::arg("sample_weight") = nb::none(), nb::arg("valid_ds") = nb::none(),
