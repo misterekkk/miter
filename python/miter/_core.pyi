@@ -1,3 +1,5 @@
+from enum import Enum
+
 import numpy as np
 from numpy.typing import NDArray
 
@@ -8,6 +10,46 @@ def openmp_max_threads() -> int: ...
 def lignum_linked() -> bool: ...
 def lignum_smoke_hash(text: str) -> int: ...
 def array_shape(arr: NDArray[np.float64]) -> tuple[int, int]: ...
+
+class Objective(Enum):
+    Regression = ...
+    Binary = ...
+
+class Params:
+    n_estimators: int
+    learning_rate: float
+    num_leaves: int
+    max_depth: int
+    min_data_in_leaf: int
+    min_sum_hessian_in_leaf: float
+    lambda_l2: float
+    min_gain_to_split: float
+    max_bin: int
+    m_mult: int
+    k_proj: int
+    early_stopping_rounds: int
+    time_limit: float
+    n_jobs: int
+    random_state: int
+    def __init__(self) -> None: ...
+
+class Model:
+    miter_version: str
+    objective: Objective
+    init_score: float
+    learning_rate: float
+    n_features: int
+    best_iteration: int
+    params: Params
+    feature_names: list[str]
+    def feature_importances_split(self) -> NDArray[np.uint64]: ...
+    def feature_importances_gain(self) -> NDArray[np.float64]: ...
+
+class TrainResult:
+    model: Model
+    train_loss: list[float]
+    valid_loss: list[float]
+    def final_train_scores(self) -> NDArray[np.float64]: ...
 
 class TransformedData:
     n_rows: int
@@ -66,3 +108,29 @@ def fit_mixed(
     min_data_per_group: int = 100,
     max_categories: int = 253,
 ) -> Dataset: ...
+def fit_axis_booster(
+    ds: Dataset,
+    objective: Objective,
+    y: NDArray[np.float64],
+    sample_weight: NDArray[np.float64] | None = None,
+    valid_ds: TransformedData | None = None,
+    y_valid: NDArray[np.float64] | None = None,
+    valid_sample_weight: NDArray[np.float64] | None = None,
+    params: Params = ...,
+) -> TrainResult: ...
+def predict_raw_f64(
+    model: Model, arr: NDArray[np.float64], num_iteration: int = 0
+) -> NDArray[np.float64]: ...
+def predict_raw_f32(
+    model: Model, arr: NDArray[np.float32], num_iteration: int = 0
+) -> NDArray[np.float64]: ...
+def predict_proba_f64(
+    model: Model, arr: NDArray[np.float64], num_iteration: int = 0
+) -> NDArray[np.float64]: ...
+def predict_proba_f32(
+    model: Model, arr: NDArray[np.float32], num_iteration: int = 0
+) -> NDArray[np.float64]: ...
+def model_to_json(model: Model) -> str: ...
+def model_from_json(json_text: str) -> Model: ...
+def save_model_json(model: Model, path: str) -> None: ...
+def load_model_json(path: str) -> Model: ...

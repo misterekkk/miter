@@ -4,18 +4,24 @@
 #include <cstdint>
 #include <nanobind/nanobind.h>
 #include <nanobind/ndarray.h>
+#include <nanobind/stl/optional.h>
 #include <nanobind/stl/pair.h>
 #include <nanobind/stl/string.h>
 #include <nanobind/stl/string_view.h>
 #include <nanobind/stl/tuple.h>
 #include <nanobind/stl/vector.h>
+#include <optional>
+#include <span>
 #include <stdexcept>
 #include <string>
 #include <tuple>
 #include <utility>
 #include <vector>
 
+#include "core/booster.hpp"
 #include "data/dataset.hpp"
+#include "model/evaluator.hpp"
+#include "model/json_io.hpp"
 
 namespace nb = nanobind;
 
@@ -263,6 +269,70 @@ miter::Dataset fit_mixed_py(
                                      cat_views, cfg);
 }
 
+using F64Vec = nb::ndarray<const double, nb::ndim<1>, nb::c_contig, nb::device::cpu>;
+
+miter::TrainResult fit_axis_booster_py(const miter::Dataset& ds, miter::Objective obj,
+                                       const F64Vec& y, std::optional<F64Vec> sample_weight,
+                                       const miter::TransformedData* valid_ds,
+                                       std::optional<F64Vec> y_valid,
+                                       std::optional<F64Vec> valid_sample_weight,
+                                       const miter::Params& params) {
+    const std::span<const double> y_span(y.data(), y.shape(0));
+    const std::span<const double> w_span =
+        sample_weight ? std::span<const double>(sample_weight->data(), sample_weight->shape(0))
+                      : std::span<const double>{};
+    const std::span<const double> yv_span =
+        y_valid ? std::span<const double>(y_valid->data(), y_valid->shape(0))
+                : std::span<const double>{};
+    const std::span<const double> wv_span =
+        valid_sample_weight
+            ? std::span<const double>(valid_sample_weight->data(), valid_sample_weight->shape(0))
+            : std::span<const double>{};
+
+    nb::gil_scoped_release release;
+    return miter::fit_axis_booster(ds, obj, y_span, w_span, valid_ds, yv_span, wv_span, params);
+}
+
+template <typename FloatT>
+nb::ndarray<nb::numpy, double, nb::ndim<1>>
+predict_raw_py(const miter::Model& model,
+               const nb::ndarray<const FloatT, nb::ndim<2>, nb::device::cpu>& arr,
+               std::size_t num_iteration) {
+    const std::size_t n_rows = arr.shape(0);
+    const std::size_t n_cols = arr.shape(1);
+    if (n_cols != model.n_features) {
+        throw std::invalid_argument("Feature count mismatch in predict");
+    }
+    auto views = views_from_2d(arr);
+    std::vector<double> out(n_rows);
+    {
+        nb::gil_scoped_release release;
+        miter::Evaluator::predict_raw_views(model, n_rows, views, out.data(), num_iteration);
+    }
+    return vec_to_ndarray_1d(std::move(out));
+}
+
+template <typename FloatT>
+nb::ndarray<nb::numpy, double, nb::ndim<2>>
+predict_proba_py(const miter::Model& model,
+                 const nb::ndarray<const FloatT, nb::ndim<2>, nb::device::cpu>& arr,
+                 std::size_t num_iteration) {
+    const std::size_t n_rows = arr.shape(0);
+    const std::size_t n_cols = arr.shape(1);
+    if (n_cols != model.n_features) {
+        throw std::invalid_argument("Feature count mismatch in predict_proba");
+    }
+    auto views = views_from_2d(arr);
+    std::vector<double> raw(n_rows);
+    std::vector<double> proba(n_rows * 2U);
+    {
+        nb::gil_scoped_release release;
+        miter::Evaluator::predict_raw_views(model, n_rows, views, raw.data(), num_iteration);
+        miter::Evaluator::predict_proba_from_raw(raw.data(), n_rows, proba.data());
+    }
+    return vec_to_ndarray_2d(std::move(proba), n_rows, 2U);
+}
+
 } // namespace
 
 NB_MODULE(_core, m) {
@@ -279,6 +349,52 @@ NB_MODULE(_core, m) {
           "Compute a deterministic hash via lignum::catboost_hash.");
     m.def("array_shape", &array_shape, nb::arg("arr").noconvert(),
           "Return (rows, cols) for a 2D float64 NumPy array without copying.");
+
+    nb::enum_<miter::Objective>(m, "Objective")
+        .value("Regression", miter::Objective::Regression)
+        .value("Binary", miter::Objective::Binary);
+
+    nb::class_<miter::Params>(m, "Params")
+        .def(nb::init<>())
+        .def_rw("n_estimators", &miter::Params::n_estimators)
+        .def_rw("learning_rate", &miter::Params::learning_rate)
+        .def_rw("num_leaves", &miter::Params::num_leaves)
+        .def_rw("max_depth", &miter::Params::max_depth)
+        .def_rw("min_data_in_leaf", &miter::Params::min_data_in_leaf)
+        .def_rw("min_sum_hessian_in_leaf", &miter::Params::min_sum_hessian_in_leaf)
+        .def_rw("lambda_l2", &miter::Params::lambda_l2)
+        .def_rw("min_gain_to_split", &miter::Params::min_gain_to_split)
+        .def_rw("max_bin", &miter::Params::max_bin)
+        .def_rw("m_mult", &miter::Params::m_mult)
+        .def_rw("k_proj", &miter::Params::k_proj)
+        .def_rw("early_stopping_rounds", &miter::Params::early_stopping_rounds)
+        .def_rw("time_limit", &miter::Params::time_limit)
+        .def_rw("n_jobs", &miter::Params::n_jobs)
+        .def_rw("random_state", &miter::Params::random_state);
+
+    nb::class_<miter::Model>(m, "Model")
+        .def_ro("miter_version", &miter::Model::miter_version)
+        .def_ro("objective", &miter::Model::objective)
+        .def_ro("init_score", &miter::Model::init_score)
+        .def_ro("learning_rate", &miter::Model::learning_rate)
+        .def_ro("n_features", &miter::Model::n_features)
+        .def_ro("best_iteration", &miter::Model::best_iteration)
+        .def_ro("params", &miter::Model::params)
+        .def_ro("feature_names", &miter::Model::feature_names)
+        .def("feature_importances_split",
+             [](const miter::Model& model) {
+                 return vec_to_ndarray_1d(model.feature_importances_split());
+             })
+        .def("feature_importances_gain", [](const miter::Model& model) {
+            return vec_to_ndarray_1d(model.feature_importances_gain());
+        });
+
+    nb::class_<miter::TrainResult>(m, "TrainResult")
+        .def_ro("model", &miter::TrainResult::model)
+        .def_ro("train_loss", &miter::TrainResult::train_loss)
+        .def_ro("valid_loss", &miter::TrainResult::valid_loss)
+        .def("final_train_scores",
+             [](const miter::TrainResult& tr) { return vec_to_ndarray_1d(tr.final_train_scores); });
 
     nb::class_<miter::TransformedData>(m, "TransformedData")
         .def_ro("n_rows", &miter::TransformedData::n_rows)
@@ -381,4 +497,23 @@ NB_MODULE(_core, m) {
     m.def("fit_numeric_f32", &fit_numeric_f32, nb::arg("arr").noconvert(), nb::arg("max_bin") = 255,
           nb::arg("feature_names") = std::vector<std::string>{});
     m.def("fit_mixed", &fit_mixed_py);
+
+    m.def("fit_axis_booster", &fit_axis_booster_py, nb::arg("ds"), nb::arg("objective"),
+          nb::arg("y"), nb::arg("sample_weight") = nb::none(), nb::arg("valid_ds") = nb::none(),
+          nb::arg("y_valid") = nb::none(), nb::arg("valid_sample_weight") = nb::none(),
+          nb::arg("params"));
+
+    m.def("predict_raw_f64", &predict_raw_py<double>, nb::arg("model"), nb::arg("arr").noconvert(),
+          nb::arg("num_iteration") = 0);
+    m.def("predict_raw_f32", &predict_raw_py<float>, nb::arg("model"), nb::arg("arr").noconvert(),
+          nb::arg("num_iteration") = 0);
+    m.def("predict_proba_f64", &predict_proba_py<double>, nb::arg("model"),
+          nb::arg("arr").noconvert(), nb::arg("num_iteration") = 0);
+    m.def("predict_proba_f32", &predict_proba_py<float>, nb::arg("model"),
+          nb::arg("arr").noconvert(), nb::arg("num_iteration") = 0);
+
+    m.def("model_to_json", &miter::model_to_json, nb::arg("model"));
+    m.def("model_from_json", &miter::model_from_json, nb::arg("json_text"));
+    m.def("save_model_json", &miter::save_model_json, nb::arg("model"), nb::arg("path"));
+    m.def("load_model_json", &miter::load_model_json, nb::arg("path"));
 }
