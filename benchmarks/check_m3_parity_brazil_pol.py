@@ -100,9 +100,10 @@ def run(name: str, method: str, n_seeds: int) -> None:
 
 
 def agg() -> None:
-    from scipy.stats import wilcoxon
     import platform
     import subprocess
+
+    from scipy.stats import wilcoxon
 
     def ver(mod: str) -> str:
         try:
@@ -139,7 +140,7 @@ def agg() -> None:
         out.append("")
         out.append("| fold | seed | miter nRMSE | histree nRMSE | rel diff % | miter trees | histree trees |")
         out.append("|---|---|---|---|---|---|---|")
-        for i, (rm, rh) in enumerate(zip(dm["rows"], dh["rows"])):
+        for i, (rm, rh) in enumerate(zip(dm["rows"], dh["rows"], strict=True)):
             out.append(f"| {rm['fold']} | {rm['seed']} | {rm['nrmse']:.6f} | {rh['nrmse']:.6f} | {rel[i]:+.2f} | {rm['trees']} | {rh['trees']} |")
         out.append("")
         out.append("| stat | miter | histree |")
@@ -168,8 +169,8 @@ def agg() -> None:
             cp = T7_DIR / f"{name}_{f}.json"
             if cp.exists():
                 c = json.loads(cp.read_text())["clean|Q16r_int"]["nrmse"]
-                l = eh[(folds == f) & (seeds == f)][0]
-                out.append(f"| {f} | {c:.6f} | {l:.6f} | {abs(c-l):.3g} |")
+                live = eh[(folds == f) & (seeds == f)][0]
+                out.append(f"| {f} | {c:.6f} | {live:.6f} | {abs(c-live):.3g} |")
         out.append("")
     (Path(__file__).resolve().parent / "results" / "m3_parity_brazil_pol_summary.md").write_text("\n".join(out) + "\n")
     print("\n".join(out))
