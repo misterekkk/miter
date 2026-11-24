@@ -29,16 +29,23 @@ struct Node {
     std::uint32_t right_child = 0;
     std::uint32_t feature = 0;
     std::uint16_t threshold_u16 = 0; // Axis: right iff u >= threshold_u16 (left iff u < threshold)
-    std::int32_t threshold_i32 = 0;  // Oblique (M3)
+    std::int32_t threshold_i32 = 0;  // Oblique (k <= 3): left iff P < threshold_i32
     std::uint32_t oblique_features[3] = {0, 0, 0};
     std::int16_t oblique_weights[3] = {0, 0, 0};
-    std::uint32_t overflow_offset = 0;
-    double leaf_value = 0.0; // Scaled by learning_rate
+    std::uint32_t overflow_offset = 0; // Index into Tree::oblique_overflow when oblique_k > 3
+    double leaf_value = 0.0;           // Scaled by learning_rate
     double split_gain = 0.0;
+};
+
+struct ObliqueOverflow {
+    std::vector<std::uint32_t> features;
+    std::vector<std::int16_t> weights;
+    std::int64_t threshold_i64 = 0;
 };
 
 struct Tree {
     std::vector<Node> nodes;
+    std::vector<ObliqueOverflow> oblique_overflow;
     std::uint32_t n_leaves = 1;
 };
 

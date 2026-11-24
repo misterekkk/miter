@@ -21,6 +21,7 @@ struct Params {
     int max_bin = 255;
     int m_mult = 2;
     int k_proj = 0;
+    int oblique_max_depth = -1;
     int early_stopping_rounds = 50;
     double time_limit = 0.0;
     int n_jobs = -1;
