@@ -10,6 +10,7 @@
 #include "core/histogram.hpp"
 #include "data/dataset.hpp"
 #include "util/aligned_buffer.hpp"
+#include "util/fast_div.hpp"
 
 namespace miter {
 
@@ -44,15 +45,25 @@ struct ObliqueSplitCandidate {
     bool valid = false;
 };
 
+struct ObliqueCandMeta {
+    std::uint32_t fn[3] = {};
+    std::int16_t w[3] = {};
+    std::uint8_t k = 0;
+    std::uint8_t has_nan = 0;
+};
+
 struct ObliqueScratch {
     std::vector<std::uint32_t> eligible_features;
     std::vector<std::uint32_t> eligible_num_indices;
     std::vector<std::uint8_t> num_has_nan;
     std::size_t max_m = 0;
+    std::size_t max_chunks = 0;
 
     AlignedBuffer<std::int32_t> proj_buf;
     AlignedBuffer<HistBin> hists;
+    AlignedBuffer<HistBin> wave_hists;
 
+    std::vector<ObliqueCandMeta> cand_meta;
     std::vector<std::uint8_t> cand_k;
     std::vector<std::uint32_t> cand_num_idx;
     std::vector<std::uint32_t> cand_feat;
@@ -65,8 +76,18 @@ struct ObliqueScratch {
     std::vector<double> cand_g_nan;
     std::vector<double> cand_h_nan;
     std::vector<std::int32_t> cand_c_nan;
+
+    std::vector<std::int32_t> chunk_pmin;
+    std::vector<std::int32_t> chunk_pmax;
+    std::vector<std::int32_t> chunk_valid_cnt;
+    std::vector<double> chunk_g_nan;
+    std::vector<double> chunk_h_nan;
+    std::vector<std::int32_t> chunk_c_nan;
+
     std::vector<std::uint32_t> active_cands;
     std::vector<std::int64_t> active_ranges;
+    std::vector<FastDiv64> active_divs;
+    std::vector<ObliqueSplitCandidate> i64_candidates;
 
     void prepare(const Dataset& ds, const Params& params);
 };
