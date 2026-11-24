@@ -48,8 +48,46 @@ double eval_tree_u16(const Tree& tree, const std::uint16_t* row_codes) noexcept 
         if (node.kind == NodeKind::Leaf) {
             return node.leaf_value;
         }
-        const std::uint16_t u = row_codes[node.feature];
-        const bool go_left = (u == kQ16NanCode) ? node.nan_go_left : (u < node.threshold_u16);
+        bool go_left = false;
+        if (node.kind == NodeKind::Axis) {
+            const std::uint16_t u = row_codes[node.feature];
+            go_left = (u == kQ16NanCode) ? node.nan_go_left : (u < node.threshold_u16);
+        } else {
+            const std::uint8_t k = node.oblique_k;
+            if (k <= 3U) {
+                const std::uint16_t u0 = row_codes[node.oblique_features[0]];
+                const std::uint16_t u1 = row_codes[node.oblique_features[1]];
+                const std::uint16_t u2 =
+                    (k == 3U) ? row_codes[node.oblique_features[2]] : std::uint16_t{0};
+                if (u0 == kQ16NanCode || u1 == kQ16NanCode || (k == 3U && u2 == kQ16NanCode)) {
+                    go_left = node.nan_go_left;
+                } else {
+                    const std::int32_t c0 = Q16Quantizer::to_signed_code(u0);
+                    const std::int32_t c1 = Q16Quantizer::to_signed_code(u1);
+                    const std::int32_t c2 =
+                        (k == 3U) ? static_cast<std::int32_t>(Q16Quantizer::to_signed_code(u2)) : 0;
+                    const std::int32_t p32 =
+                        static_cast<std::int32_t>(node.oblique_weights[0]) * c0 +
+                        static_cast<std::int32_t>(node.oblique_weights[1]) * c1 +
+                        static_cast<std::int32_t>(node.oblique_weights[2]) * c2;
+                    go_left = (p32 < node.threshold_i32);
+                }
+            } else {
+                const auto& ov = tree.oblique_overflow[node.overflow_offset];
+                std::int64_t acc = 0;
+                bool missing = false;
+                for (std::uint8_t q = 0; q < k; ++q) {
+                    const std::uint16_t u = row_codes[ov.features[q]];
+                    if (u == kQ16NanCode) {
+                        missing = true;
+                        break;
+                    }
+                    acc += static_cast<std::int64_t>(ov.weights[q]) *
+                           static_cast<std::int64_t>(Q16Quantizer::to_signed_code(u));
+                }
+                go_left = missing ? node.nan_go_left : (acc < ov.threshold_i64);
+            }
+        }
         nid = go_left ? node.left_child : node.right_child;
     }
 }
@@ -60,16 +98,26 @@ std::vector<std::uint64_t> Model::feature_importances_split() const {
     std::vector<std::uint64_t> counts(n_features, 0U);
     const std::size_t n_trees = std::min(best_iteration, trees.size());
     for (std::size_t t = 0; t < n_trees; ++t) {
-        for (const Node& node : trees[t].nodes) {
+        const auto& tree = trees[t];
+        for (const Node& node : tree.nodes) {
             if (node.kind == NodeKind::Axis || node.kind == NodeKind::Categorical) {
                 if (node.feature < n_features) {
                     counts[node.feature] += 1U;
                 }
             } else if (node.kind == NodeKind::Oblique) {
-                const std::size_t k = std::min<std::size_t>(node.oblique_k, 3U);
-                for (std::size_t q = 0; q < k; ++q) {
-                    if (node.oblique_features[q] < n_features) {
-                        counts[node.oblique_features[q]] += 1U;
+                const std::uint8_t k = node.oblique_k;
+                if (k <= 3U) {
+                    for (std::uint8_t q = 0; q < k; ++q) {
+                        if (node.oblique_features[q] < n_features) {
+                            counts[node.oblique_features[q]] += 1U;
+                        }
+                    }
+                } else {
+                    const auto& ov = tree.oblique_overflow[node.overflow_offset];
+                    for (const std::uint32_t f : ov.features) {
+                        if (f < n_features) {
+                            counts[f] += 1U;
+                        }
                     }
                 }
             }
@@ -82,16 +130,26 @@ std::vector<double> Model::feature_importances_gain() const {
     std::vector<double> gains(n_features, 0.0);
     const std::size_t n_trees = std::min(best_iteration, trees.size());
     for (std::size_t t = 0; t < n_trees; ++t) {
-        for (const Node& node : trees[t].nodes) {
+        const auto& tree = trees[t];
+        for (const Node& node : tree.nodes) {
             if (node.kind == NodeKind::Axis || node.kind == NodeKind::Categorical) {
                 if (node.feature < n_features) {
                     gains[node.feature] += node.split_gain;
                 }
             } else if (node.kind == NodeKind::Oblique) {
-                const std::size_t k = std::min<std::size_t>(node.oblique_k, 3U);
-                for (std::size_t q = 0; q < k; ++q) {
-                    if (node.oblique_features[q] < n_features) {
-                        gains[node.oblique_features[q]] += node.split_gain;
+                const std::uint8_t k = node.oblique_k;
+                if (k <= 3U) {
+                    for (std::uint8_t q = 0; q < k; ++q) {
+                        if (node.oblique_features[q] < n_features) {
+                            gains[node.oblique_features[q]] += node.split_gain;
+                        }
+                    }
+                } else {
+                    const auto& ov = tree.oblique_overflow[node.overflow_offset];
+                    for (const std::uint32_t f : ov.features) {
+                        if (f < n_features) {
+                            gains[f] += node.split_gain;
+                        }
                     }
                 }
             }
@@ -204,9 +262,45 @@ void Evaluator::add_tree_predictions_from_codes(const Tree& tree,
                 scores[i] += node.leaf_value;
                 break;
             }
-            const std::size_t num_idx = feature_to_num_idx[node.feature];
-            const std::uint16_t u = Q16Quantizer::to_unsigned_code(row[num_idx]);
-            const bool go_left = (u == kQ16NanCode) ? node.nan_go_left : (u < node.threshold_u16);
+            bool go_left = false;
+            if (node.kind == NodeKind::Axis) {
+                const std::size_t num_idx = feature_to_num_idx[node.feature];
+                const std::uint16_t u = Q16Quantizer::to_unsigned_code(row[num_idx]);
+                go_left = (u == kQ16NanCode) ? node.nan_go_left : (u < node.threshold_u16);
+            } else {
+                const std::uint8_t k = node.oblique_k;
+                if (k <= 3U) {
+                    const std::int16_t c0 = row[feature_to_num_idx[node.oblique_features[0]]];
+                    const std::int16_t c1 = row[feature_to_num_idx[node.oblique_features[1]]];
+                    const std::int16_t c2 = (k == 3U)
+                                                ? row[feature_to_num_idx[node.oblique_features[2]]]
+                                                : static_cast<std::int16_t>(0);
+                    if (c0 == kQ16SignedNanCode || c1 == kQ16SignedNanCode ||
+                        (k == 3U && c2 == kQ16SignedNanCode)) {
+                        go_left = node.nan_go_left;
+                    } else {
+                        const std::int32_t p32 =
+                            static_cast<std::int32_t>(node.oblique_weights[0]) * c0 +
+                            static_cast<std::int32_t>(node.oblique_weights[1]) * c1 +
+                            static_cast<std::int32_t>(node.oblique_weights[2]) * c2;
+                        go_left = (p32 < node.threshold_i32);
+                    }
+                } else {
+                    const auto& ov = tree.oblique_overflow[node.overflow_offset];
+                    std::int64_t acc = 0;
+                    bool missing = false;
+                    for (std::uint8_t q = 0; q < k; ++q) {
+                        const std::int16_t c = row[feature_to_num_idx[ov.features[q]]];
+                        if (c == kQ16SignedNanCode) {
+                            missing = true;
+                            break;
+                        }
+                        acc +=
+                            static_cast<std::int64_t>(ov.weights[q]) * static_cast<std::int64_t>(c);
+                    }
+                    go_left = missing ? node.nan_go_left : (acc < ov.threshold_i64);
+                }
+            }
             nid = go_left ? node.left_child : node.right_child;
         }
     }

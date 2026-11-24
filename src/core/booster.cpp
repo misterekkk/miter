@@ -42,18 +42,24 @@ void validate_params(const Params& params) {
     if (params.max_bin < 2 || params.max_bin > 255) {
         throw std::invalid_argument("max_bin must be in [2, 255]");
     }
+    if (params.m_mult < 0) {
+        throw std::invalid_argument("m_mult must be >= 0");
+    }
+    if (params.k_proj != 0 && (params.k_proj < 2 || params.k_proj > 8)) {
+        throw std::invalid_argument("k_proj must be 0 or in [2, 8]");
+    }
 }
 
 } // namespace
 
-TrainResult fit_axis_booster(const Dataset& ds, Objective objective, std::span<const double> y,
-                             std::span<const double> sample_weight, const TransformedData* valid_ds,
-                             std::span<const double> y_valid,
-                             std::span<const double> valid_sample_weight, const Params& params) {
+TrainResult fit_booster(const Dataset& ds, Objective objective, std::span<const double> y,
+                        std::span<const double> sample_weight, const TransformedData* valid_ds,
+                        std::span<const double> y_valid,
+                        std::span<const double> valid_sample_weight, const Params& params) {
     validate_params(params);
     if (ds.n_cat_features() > 0U) {
         throw std::invalid_argument(
-            "M2 axis booster supports numeric features only (categorical splits come in M4)");
+            "M3 booster supports numeric features only (categorical splits come in M4)");
     }
     if (y.size() != ds.n_rows()) {
         throw std::invalid_argument("Target array y length must match dataset n_rows");
@@ -102,7 +108,7 @@ TrainResult fit_axis_booster(const Dataset& ds, Objective objective, std::span<c
     std::vector<float> h(n);
 
     TreeWorkspace ws;
-    ws.prepare(ds, params.num_leaves);
+    ws.prepare(ds, params);
 
     TrainResult result;
     result.train_loss.reserve(static_cast<std::size_t>(params.n_estimators));
@@ -126,7 +132,8 @@ TrainResult fit_axis_booster(const Dataset& ds, Objective objective, std::span<c
         }
 
         compute_gradients(objective, scores, y, sample_weight, g.data(), h.data());
-        Tree tree = grow_axis_tree(ds, g.data(), h.data(), params, ws, scores.data());
+        Tree tree = grow_tree(ds, g.data(), h.data(), params, static_cast<std::size_t>(t), ws,
+                              scores.data());
         model.trees.push_back(std::move(tree));
 
         result.train_loss.push_back(compute_loss(objective, scores, y, sample_weight));
@@ -163,6 +170,15 @@ TrainResult fit_axis_booster(const Dataset& ds, Objective objective, std::span<c
     result.model = std::move(model);
     result.final_train_scores = std::move(scores);
     return result;
+}
+
+TrainResult fit_axis_booster(const Dataset& ds, Objective objective, std::span<const double> y,
+                             std::span<const double> sample_weight, const TransformedData* valid_ds,
+                             std::span<const double> y_valid,
+                             std::span<const double> valid_sample_weight, const Params& params) {
+    Params ax = params;
+    ax.m_mult = 0;
+    return fit_booster(ds, objective, y, sample_weight, valid_ds, y_valid, valid_sample_weight, ax);
 }
 
 } // namespace miter

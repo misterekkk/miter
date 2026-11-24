@@ -76,6 +76,7 @@ add_library(miter STATIC
     src/core/booster.cpp
     src/core/histogram.cpp
     src/core/objective.cpp
+    src/core/oblique.cpp
     src/core/tree_learner.cpp
     src/data/axis_binner.cpp
     src/data/cat_encoder.cpp

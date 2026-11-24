@@ -17,6 +17,11 @@ struct TrainResult {
     std::vector<double> final_train_scores;
 };
 
+TrainResult fit_booster(const Dataset& ds, Objective objective, std::span<const double> y,
+                        std::span<const double> sample_weight, const TransformedData* valid_ds,
+                        std::span<const double> y_valid,
+                        std::span<const double> valid_sample_weight, const Params& params);
+
 TrainResult fit_axis_booster(const Dataset& ds, Objective objective, std::span<const double> y,
                              std::span<const double> sample_weight, const TransformedData* valid_ds,
                              std::span<const double> y_valid,

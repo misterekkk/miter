@@ -441,6 +441,7 @@ std::string model_to_json(const Model& model) {
        << ", \"min_gain_to_split\": " << model.params.min_gain_to_split
        << ", \"max_bin\": " << model.params.max_bin << ", \"m_mult\": " << model.params.m_mult
        << ", \"k_proj\": " << model.params.k_proj
+       << ", \"oblique_max_depth\": " << model.params.oblique_max_depth
        << ", \"early_stopping_rounds\": " << model.params.early_stopping_rounds
        << ", \"time_limit\": " << model.params.time_limit << ", \"n_jobs\": " << model.params.n_jobs
        << ", \"random_state\": " << model.params.random_state << "},\n";
@@ -484,10 +485,40 @@ std::string model_to_json(const Model& model) {
             write_escaped_string(os, node_kind_to_str(nd.kind));
             if (nd.kind == NodeKind::Leaf) {
                 os << ", \"leaf_value\": " << nd.leaf_value;
-            } else {
+            } else if (nd.kind == NodeKind::Axis) {
                 os << ", \"left_child\": " << nd.left_child
                    << ", \"right_child\": " << nd.right_child << ", \"feature\": " << nd.feature
                    << ", \"threshold_u16\": " << nd.threshold_u16
+                   << ", \"nan_go_left\": " << (nd.nan_go_left ? "true" : "false")
+                   << ", \"split_gain\": " << nd.split_gain;
+            } else if (nd.kind == NodeKind::Oblique) {
+                const std::uint8_t k = nd.oblique_k;
+                const std::uint32_t* feats =
+                    (k <= 3U) ? nd.oblique_features
+                              : tree.oblique_overflow[nd.overflow_offset].features.data();
+                const std::int16_t* weights =
+                    (k <= 3U) ? nd.oblique_weights
+                              : tree.oblique_overflow[nd.overflow_offset].weights.data();
+                const std::int64_t thr =
+                    (k <= 3U) ? static_cast<std::int64_t>(nd.threshold_i32)
+                              : tree.oblique_overflow[nd.overflow_offset].threshold_i64;
+                os << ", \"left_child\": " << nd.left_child
+                   << ", \"right_child\": " << nd.right_child
+                   << ", \"k\": " << static_cast<unsigned int>(k) << ", \"features\": [";
+                for (std::uint8_t q = 0; q < k; ++q) {
+                    if (q > 0U) {
+                        os << ", ";
+                    }
+                    os << feats[q];
+                }
+                os << "], \"weights\": [";
+                for (std::uint8_t q = 0; q < k; ++q) {
+                    if (q > 0U) {
+                        os << ", ";
+                    }
+                    os << weights[q];
+                }
+                os << "], \"threshold\": " << thr
                    << ", \"nan_go_left\": " << (nd.nan_go_left ? "true" : "false")
                    << ", \"split_gain\": " << nd.split_gain;
             }
@@ -538,6 +569,9 @@ Model model_from_json(std::string_view json_text) {
         model.params.max_bin = static_cast<int>(require_field(p, "max_bin").as_i64());
         model.params.m_mult = static_cast<int>(require_field(p, "m_mult").as_i64());
         model.params.k_proj = static_cast<int>(require_field(p, "k_proj").as_i64());
+        if (const auto omd = p.find("oblique_max_depth"); omd != p.end()) {
+            model.params.oblique_max_depth = static_cast<int>(omd->second.as_i64());
+        }
         model.params.early_stopping_rounds =
             static_cast<int>(require_field(p, "early_stopping_rounds").as_i64());
         model.params.time_limit = require_field(p, "time_limit").as_double();
@@ -606,8 +640,64 @@ Model model_from_json(std::string_view json_text) {
                 nd.threshold_u16 = static_cast<std::uint16_t>(thr);
                 nd.nan_go_left = require_field(no, "nan_go_left").as_bool();
                 nd.split_gain = require_field(no, "split_gain").as_double();
+            } else if (nd.kind == NodeKind::Oblique) {
+                const std::int64_t lc = require_field(no, "left_child").as_i64();
+                const std::int64_t rc = require_field(no, "right_child").as_i64();
+                const std::int64_t k_i64 = require_field(no, "k").as_i64();
+                if (lc < 0 || rc < 0 || static_cast<std::size_t>(lc) >= nodes_arr.size() ||
+                    static_cast<std::size_t>(rc) >= nodes_arr.size() || k_i64 < 2 || k_i64 > 8) {
+                    throw std::runtime_error("Invalid oblique node indices or k in model JSON");
+                }
+                const auto k = static_cast<std::uint8_t>(k_i64);
+                const auto& feats_arr = require_field(no, "features").as_array();
+                const auto& weights_arr = require_field(no, "weights").as_array();
+                if (feats_arr.size() != k || weights_arr.size() != k) {
+                    throw std::runtime_error("Oblique features/weights array length mismatch");
+                }
+                const std::int64_t thr = require_field(no, "threshold").as_i64();
+                nd.left_child = static_cast<std::uint32_t>(lc);
+                nd.right_child = static_cast<std::uint32_t>(rc);
+                nd.oblique_k = k;
+                nd.nan_go_left = require_field(no, "nan_go_left").as_bool();
+                nd.split_gain = require_field(no, "split_gain").as_double();
+
+                if (k <= 3U) {
+                    if (thr < -2147483648LL || thr > 2147483647LL) {
+                        throw std::runtime_error("Oblique int32 threshold out of range in JSON");
+                    }
+                    nd.threshold_i32 = static_cast<std::int32_t>(thr);
+                    for (std::uint8_t q = 0; q < k; ++q) {
+                        const std::int64_t fi = feats_arr[q].as_i64();
+                        const std::int64_t wi = weights_arr[q].as_i64();
+                        if (fi < 0 || static_cast<std::size_t>(fi) >= model.n_features ||
+                            wi < -16384 || wi > 16384) {
+                            throw std::runtime_error(
+                                "Invalid oblique feature/weight in model JSON");
+                        }
+                        nd.oblique_features[q] = static_cast<std::uint32_t>(fi);
+                        nd.oblique_weights[q] = static_cast<std::int16_t>(wi);
+                    }
+                } else {
+                    ObliqueOverflow ov;
+                    ov.threshold_i64 = thr;
+                    ov.features.reserve(k);
+                    ov.weights.reserve(k);
+                    for (std::uint8_t q = 0; q < k; ++q) {
+                        const std::int64_t fi = feats_arr[q].as_i64();
+                        const std::int64_t wi = weights_arr[q].as_i64();
+                        if (fi < 0 || static_cast<std::size_t>(fi) >= model.n_features ||
+                            wi < -16384 || wi > 16384) {
+                            throw std::runtime_error(
+                                "Invalid oblique feature/weight in model JSON");
+                        }
+                        ov.features.push_back(static_cast<std::uint32_t>(fi));
+                        ov.weights.push_back(static_cast<std::int16_t>(wi));
+                    }
+                    nd.overflow_offset = static_cast<std::uint32_t>(tree.oblique_overflow.size());
+                    tree.oblique_overflow.push_back(std::move(ov));
+                }
             } else {
-                throw std::runtime_error("Unsupported non-axis node kind in M2 model JSON");
+                throw std::runtime_error("Unsupported node kind in model JSON");
             }
             tree.nodes.push_back(nd);
         }

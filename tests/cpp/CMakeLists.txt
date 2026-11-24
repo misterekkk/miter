@@ -6,6 +6,7 @@ add_executable(miter_tests
     test_dataset.cpp
     test_histogram.cpp
     test_booster.cpp
+    test_oblique.cpp
 )
 
 target_include_directories(miter_tests PRIVATE
