@@ -9,22 +9,43 @@
 
 namespace {
 
-TEST(AxisBinnerTest, FewerDistinctCodesThanMaxBin) {
+// Expected edges below come from the research rule, computed with numpy 2.5:
+//   np.unique(np.ceil(np.quantile(u, np.linspace(0, 1, max_bin + 1)[1:-1])))
+TEST(AxisBinnerTest, FewDistinctCodesFollowNumpyQuantiles) {
+    // sorted {10, 10, 50, 50, 100}, q = .25/.5/.75 -> 10, 50, 50 -> edges {10, 50}.
+    // Bin 0 (u < 10) is empty on training data, as in the prototype; 100 shares a bin with 50.
     const std::vector<std::uint16_t> codes{50, 10, 50, 100, 10};
-    const auto binner = miter::AxisBinner::fit(codes, 255);
+    const auto binner = miter::AxisBinner::fit(codes, 4);
     EXPECT_EQ(binner.num_bins, 3);
-    EXPECT_EQ(binner.edges, (std::vector<std::uint16_t>{50, 100}));
+    EXPECT_EQ(binner.edges, (std::vector<std::uint16_t>{10, 50}));
     EXPECT_FALSE(binner.has_nan);
     EXPECT_EQ(binner.nan_bin(), 3);
 
     EXPECT_EQ(binner.bin(0), 0);
-    EXPECT_EQ(binner.bin(10), 0);
-    EXPECT_EQ(binner.bin(49), 0);
-    EXPECT_EQ(binner.bin(50), 1);
-    EXPECT_EQ(binner.bin(99), 1);
+    EXPECT_EQ(binner.bin(9), 0);
+    EXPECT_EQ(binner.bin(10), 1);
+    EXPECT_EQ(binner.bin(49), 1);
+    EXPECT_EQ(binner.bin(50), 2);
     EXPECT_EQ(binner.bin(100), 2);
     EXPECT_EQ(binner.bin(65534), 2);
     EXPECT_EQ(binner.bin(miter::kQ16NanCode), 3);
+}
+
+TEST(AxisBinnerTest, InterpolatedEdgesBetweenTwoValues) {
+    // {0, 100}, q = .25/.5/.75 -> 25, 50, 75 (linear interpolation, not one bin per value).
+    const std::vector<std::uint16_t> codes{100, 0};
+    const auto binner = miter::AxisBinner::fit(codes, 4);
+    EXPECT_EQ(binner.edges, (std::vector<std::uint16_t>{25, 50, 75}));
+}
+
+TEST(AxisBinnerTest, FractionalEdgeRoundsUpToIntegerThreshold) {
+    // {0, 0, 1}: q = 0.5 -> 0, q = 0.75 -> vi = 1.5 -> 0.5 -> ceil 1; searchsorted(right) on
+    // edge 0.5 puts u = 0 left and u = 1 right, exactly like threshold 1 with `u >= t`.
+    const std::vector<std::uint16_t> codes{0, 1, 0};
+    const auto binner = miter::AxisBinner::fit(codes, 4);
+    EXPECT_EQ(binner.edges, (std::vector<std::uint16_t>{0, 1}));
+    EXPECT_EQ(binner.bin(0), 1);
+    EXPECT_EQ(binner.bin(1), 2);
 }
 
 TEST(AxisBinnerTest, UniformQuantileBinsAndThresholdExactness) {
@@ -45,25 +66,18 @@ TEST(AxisBinnerTest, UniformQuantileBinsAndThresholdExactness) {
 }
 
 TEST(AxisBinnerTest, SkewedDistributionZeroInflated) {
+    // 900 zeros + 1..100, max_bin 10: q = .1-.8 -> 0, q = .9 -> vi = 899.1 -> 0.1 -> ceil 1.
+    // The whole tail 1..100 is one bin (rare tail values merged, as in the research rule).
     std::vector<std::uint16_t> codes(900, 0);
     for (std::uint16_t v = 1; v <= 100; ++v) {
         codes.push_back(v);
     }
     const auto binner = miter::AxisBinner::fit(codes, 10);
-    EXPECT_LE(binner.num_bins, 10);
-    EXPECT_GE(binner.num_bins, 2);
-    EXPECT_EQ(binner.edges.front(), 1);
-    EXPECT_EQ(binner.bin(0), 0);
-    EXPECT_EQ(binner.bin(1), 1);
-
-    // Every bin 0..num_bins-1 must be non-empty on training data
-    std::vector<int> counts(binner.num_bins, 0);
-    for (const auto u : codes) {
-        counts[binner.bin(u)] += 1;
-    }
-    for (int c : counts) {
-        EXPECT_GT(c, 0);
-    }
+    EXPECT_EQ(binner.edges, (std::vector<std::uint16_t>{0, 1}));
+    EXPECT_EQ(binner.num_bins, 3);
+    EXPECT_EQ(binner.bin(0), 1);
+    EXPECT_EQ(binner.bin(1), 2);
+    EXPECT_EQ(binner.bin(100), 2);
 }
 
 TEST(AxisBinnerTest, ExhaustiveBinEdgeInvariant) {

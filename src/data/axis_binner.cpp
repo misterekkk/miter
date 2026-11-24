@@ -1,6 +1,7 @@
 #include "data/axis_binner.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <cstddef>
 #include <stdexcept>
 #include <vector>
@@ -8,6 +9,34 @@
 #include "data/quantizer.hpp"
 
 namespace miter {
+
+namespace {
+
+/**
+ * np.quantile(sorted, q, method="linear") bit for bit (numpy 2.x `_quantile`):
+ *   virtual index vi = (n - 1) * q (`_QuantileMethods["linear"]`), prev = floor(vi) (clamped to the
+ * ends), gamma = vi - prev, and the two-sided `_lerp` (a + d*g for g < 0.5, b - d*(1 - g)
+ * otherwise). Requires -ffp-contract=off (set in CMake).
+ */
+template <typename SortedAt>
+double quantile_numpy_linear(std::size_t n, double q, const SortedAt& sorted_at) {
+    const double vi = static_cast<double>(n - 1U) * q;
+    if (vi >= static_cast<double>(n - 1U)) {
+        return sorted_at(n - 1U);
+    }
+    if (vi < 0.0) {
+        return sorted_at(0U);
+    }
+    const double prev = std::floor(vi);
+    const auto prev_idx = static_cast<std::size_t>(prev);
+    const double a = sorted_at(prev_idx);
+    const double b = sorted_at(prev_idx + 1U);
+    const double gamma = vi - prev;
+    const double d = b - a;
+    return (gamma >= 0.5) ? (b - d * (1.0 - gamma)) : (a + d * gamma);
+}
+
+} // namespace
 
 AxisBinner AxisBinner::fit(std::span<const std::uint16_t> codes, int max_bin) {
     if (codes.empty()) {
@@ -27,47 +56,51 @@ AxisBinner AxisBinner::fit(std::span<const std::uint16_t> codes, int max_bin) {
         }
     }
 
-    std::vector<std::uint16_t> distinct_codes;
-    std::vector<std::uint32_t> distinct_counts;
-    std::uint64_t n_valid = 0;
+    std::size_t n_valid = 0;
+    std::size_t n_distinct = 0;
     for (std::uint32_t u = 0; u <= kQ16MaxCode; ++u) {
-        if (counts[u] > 0U) {
-            distinct_codes.push_back(static_cast<std::uint16_t>(u));
-            distinct_counts.push_back(counts[u]);
-            n_valid += counts[u];
-        }
+        n_valid += counts[u];
+        n_distinct += (counts[u] > 0U) ? 1U : 0U;
     }
 
     AxisBinner binner;
     binner.has_nan = (nan_count > 0);
-
-    const std::size_t n_distinct = distinct_codes.size();
     if (n_distinct <= 1U) {
         binner.num_bins = 1;
         return binner;
     }
 
-    if (n_distinct <= static_cast<std::size_t>(max_bin)) {
-        binner.edges.reserve(n_distinct - 1U);
-        for (std::size_t i = 1; i < n_distinct; ++i) {
-            binner.edges.push_back(distinct_codes[i]);
+    // Sorted non-NaN codes as (cumulative end index, code) runs, for order statistics.
+    std::vector<std::size_t> run_end;
+    std::vector<std::uint16_t> run_code;
+    run_end.reserve(n_distinct);
+    run_code.reserve(n_distinct);
+    std::size_t cum = 0;
+    for (std::uint32_t u = 0; u <= kQ16MaxCode; ++u) {
+        if (counts[u] > 0U) {
+            cum += counts[u];
+            run_end.push_back(cum);
+            run_code.push_back(static_cast<std::uint16_t>(u));
         }
-        binner.num_bins = static_cast<std::uint16_t>(n_distinct);
-        return binner;
     }
+    const auto sorted_at = [&](std::size_t idx) -> double {
+        const auto it = std::upper_bound(run_end.begin(), run_end.end(), idx);
+        return static_cast<double>(run_code[static_cast<std::size_t>(it - run_end.begin())]);
+    };
 
+    // Research rule (prototype `_fit_binning`): edges = np.unique(np.quantile(u, qs)) with
+    // qs = np.linspace(0, 1, max_bin + 1)[1:-1]; bin(u) = searchsorted(edges, u, side="right").
+    // For integer codes, `u >= e` <=> `u >= ceil(e)`, so the integer thresholds are
+    // unique(ceil(e)); distinct float edges with the same ceil only bound bins that contain no
+    // integer code, so the partition of every possible input is identical to the prototype's.
+    const double step = 1.0 / static_cast<double>(max_bin); // np.linspace: i * (delta / div)
     binner.edges.reserve(static_cast<std::size_t>(max_bin) - 1U);
-    std::uint64_t rem_count = n_valid;
-    auto rem_bins = static_cast<std::uint64_t>(max_bin);
-    std::uint64_t cur_bin_count = 0;
-    for (std::size_t i = 0; i + 1U < n_distinct && rem_bins > 1U; ++i) {
-        cur_bin_count += distinct_counts[i];
-        rem_count -= distinct_counts[i];
-        // Exact integer comparison for cur_bin_count >= (cur_bin_count + rem_count) / rem_bins
-        if (cur_bin_count * rem_bins >= (cur_bin_count + rem_count)) {
-            binner.edges.push_back(distinct_codes[i + 1U]);
-            cur_bin_count = 0;
-            --rem_bins;
+    for (int i = 1; i < max_bin; ++i) {
+        const double q = static_cast<double>(i) * step;
+        const double e = quantile_numpy_linear(n_valid, q, sorted_at);
+        const auto t = static_cast<std::uint16_t>(std::ceil(e));
+        if (binner.edges.empty() || t > binner.edges.back()) {
+            binner.edges.push_back(t);
         }
     }
     binner.num_bins = static_cast<std::uint16_t>(binner.edges.size() + 1U);

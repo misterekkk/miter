@@ -9,10 +9,13 @@ namespace miter {
 /**
  * @brief Axis histogram binner operating on Q16r unsigned 16-bit codes.
  *
- * Stores strictly increasing uint16 thresholds `edges` (up to `max_bin - 1` thresholds for
- * `max_bin <= 255`). A non-NaN code `u` maps to `bin(u) = upper_bound(edges, u)` in `[0, num_bins -
- * 1]`, so row goes right iff `u >= edges[b]` (`bin(u) <= b <=> u < edges[b]`). NaN (`kQ16NanCode =
- * 65535`) always maps to `nan_bin() = num_bins` (`<= 255`).
+ * Research rule (prototype `histree` `_fit_binning`, T7): thresholds are
+ * `unique(ceil(np.quantile(u, linspace(0, 1, max_bin + 1)[1:-1])))` over the non-NaN codes, with
+ * numpy's linear quantile reproduced bit for bit. Rare tail values are therefore merged, not given
+ * their own bins. Stores strictly increasing uint16 thresholds `edges` (at most `max_bin - 1`). A
+ * non-NaN code `u` maps to `bin(u) = upper_bound(edges, u)` in `[0, num_bins - 1]`, so row goes
+ * right iff `u >= edges[b]` (`bin(u) <= b <=> u < edges[b]`). NaN (`kQ16NanCode = 65535`) always
+ * maps to `nan_bin() = num_bins` (`<= 255`).
  */
 struct AxisBinner {
     std::vector<std::uint16_t> edges;
