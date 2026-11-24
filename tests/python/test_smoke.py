@@ -1,6 +1,5 @@
-import numpy as np
-
 import miter
+import numpy as np
 from miter import _core
 
 
