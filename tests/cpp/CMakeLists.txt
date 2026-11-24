@@ -7,6 +7,7 @@ add_executable(miter_tests
     test_histogram.cpp
     test_booster.cpp
     test_oblique.cpp
+    test_categorical.cpp
 )
 
 target_include_directories(miter_tests PRIVATE

@@ -7,6 +7,7 @@
 #include <numeric>
 #include <vector>
 
+#include "core/categorical.hpp"
 #include "data/quantizer.hpp"
 
 namespace miter {
@@ -18,6 +19,7 @@ struct SplitChoice {
     double gain = -std::numeric_limits<double>::infinity();
     bool valid = false;
     AxisSplitCandidate axis;
+    CatSplitCandidate cat;
     ObliqueSplitCandidate oblique;
 };
 
@@ -166,6 +168,28 @@ std::uint32_t partition_leaf_rows_oblique(std::uint32_t* rows, std::uint32_t sta
     return nl;
 }
 
+std::uint32_t partition_leaf_rows_cat(std::uint32_t* rows, std::uint32_t start, std::uint32_t end,
+                                      const std::uint8_t* col, const CatBitset& bitset,
+                                      std::uint32_t* tmp_left, std::uint32_t* tmp_right) noexcept {
+    std::uint32_t nl = 0;
+    std::uint32_t nr = 0;
+    for (std::uint32_t t = start; t < end; ++t) {
+        const std::uint32_t r = rows[t];
+        if (cat_bitset_test(bitset, col[r])) {
+            tmp_left[nl++] = r;
+        } else {
+            tmp_right[nr++] = r;
+        }
+    }
+    if (nl > 0U) {
+        std::copy_n(tmp_left, nl, rows + start);
+    }
+    if (nr > 0U) {
+        std::copy_n(tmp_right, nr, rows + start + nl);
+    }
+    return nl;
+}
+
 SplitChoice evaluate_leaf_splits(const Dataset& ds, LeafState& leaf, const float* g_seq,
                                  const float* h_seq, std::size_t tree_index, const Params& params,
                                  TreeWorkspace& ws) noexcept {
@@ -176,12 +200,23 @@ SplitChoice evaluate_leaf_splits(const Dataset& ds, LeafState& leaf, const float
         return choice;
     }
 
-    if (ws.layout.total_bins > 0U) {
+    if (!ws.layout.active_num_features.empty()) {
         choice.axis = find_best_axis_split(ds, ws.layout, ws.pool.slot(leaf.hist_slot), leaf.g_sum,
                                            leaf.h_sum, parent_c, params);
         if (choice.axis.valid) {
             choice.kind = NodeKind::Axis;
             choice.gain = choice.axis.gain;
+            choice.valid = true;
+        }
+    }
+
+    if (!ws.layout.active_cat_features.empty()) {
+        choice.cat = find_best_cat_split(ws.layout, ws.pool.slot(leaf.hist_slot), leaf.g_sum,
+                                         leaf.h_sum, parent_c, params);
+        // Fixed tie-breaking order: axis < categorical < oblique.
+        if (choice.cat.valid && (!choice.valid || choice.cat.gain > choice.gain)) {
+            choice.kind = NodeKind::Categorical;
+            choice.gain = choice.cat.gain;
             choice.valid = true;
         }
     }
@@ -263,8 +298,8 @@ Tree grow_tree(const Dataset& ds, const float* g, const float* h, const Params& 
 
     std::size_t next_slot = 1U;
     const std::uint8_t* bins_base = ds.bins_col_major().data();
-    const std::int16_t* codes_base = ds.codes_row_major().data();
     const std::size_t p_num = ds.n_num_features();
+    const std::int16_t* codes_base = (p_num > 0U) ? ds.codes_row_major().data() : nullptr;
 
     while (leaves.size() < max_leaves) {
         std::size_t best_leaf_idx = leaves.size();
@@ -289,6 +324,11 @@ Tree grow_tree(const Dataset& ds, const float* g, const float* h, const Params& 
             nl = partition_leaf_rows_axis(ws.row_indices.data(), parent.start, parent.end, col,
                                           split.axis, binner.nan_bin(), binner.has_nan,
                                           ws.tmp_left.data(), ws.tmp_right.data());
+        } else if (split.kind == NodeKind::Categorical) {
+            const std::uint8_t* col = bins_base + static_cast<std::size_t>(split.cat.feature) * n;
+            nl = partition_leaf_rows_cat(ws.row_indices.data(), parent.start, parent.end, col,
+                                         split.cat.left_bitset, ws.tmp_left.data(),
+                                         ws.tmp_right.data());
         } else {
             nl = partition_leaf_rows_oblique(ws.row_indices.data(), parent.start, parent.end,
                                              codes_base, p_num, split.oblique, ws.tmp_left.data(),
@@ -313,6 +353,11 @@ Tree grow_tree(const Dataset& ds, const float* g, const float* h, const Params& 
             pnode.nan_go_left = split.axis.nan_go_left;
             pnode.feature = split.axis.feature;
             pnode.threshold_u16 = split.axis.threshold_u16;
+        } else if (split.kind == NodeKind::Categorical) {
+            pnode.nan_go_left = split.cat.default_go_left;
+            pnode.feature = split.cat.feature;
+            pnode.cat_bitset_offset = static_cast<std::uint32_t>(tree.cat_bitsets.size());
+            tree.cat_bitsets.push_back(split.cat.left_bitset);
         } else {
             const auto& ob = split.oblique;
             pnode.nan_go_left = ob.nan_go_left;

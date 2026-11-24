@@ -439,8 +439,13 @@ std::string model_to_json(const Model& model) {
        << ", \"min_sum_hessian_in_leaf\": " << model.params.min_sum_hessian_in_leaf
        << ", \"lambda_l2\": " << model.params.lambda_l2
        << ", \"min_gain_to_split\": " << model.params.min_gain_to_split
-       << ", \"max_bin\": " << model.params.max_bin << ", \"m_mult\": " << model.params.m_mult
-       << ", \"k_proj\": " << model.params.k_proj
+       << ", \"max_bin\": " << model.params.max_bin
+       << ", \"max_cat_to_onehot\": " << model.params.max_cat_to_onehot
+       << ", \"min_data_per_group\": " << model.params.min_data_per_group
+       << ", \"max_categories\": " << model.params.max_categories
+       << ", \"cat_smooth\": " << model.params.cat_smooth << ", \"cat_l2\": " << model.params.cat_l2
+       << ", \"max_cat_threshold\": " << model.params.max_cat_threshold
+       << ", \"m_mult\": " << model.params.m_mult << ", \"k_proj\": " << model.params.k_proj
        << ", \"oblique_max_depth\": " << model.params.oblique_max_depth
        << ", \"early_stopping_rounds\": " << model.params.early_stopping_rounds
        << ", \"time_limit\": " << model.params.time_limit << ", \"n_jobs\": " << model.params.n_jobs
@@ -475,6 +480,23 @@ std::string model_to_json(const Model& model) {
     }
     os << "],\n";
 
+    os << "  \"cat_features\": [";
+    for (std::size_t i = 0; i < model.cat_features.size(); ++i) {
+        if (i > 0U) {
+            os << ", ";
+        }
+        os << "[";
+        const auto& cats = model.cat_features[i].categories;
+        for (std::size_t c = 0; c < cats.size(); ++c) {
+            if (c > 0U) {
+                os << ", ";
+            }
+            write_escaped_string(os, cats[c]);
+        }
+        os << "]";
+    }
+    os << "],\n";
+
     os << "  \"trees\": [\n";
     for (std::size_t t = 0; t < model.trees.size(); ++t) {
         const auto& tree = model.trees[t];
@@ -490,6 +512,24 @@ std::string model_to_json(const Model& model) {
                    << ", \"right_child\": " << nd.right_child << ", \"feature\": " << nd.feature
                    << ", \"threshold_u16\": " << nd.threshold_u16
                    << ", \"nan_go_left\": " << (nd.nan_go_left ? "true" : "false")
+                   << ", \"split_gain\": " << nd.split_gain;
+            } else if (nd.kind == NodeKind::Categorical) {
+                const auto& bs = tree.cat_bitsets[nd.cat_bitset_offset];
+                os << ", \"left_child\": " << nd.left_child
+                   << ", \"right_child\": " << nd.right_child << ", \"feature\": " << nd.feature
+                   << ", \"left_categories\": [";
+                bool first = true;
+                for (unsigned int code = 0; code < 256U; ++code) {
+                    if (cat_bitset_test(bs, static_cast<std::uint8_t>(code))) {
+                        if (!first) {
+                            os << ", ";
+                        }
+                        os << code;
+                        first = false;
+                    }
+                }
+                os << "]"
+                   << ", \"default_go_left\": " << (nd.nan_go_left ? "true" : "false")
                    << ", \"split_gain\": " << nd.split_gain;
             } else if (nd.kind == NodeKind::Oblique) {
                 const std::uint8_t k = nd.oblique_k;
@@ -567,6 +607,24 @@ Model model_from_json(std::string_view json_text) {
         model.params.lambda_l2 = require_field(p, "lambda_l2").as_double();
         model.params.min_gain_to_split = require_field(p, "min_gain_to_split").as_double();
         model.params.max_bin = static_cast<int>(require_field(p, "max_bin").as_i64());
+        if (const auto mco = p.find("max_cat_to_onehot"); mco != p.end()) {
+            model.params.max_cat_to_onehot = static_cast<int>(mco->second.as_i64());
+        }
+        if (const auto mdg = p.find("min_data_per_group"); mdg != p.end()) {
+            model.params.min_data_per_group = static_cast<int>(mdg->second.as_i64());
+        }
+        if (const auto mc = p.find("max_categories"); mc != p.end()) {
+            model.params.max_categories = static_cast<int>(mc->second.as_i64());
+        }
+        if (const auto cs = p.find("cat_smooth"); cs != p.end()) {
+            model.params.cat_smooth = cs->second.as_double();
+        }
+        if (const auto cl = p.find("cat_l2"); cl != p.end()) {
+            model.params.cat_l2 = cl->second.as_double();
+        }
+        if (const auto mct = p.find("max_cat_threshold"); mct != p.end()) {
+            model.params.max_cat_threshold = static_cast<int>(mct->second.as_i64());
+        }
         model.params.m_mult = static_cast<int>(require_field(p, "m_mult").as_i64());
         model.params.k_proj = static_cast<int>(require_field(p, "k_proj").as_i64());
         if (const auto omd = p.find("oblique_max_depth"); omd != p.end()) {
@@ -599,9 +657,27 @@ Model model_from_json(std::string_view json_text) {
         model.quantizers.push_back(q);
     }
 
+    if (const auto cf_it = root.find("cat_features"); cf_it != root.end()) {
+        for (const auto& cf_arr : cf_it->second.as_array()) {
+            CatFeatureInfo info;
+            for (const auto& cat_s : cf_arr.as_array()) {
+                info.categories.push_back(cat_s.as_string());
+            }
+            model.cat_features.push_back(std::move(info));
+        }
+    } else {
+        for (const std::uint8_t fk : model.feature_kinds) {
+            if (fk != 0U) {
+                throw std::runtime_error("Missing cat_features for categorical model in JSON");
+            }
+        }
+        model.cat_features.resize(model.n_features);
+    }
+
     if (model.feature_names.size() != model.n_features ||
         model.feature_kinds.size() != model.n_features ||
-        model.quantizers.size() != model.n_features) {
+        model.quantizers.size() != model.n_features ||
+        model.cat_features.size() != model.n_features) {
         throw std::runtime_error("Feature metadata size mismatch in model JSON");
     }
 
@@ -640,6 +716,32 @@ Model model_from_json(std::string_view json_text) {
                 nd.threshold_u16 = static_cast<std::uint16_t>(thr);
                 nd.nan_go_left = require_field(no, "nan_go_left").as_bool();
                 nd.split_gain = require_field(no, "split_gain").as_double();
+            } else if (nd.kind == NodeKind::Categorical) {
+                const std::int64_t lc = require_field(no, "left_child").as_i64();
+                const std::int64_t rc = require_field(no, "right_child").as_i64();
+                const std::int64_t feat = require_field(no, "feature").as_i64();
+                if (lc < 0 || rc < 0 || static_cast<std::size_t>(lc) >= nodes_arr.size() ||
+                    static_cast<std::size_t>(rc) >= nodes_arr.size() || feat < 0 ||
+                    static_cast<std::size_t>(feat) >= model.n_features ||
+                    model.feature_kinds[static_cast<std::size_t>(feat)] != 1U) {
+                    throw std::runtime_error("Invalid categorical node indices in model JSON");
+                }
+                nd.left_child = static_cast<std::uint32_t>(lc);
+                nd.right_child = static_cast<std::uint32_t>(rc);
+                nd.feature = static_cast<std::uint32_t>(feat);
+                nd.nan_go_left = require_field(no, "default_go_left").as_bool();
+                nd.split_gain = require_field(no, "split_gain").as_double();
+
+                CatBitset bs;
+                for (const auto& lv : require_field(no, "left_categories").as_array()) {
+                    const std::int64_t code = lv.as_i64();
+                    if (code < 0 || code > 255) {
+                        throw std::runtime_error("Categorical code out of range [0, 255] in JSON");
+                    }
+                    cat_bitset_set(bs, static_cast<std::uint8_t>(code));
+                }
+                nd.cat_bitset_offset = static_cast<std::uint32_t>(tree.cat_bitsets.size());
+                tree.cat_bitsets.push_back(bs);
             } else if (nd.kind == NodeKind::Oblique) {
                 const std::int64_t lc = require_field(no, "left_child").as_i64();
                 const std::int64_t rc = require_field(no, "right_child").as_i64();
