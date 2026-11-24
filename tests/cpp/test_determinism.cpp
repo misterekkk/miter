@@ -17,12 +17,18 @@
 
 namespace {
 
-TEST(DeterminismTest, FastDiv64MatchesExactObliqueBin) {
+// FastDiv64 = native path (unsigned __int128 on GCC/Clang, __umulh on MSVC);
+// FastDiv64Portable = int128-free 64-bit-limb path, so MSVC-style arithmetic is also tested here.
+template <typename Div> class FastDivTest : public ::testing::Test {};
+using FastDivTypes = ::testing::Types<miter::FastDiv64, miter::FastDiv64Portable>;
+TYPED_TEST_SUITE(FastDivTest, FastDivTypes);
+
+TYPED_TEST(FastDivTest, FastDiv64MatchesExactObliqueBin) {
     std::mt19937_64 rng(2026);
     const std::vector<std::int64_t> edge_ranges = {
         1, 2, 3, 63, 64, 65, 255, 256, 65535, 65536, (1LL << 30), 3221225473LL};
     for (const std::int64_t r : edge_ranges) {
-        miter::FastDiv64 fd;
+        TypeParam fd;
         fd.prepare(static_cast<std::uint64_t>(r));
         for (int s = 0; s < 500; ++s) {
             std::uniform_int_distribution<std::int64_t> dist(0, r - 1);
@@ -42,12 +48,106 @@ TEST(DeterminismTest, FastDiv64MatchesExactObliqueBin) {
         std::uniform_int_distribution<std::int64_t> p_dist(pmin, pmin + range - 1);
         const std::int64_t p = p_dist(rng);
 
-        miter::FastDiv64 fd;
+        TypeParam fd;
         fd.prepare(static_cast<std::uint64_t>(range));
         const auto fast_b =
             static_cast<std::uint8_t>(fd.div(static_cast<std::uint64_t>(p - pmin) * 64ULL));
         const std::uint8_t exact_b = miter::oblique_bin_index(p, pmin, range);
         ASSERT_EQ(fast_b, exact_b);
+    }
+}
+
+TYPED_TEST(FastDivTest, MatchesHardwareDivisionAtDomainEdges) {
+    std::mt19937_64 rng(4242);
+    const std::uint64_t max_num = (std::uint64_t{1} << 38U) - 1U;
+    const std::uint64_t max_div = std::uint64_t{1} << 34U;
+    std::vector<std::uint64_t> divisors = {1U,  2U,  3U,  5U,           7U,
+                                           63U, 64U, 65U, max_div - 1U, max_div};
+    for (unsigned b = 1; b <= 34U; ++b) {
+        const std::uint64_t pw = std::uint64_t{1} << b;
+        divisors.push_back(pw - 1U);
+        divisors.push_back(pw);
+        divisors.push_back(std::min(pw + 1U, max_div));
+    }
+    std::uniform_int_distribution<std::uint64_t> div_dist(1U, max_div);
+    for (int i = 0; i < 2000; ++i) {
+        divisors.push_back(div_dist(rng));
+    }
+    std::uniform_int_distribution<std::uint64_t> num_dist(0U, max_num);
+    for (const std::uint64_t d : divisors) {
+        TypeParam fd;
+        fd.prepare(d);
+        const std::uint64_t nums[] = {0U,
+                                      1U,
+                                      d - 1U,
+                                      d,
+                                      d + 1U,
+                                      2U * d - 1U,
+                                      max_num - 1U,
+                                      max_num,
+                                      (max_num / d) * d,
+                                      (max_num / d) * d - 1U};
+        for (const std::uint64_t n : nums) {
+            ASSERT_EQ(fd.div(n), n / d) << "d=" << d << " n=" << n;
+        }
+        for (int s = 0; s < 50; ++s) {
+            const std::uint64_t n = num_dist(rng);
+            ASSERT_EQ(fd.div(n), n / d) << "d=" << d << " n=" << n;
+        }
+    }
+}
+
+TEST(DeterminismTest, FastDivPortableMulhiMatchesWideProduct) {
+    // Brute-force reference: schoolbook 16-bit limbs, independent of mulhi64_portable.
+    const auto ref_mulhi = [](std::uint64_t a, std::uint64_t b) {
+        std::uint64_t limbs[8] = {};
+        for (int i = 0; i < 4; ++i) {
+            for (int j = 0; j < 4; ++j) {
+                const std::uint64_t ai = (a >> (16 * i)) & 0xFFFFU;
+                const std::uint64_t bj = (b >> (16 * j)) & 0xFFFFU;
+                limbs[i + j] += ai * bj;
+            }
+        }
+        std::uint64_t carry = 0U;
+        std::uint64_t hi = 0U;
+        for (int k = 0; k < 8; ++k) {
+            const std::uint64_t v = limbs[k] + carry;
+            carry = v >> 16U;
+            if (k >= 4) {
+                hi |= (v & 0xFFFFU) << (16 * (k - 4));
+            }
+        }
+        return hi;
+    };
+    std::mt19937_64 rng(99);
+    const std::uint64_t edges[] = {0U, 1U, 0xFFFFFFFFU, 0x100000000U,
+                                   std::numeric_limits<std::uint64_t>::max()};
+    for (const std::uint64_t a : edges) {
+        for (const std::uint64_t b : edges) {
+            ASSERT_EQ(miter::detail::mulhi64_portable(a, b), ref_mulhi(a, b));
+            ASSERT_EQ(miter::detail::mulhi64(a, b), ref_mulhi(a, b));
+        }
+    }
+    for (int i = 0; i < 200000; ++i) {
+        const std::uint64_t a = rng();
+        const std::uint64_t b = rng();
+        ASSERT_EQ(miter::detail::mulhi64_portable(a, b), ref_mulhi(a, b));
+        ASSERT_EQ(miter::detail::mulhi64(a, b), ref_mulhi(a, b));
+    }
+}
+
+TEST(DeterminismTest, FastDivPortableMagicMatchesNative) {
+    std::mt19937_64 rng(7);
+    std::uniform_int_distribution<std::uint64_t> div_dist(1U, std::uint64_t{1} << 34U);
+    for (int i = 0; i < 100000; ++i) {
+        const std::uint64_t d = (i < 64) ? static_cast<std::uint64_t>(i) : div_dist(rng);
+        miter::FastDiv64 native;
+        miter::FastDiv64Portable portable;
+        native.prepare(d);
+        portable.prepare(d);
+        ASSERT_EQ(native.magic, portable.magic) << "d=" << d;
+        ASSERT_EQ(native.shift, portable.shift) << "d=" << d;
+        ASSERT_EQ(native.divisor, portable.divisor) << "d=" << d;
     }
 }
 
