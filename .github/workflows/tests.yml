@@ -222,6 +222,6 @@ jobs:
           else
             VENV_PY="${RUNNER_TEMP}/smoke-venv/bin/python"
           fi
-          "${VENV_PY}" -m pip install dist/*.whl pytest
+          "${VENV_PY}" -m pip install dist/*.whl pytest pandas
           cd "${RUNNER_TEMP}"
           "${VENV_PY}" -m pytest "${GITHUB_WORKSPACE}/tests/python" -v

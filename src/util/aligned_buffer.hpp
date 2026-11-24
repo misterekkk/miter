@@ -63,7 +63,7 @@ public:
 
     void zero_fill() noexcept {
         if (size_ > 0) {
-            std::memset(ptr_, 0, size_ * sizeof(T));
+            std::memset(static_cast<void*>(ptr_), 0, size_ * sizeof(T));
         }
     }
 

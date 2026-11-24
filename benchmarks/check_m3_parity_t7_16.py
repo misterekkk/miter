@@ -11,6 +11,7 @@ Usage: python check_m3_parity_t7_16.py run <dataset>   |   python check_m3_parit
 from __future__ import annotations
 
 import json
+import os
 import platform
 import subprocess
 import sys
@@ -89,7 +90,7 @@ def agg() -> None:
         "# M3 parity re-check after the axis-binning fix (miter C++ vs histree T7 Q16r_int)",
         "",
         f"- Hardware: `{platform.machine()}` (`{platform.platform()}`); miter `{miter.__version__}`; "
-        f"built from `{commit}` + working-tree axis-binner fix (research quantile rule)",
+        f"built from `{os.environ.get('MITER_BUILD_COMMIT', commit)}` (axis-binner fix `876f133`)",
         "- Protocol: as `bench_m3_oblique.py` Part B (5 folds, seed = fold, 1 thread). T7 = cached "
         "`clean|Q16r_int` (reproduced exactly by a live run, see `m3_parity_brazil_pol_summary.md`).",
         "- Mean nRMSE over 5 folds; negative = miter lower error. Last column: Part B before the fix.",

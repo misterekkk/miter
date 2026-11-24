@@ -12,6 +12,11 @@ namespace miter {
 
 namespace detail {
 
+#if defined(__SIZEOF_INT128__)
+// __extension__ keeps GCC's -Wpedantic quiet about the non-ISO 128-bit type.
+__extension__ typedef unsigned __int128 u128; // NOLINT(modernize-use-using)
+#endif
+
 /// High 64 bits of the 128-bit product a * b, using only 64-bit arithmetic (32-bit limbs).
 constexpr std::uint64_t mulhi64_portable(std::uint64_t a, std::uint64_t b) noexcept {
     const std::uint64_t a_lo = a & 0xFFFFFFFFU;
@@ -30,8 +35,7 @@ constexpr std::uint64_t mulhi64_portable(std::uint64_t a, std::uint64_t b) noexc
 /// High 64 bits of a * b using the fastest exact primitive available on this compiler.
 inline std::uint64_t mulhi64(std::uint64_t a, std::uint64_t b) noexcept {
 #if defined(__SIZEOF_INT128__)
-    return static_cast<std::uint64_t>(
-        (static_cast<unsigned __int128>(a) * static_cast<unsigned __int128>(b)) >> 64U);
+    return static_cast<std::uint64_t>((static_cast<u128>(a) * static_cast<u128>(b)) >> 64U);
 #elif defined(MITER_FASTDIV_HAS_UMULH)
     return __umulh(a, b);
 #else
@@ -97,9 +101,9 @@ template <bool Portable> struct BasicFastDiv64 {
         // multiple of d unless excess == 0 (d a power of two), so ceil = floor + (excess != 0).
 #if defined(__SIZEOF_INT128__)
         if constexpr (!Portable) {
-            const unsigned __int128 num = (static_cast<unsigned __int128>(excess) << 64U) +
-                                          static_cast<unsigned __int128>(divisor - 1U);
-            magic = static_cast<std::uint64_t>(num / static_cast<unsigned __int128>(divisor));
+            const detail::u128 num = (static_cast<detail::u128>(excess) << 64U) +
+                                     static_cast<detail::u128>(divisor - 1U);
+            magic = static_cast<std::uint64_t>(num / static_cast<detail::u128>(divisor));
             return;
         }
 #endif

@@ -115,7 +115,8 @@ def agg() -> None:
     out.append("## Provenance")
     out.append(f"- hardware/OS: {platform.platform()} / {platform.processor()}, python {platform.python_version()}")
     out.append(f"- numpy {ver('numpy')}, scipy {ver('scipy')}, sklearn {ver('sklearn')}, numba {ver('numba')}, miter {ver('miter')}")
-    out.append("- miter source commit: d1b4d12 (branch m5-performance); histree: " +
+    out.append(f"- miter source: {os.environ.get('MITER_BUILD_COMMIT', 'd1b4d12')} (branch m5-performance); "
+               "pre-fix-binning raw results: benchmarks/results/raw/prefix_binning/; histree: " +
                subprocess.run(["git", "-C", str(HISTREE_SRC.parent), "rev-parse", "--short", "HEAD"],
                               capture_output=True, text=True).stdout.strip())
     out.append("- seeds: seed = fold + 100*s, s=0..4; both methods get the same random_state, same outer folds, inner split train_test_split(random_state=0)")

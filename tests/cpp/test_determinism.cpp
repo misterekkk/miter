@@ -44,7 +44,7 @@ TYPED_TEST(FastDivTest, FastDiv64MatchesExactObliqueBin) {
         std::uniform_int_distribution<std::int64_t> pmin_dist(-1610612736LL, 1610612736LL);
         const std::int64_t pmin = pmin_dist(rng);
         std::uniform_int_distribution<std::int64_t> range_dist(1, 3221225473LL);
-        const std::int64_t range = std::min(range_dist(rng), 1610612737LL - pmin);
+        const std::int64_t range = std::min<std::int64_t>(range_dist(rng), 1610612737LL - pmin);
         std::uniform_int_distribution<std::int64_t> p_dist(pmin, pmin + range - 1);
         const std::int64_t p = p_dist(rng);
 

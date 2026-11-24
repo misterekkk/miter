@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <type_traits>
 #include <vector>
 
 #include "data/dataset.hpp"
@@ -17,6 +18,8 @@ struct HistBin {
     double h = 0.0;
     std::int32_t c = 0;
 };
+// Histograms are cleared with memset (all-zero bits == {0.0, 0.0, 0}).
+static_assert(std::is_trivially_copyable_v<HistBin>, "HistBin is zeroed with memset");
 
 struct FeatureHistLayout {
     std::vector<std::size_t> offsets;

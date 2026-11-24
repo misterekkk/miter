@@ -132,7 +132,7 @@ void build_axis_histograms(const Dataset& ds, const FeatureHistLayout& layout,
     if (layout.total_bins == 0U) {
         return;
     }
-    std::memset(hist_out, 0, layout.total_bins * sizeof(HistBin));
+    std::memset(static_cast<void*>(hist_out), 0, layout.total_bins * sizeof(HistBin));
     if (n_leaf == 0U) {
         return;
     }
@@ -209,7 +209,7 @@ void build_axis_histograms(const Dataset& ds, const FeatureHistLayout& layout,
                     const std::size_t r0 = c * kDetChunkRows;
                     const std::size_t r1 = std::min(r0 + kDetChunkRows, n_leaf);
                     HistBin* wh = wave_hist_buf + wu * total_bins;
-                    std::memset(wh, 0, total_bins * sizeof(HistBin));
+                    std::memset(static_cast<void*>(wh), 0, total_bins * sizeof(HistBin));
                     for (const std::uint32_t f : layout.active_features) {
                         const std::uint8_t* col = bins_base + static_cast<std::size_t>(f) * n_rows;
                         build_axis_feature_range(col, layout.offsets[f], leaf_rows, r0, r1,
@@ -240,7 +240,7 @@ void build_axis_histograms(const Dataset& ds, const FeatureHistLayout& layout,
                 const std::size_t c = w_base + w;
                 const std::size_t r0 = c * kDetChunkRows;
                 const std::size_t r1 = std::min(r0 + kDetChunkRows, n_leaf);
-                std::memset(wave_hist_buf, 0, total_bins * sizeof(HistBin));
+                std::memset(static_cast<void*>(wave_hist_buf), 0, total_bins * sizeof(HistBin));
                 for (const std::uint32_t f : layout.active_features) {
                     const std::uint8_t* col = bins_base + static_cast<std::size_t>(f) * n_rows;
                     build_axis_feature_range(col, layout.offsets[f], leaf_rows, r0, r1,

@@ -331,7 +331,8 @@ ObliqueSplitCandidate eval_oblique_i64_candidates(
         }
 
         HistBin* hist = scratch.hists.data() + j * static_cast<std::size_t>(kObliqueBins);
-        std::memset(hist, 0, static_cast<std::size_t>(kObliqueBins) * sizeof(HistBin));
+        std::memset(static_cast<void*>(hist), 0,
+                    static_cast<std::size_t>(kObliqueBins) * sizeof(HistBin));
         const std::int64_t range = pmax - pmin + 1;
 
         for (std::size_t t = 0; t < n_leaf; ++t) {
@@ -598,7 +599,8 @@ ObliqueSplitCandidate find_best_oblique_split(const Dataset& ds, const std::uint
         }
 
         HistBin* hists = scratch.hists.data();
-        std::memset(hists, 0, n_active * static_cast<std::size_t>(kObliqueBins) * sizeof(HistBin));
+        std::memset(static_cast<void*>(hists), 0,
+                    n_active * static_cast<std::size_t>(kObliqueBins) * sizeof(HistBin));
         pass2_chunk(codes, p_num, leaf_rows, 0U, n_leaf, g_seq, h_seq, m, metas, store_proj,
                     proj_buf, n_active, scratch.active_cands.data(), scratch.cand_pmin.data(),
                     scratch.active_divs.data(), hists);
@@ -678,7 +680,7 @@ ObliqueSplitCandidate find_best_oblique_split(const Dataset& ds, const std::uint
 
         HistBin* hists = scratch.hists.data();
         const std::size_t active_bins = n_active * static_cast<std::size_t>(kObliqueBins);
-        std::memset(hists, 0, active_bins * sizeof(HistBin));
+        std::memset(static_cast<void*>(hists), 0, active_bins * sizeof(HistBin));
         HistBin* wave_buf = scratch.wave_hists.data();
 
         // Pass 2 wave-chunked accumulation + fixed ascending chunk reduction.
@@ -698,7 +700,7 @@ ObliqueSplitCandidate find_best_oblique_split(const Dataset& ds, const std::uint
                         const std::size_t r0 = c * kDetChunkRows;
                         const std::size_t r1 = std::min(r0 + kDetChunkRows, n_leaf);
                         HistBin* wh = wave_buf + wu * active_bins;
-                        std::memset(wh, 0, active_bins * sizeof(HistBin));
+                        std::memset(static_cast<void*>(wh), 0, active_bins * sizeof(HistBin));
                         pass2_chunk(codes, p_num, leaf_rows, r0, r1, g_seq, h_seq, m, metas,
                                     store_proj, proj_buf, n_active, scratch.active_cands.data(),
                                     scratch.cand_pmin.data(), scratch.active_divs.data(), wh);
@@ -744,7 +746,7 @@ ObliqueSplitCandidate find_best_oblique_split(const Dataset& ds, const std::uint
                     const std::size_t c = w_base + w;
                     const std::size_t r0 = c * kDetChunkRows;
                     const std::size_t r1 = std::min(r0 + kDetChunkRows, n_leaf);
-                    std::memset(wave_buf, 0, active_bins * sizeof(HistBin));
+                    std::memset(static_cast<void*>(wave_buf), 0, active_bins * sizeof(HistBin));
                     pass2_chunk(codes, p_num, leaf_rows, r0, r1, g_seq, h_seq, m, metas, store_proj,
                                 proj_buf, n_active, scratch.active_cands.data(),
                                 scratch.cand_pmin.data(), scratch.active_divs.data(), wave_buf);
