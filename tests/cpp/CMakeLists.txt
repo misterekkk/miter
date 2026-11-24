@@ -4,6 +4,8 @@ add_executable(miter_tests
     test_axis_binner.cpp
     test_cat_encoder.cpp
     test_dataset.cpp
+    test_histogram.cpp
+    test_booster.cpp
 )
 
 target_include_directories(miter_tests PRIVATE

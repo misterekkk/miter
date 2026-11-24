@@ -73,10 +73,16 @@ endif()
 # ---------------------------------------------------------------------------
 add_library(miter STATIC
     src/miter.cpp
+    src/core/booster.cpp
+    src/core/histogram.cpp
+    src/core/objective.cpp
+    src/core/tree_learner.cpp
     src/data/axis_binner.cpp
     src/data/cat_encoder.cpp
     src/data/dataset.cpp
     src/data/quantizer.cpp
+    src/model/evaluator.cpp
+    src/model/json_io.cpp
 )
 
 set_target_properties(miter PROPERTIES
