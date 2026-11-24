@@ -319,7 +319,8 @@ predict_raw_py(const miter::Model& model,
     std::vector<double> out(n_rows);
     {
         nb::gil_scoped_release release;
-        miter::Evaluator::predict_raw_views(model, n_rows, views, out.data(), num_iteration);
+        miter::Evaluator::predict_raw_views(model, n_rows, views, out.data(), num_iteration,
+                                            model.params.n_jobs);
     }
     return vec_to_ndarray_1d(std::move(out));
 }
@@ -339,7 +340,8 @@ predict_proba_py(const miter::Model& model,
     std::vector<double> proba(n_rows * 2U);
     {
         nb::gil_scoped_release release;
-        miter::Evaluator::predict_raw_views(model, n_rows, views, raw.data(), num_iteration);
+        miter::Evaluator::predict_raw_views(model, n_rows, views, raw.data(), num_iteration,
+                                            model.params.n_jobs);
         miter::Evaluator::predict_proba_from_raw(raw.data(), n_rows, proba.data());
     }
     return vec_to_ndarray_2d(std::move(proba), n_rows, 2U);
@@ -357,7 +359,7 @@ nb::ndarray<nb::numpy, double, nb::ndim<1>> predict_raw_mixed_py(
     {
         nb::gil_scoped_release release;
         miter::Evaluator::predict_raw_mixed(model, n_rows, num_views, cat_views, out.data(),
-                                            num_iteration);
+                                            num_iteration, model.params.n_jobs);
     }
     return vec_to_ndarray_1d(std::move(out));
 }
@@ -375,7 +377,7 @@ nb::ndarray<nb::numpy, double, nb::ndim<2>> predict_proba_mixed_py(
     {
         nb::gil_scoped_release release;
         miter::Evaluator::predict_raw_mixed(model, n_rows, num_views, cat_views, raw.data(),
-                                            num_iteration);
+                                            num_iteration, model.params.n_jobs);
         miter::Evaluator::predict_proba_from_raw(raw.data(), n_rows, proba.data());
     }
     return vec_to_ndarray_2d(std::move(proba), n_rows, 2U);

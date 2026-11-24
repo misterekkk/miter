@@ -1,6 +1,9 @@
 #include "core/histogram.hpp"
 
+#include <algorithm>
 #include <cstring>
+
+#include "util/threading.hpp"
 
 namespace miter {
 
@@ -55,10 +58,77 @@ void HistPool::reset(std::size_t num_slots, std::size_t bins_per_slot) {
     buffer_.resize(num_slots * bins_per_slot);
 }
 
+namespace {
+
+void build_axis_feature_range(const std::uint8_t* col, std::size_t offset,
+                              const std::uint32_t* leaf_rows, std::size_t r0, std::size_t r1,
+                              bool is_contiguous_root, const float* g, const float* h,
+                              const float* g_ordered, const float* h_ordered,
+                              HistBin* hist_out) noexcept {
+    HistBin* dst = hist_out + offset;
+    if (is_contiguous_root) {
+        std::size_t i = r0;
+        for (; i + 4U <= r1; i += 4U) {
+            const std::uint8_t b0 = col[i];
+            const std::uint8_t b1 = col[i + 1U];
+            const std::uint8_t b2 = col[i + 2U];
+            const std::uint8_t b3 = col[i + 3U];
+            dst[b0].g += static_cast<double>(g[i]);
+            dst[b0].h += static_cast<double>(h[i]);
+            dst[b0].c += 1;
+            dst[b1].g += static_cast<double>(g[i + 1U]);
+            dst[b1].h += static_cast<double>(h[i + 1U]);
+            dst[b1].c += 1;
+            dst[b2].g += static_cast<double>(g[i + 2U]);
+            dst[b2].h += static_cast<double>(h[i + 2U]);
+            dst[b2].c += 1;
+            dst[b3].g += static_cast<double>(g[i + 3U]);
+            dst[b3].h += static_cast<double>(h[i + 3U]);
+            dst[b3].c += 1;
+        }
+        for (; i < r1; ++i) {
+            const std::uint8_t b = col[i];
+            dst[b].g += static_cast<double>(g[i]);
+            dst[b].h += static_cast<double>(h[i]);
+            dst[b].c += 1;
+        }
+        return;
+    }
+
+    std::size_t t = r0;
+    for (; t + 4U <= r1; t += 4U) {
+        const std::uint8_t b0 = col[leaf_rows[t]];
+        const std::uint8_t b1 = col[leaf_rows[t + 1U]];
+        const std::uint8_t b2 = col[leaf_rows[t + 2U]];
+        const std::uint8_t b3 = col[leaf_rows[t + 3U]];
+        dst[b0].g += static_cast<double>(g_ordered[t]);
+        dst[b0].h += static_cast<double>(h_ordered[t]);
+        dst[b0].c += 1;
+        dst[b1].g += static_cast<double>(g_ordered[t + 1U]);
+        dst[b1].h += static_cast<double>(h_ordered[t + 1U]);
+        dst[b1].c += 1;
+        dst[b2].g += static_cast<double>(g_ordered[t + 2U]);
+        dst[b2].h += static_cast<double>(h_ordered[t + 2U]);
+        dst[b2].c += 1;
+        dst[b3].g += static_cast<double>(g_ordered[t + 3U]);
+        dst[b3].h += static_cast<double>(h_ordered[t + 3U]);
+        dst[b3].c += 1;
+    }
+    for (; t < r1; ++t) {
+        const std::uint8_t b = col[leaf_rows[t]];
+        dst[b].g += static_cast<double>(g_ordered[t]);
+        dst[b].h += static_cast<double>(h_ordered[t]);
+        dst[b].c += 1;
+    }
+}
+
+} // namespace
+
 void build_axis_histograms(const Dataset& ds, const FeatureHistLayout& layout,
                            const std::uint32_t* leaf_rows, std::size_t n_leaf,
                            bool is_contiguous_root, const float* g, const float* h,
-                           float* g_ordered, float* h_ordered, HistBin* hist_out) noexcept {
+                           float* g_ordered, float* h_ordered, HistBin* hist_out, int n_jobs,
+                           HistBin* wave_hist_buf) noexcept {
     if (layout.total_bins == 0U) {
         return;
     }
@@ -67,76 +137,122 @@ void build_axis_histograms(const Dataset& ds, const FeatureHistLayout& layout,
         return;
     }
 
+    const int n_threads = resolve_num_threads(n_jobs);
     const std::size_t n_rows = ds.n_rows();
     const std::uint8_t* bins_base = ds.bins_col_major().data();
+    const std::size_t n_active = layout.active_features.size();
 
-    if (is_contiguous_root) {
-        for (const std::uint32_t f : layout.active_features) {
-            const std::uint8_t* col = bins_base + static_cast<std::size_t>(f) * n_rows;
-            HistBin* dst = hist_out + layout.offsets[f];
-            std::size_t i = 0;
-            for (; i + 4U <= n_leaf; i += 4U) {
-                const std::uint8_t b0 = col[i];
-                const std::uint8_t b1 = col[i + 1U];
-                const std::uint8_t b2 = col[i + 2U];
-                const std::uint8_t b3 = col[i + 3U];
-                dst[b0].g += static_cast<double>(g[i]);
-                dst[b0].h += static_cast<double>(h[i]);
-                dst[b0].c += 1;
-                dst[b1].g += static_cast<double>(g[i + 1U]);
-                dst[b1].h += static_cast<double>(h[i + 1U]);
-                dst[b1].c += 1;
-                dst[b2].g += static_cast<double>(g[i + 2U]);
-                dst[b2].h += static_cast<double>(h[i + 2U]);
-                dst[b2].c += 1;
-                dst[b3].g += static_cast<double>(g[i + 3U]);
-                dst[b3].h += static_cast<double>(h[i + 3U]);
-                dst[b3].c += 1;
+    if (!is_contiguous_root) {
+        if (n_threads > 1 && n_leaf >= 16384U) {
+#ifdef _OPENMP
+#pragma omp parallel for schedule(static) num_threads(n_threads)
+#endif
+            for (std::ptrdiff_t t = 0; t < static_cast<std::ptrdiff_t>(n_leaf); ++t) {
+                const std::uint32_t r = leaf_rows[static_cast<std::size_t>(t)];
+                g_ordered[t] = g[r];
+                h_ordered[t] = h[r];
             }
-            for (; i < n_leaf; ++i) {
-                const std::uint8_t b = col[i];
-                dst[b].g += static_cast<double>(g[i]);
-                dst[b].h += static_cast<double>(h[i]);
-                dst[b].c += 1;
+        } else {
+            for (std::size_t t = 0; t < n_leaf; ++t) {
+                const std::uint32_t r = leaf_rows[t];
+                g_ordered[t] = g[r];
+                h_ordered[t] = h[r];
+            }
+        }
+    }
+
+    // Routing between feature-parallel and chunked-per-feature depends strictly on shape so
+    // summation order stays invariant to thread count.
+    const bool use_chunked_axis =
+        (n_active < 16U) && (n_leaf >= 32768U) && (wave_hist_buf != nullptr);
+
+    if (!use_chunked_axis) {
+        const bool par_features =
+            (n_threads > 1) && (n_active >= 2U) && (n_leaf * n_active >= 20000U);
+        if (par_features) {
+#ifdef _OPENMP
+#pragma omp parallel for schedule(dynamic, 1) num_threads(n_threads)
+#endif
+            for (std::ptrdiff_t idx = 0; idx < static_cast<std::ptrdiff_t>(n_active); ++idx) {
+                const std::uint32_t f = layout.active_features[static_cast<std::size_t>(idx)];
+                const std::uint8_t* col = bins_base + static_cast<std::size_t>(f) * n_rows;
+                build_axis_feature_range(col, layout.offsets[f], leaf_rows, 0U, n_leaf,
+                                         is_contiguous_root, g, h, g_ordered, h_ordered, hist_out);
+            }
+        } else {
+            for (const std::uint32_t f : layout.active_features) {
+                const std::uint8_t* col = bins_base + static_cast<std::size_t>(f) * n_rows;
+                build_axis_feature_range(col, layout.offsets[f], leaf_rows, 0U, n_leaf,
+                                         is_contiguous_root, g, h, g_ordered, h_ordered, hist_out);
             }
         }
         return;
     }
 
-    // Gather leaf gradients/hessians sequentially once so every feature loop streams linearly.
-    for (std::size_t t = 0; t < n_leaf; ++t) {
-        const std::uint32_t r = leaf_rows[t];
-        g_ordered[t] = g[r];
-        h_ordered[t] = h[r];
-    }
+    const std::size_t n_chunks = (n_leaf + kDetChunkRows - 1U) / kDetChunkRows;
+    const std::size_t total_bins = layout.total_bins;
+    const bool use_omp = (n_threads > 1);
 
-    for (const std::uint32_t f : layout.active_features) {
-        const std::uint8_t* col = bins_base + static_cast<std::size_t>(f) * n_rows;
-        HistBin* dst = hist_out + layout.offsets[f];
-        std::size_t t = 0;
-        for (; t + 4U <= n_leaf; t += 4U) {
-            const std::uint8_t b0 = col[leaf_rows[t]];
-            const std::uint8_t b1 = col[leaf_rows[t + 1U]];
-            const std::uint8_t b2 = col[leaf_rows[t + 2U]];
-            const std::uint8_t b3 = col[leaf_rows[t + 3U]];
-            dst[b0].g += static_cast<double>(g_ordered[t]);
-            dst[b0].h += static_cast<double>(h_ordered[t]);
-            dst[b0].c += 1;
-            dst[b1].g += static_cast<double>(g_ordered[t + 1U]);
-            dst[b1].h += static_cast<double>(h_ordered[t + 1U]);
-            dst[b1].c += 1;
-            dst[b2].g += static_cast<double>(g_ordered[t + 2U]);
-            dst[b2].h += static_cast<double>(h_ordered[t + 2U]);
-            dst[b2].c += 1;
-            dst[b3].g += static_cast<double>(g_ordered[t + 3U]);
-            dst[b3].h += static_cast<double>(h_ordered[t + 3U]);
-            dst[b3].c += 1;
+    if (use_omp) {
+#ifdef _OPENMP
+#pragma omp parallel num_threads(n_threads)
+#endif
+        {
+            for (std::size_t w_base = 0; w_base < n_chunks; w_base += kWaveChunks) {
+                const std::size_t w_len = std::min(kWaveChunks, n_chunks - w_base);
+#ifdef _OPENMP
+#pragma omp for schedule(dynamic, 1)
+#endif
+                for (std::ptrdiff_t w = 0; w < static_cast<std::ptrdiff_t>(w_len); ++w) {
+                    const auto wu = static_cast<std::size_t>(w);
+                    const std::size_t c = w_base + wu;
+                    const std::size_t r0 = c * kDetChunkRows;
+                    const std::size_t r1 = std::min(r0 + kDetChunkRows, n_leaf);
+                    HistBin* wh = wave_hist_buf + wu * total_bins;
+                    std::memset(wh, 0, total_bins * sizeof(HistBin));
+                    for (const std::uint32_t f : layout.active_features) {
+                        const std::uint8_t* col = bins_base + static_cast<std::size_t>(f) * n_rows;
+                        build_axis_feature_range(col, layout.offsets[f], leaf_rows, r0, r1,
+                                                 is_contiguous_root, g, h, g_ordered, h_ordered,
+                                                 wh);
+                    }
+                }
+#ifdef _OPENMP
+#pragma omp for schedule(static)
+#endif
+                for (std::ptrdiff_t b = 0; b < static_cast<std::ptrdiff_t>(total_bins); ++b) {
+                    const auto bu = static_cast<std::size_t>(b);
+                    HistBin acc = hist_out[bu];
+                    for (std::size_t w = 0; w < w_len; ++w) {
+                        const HistBin& src = wave_hist_buf[w * total_bins + bu];
+                        acc.g += src.g;
+                        acc.h += src.h;
+                        acc.c += src.c;
+                    }
+                    hist_out[bu] = acc;
+                }
+            }
         }
-        for (; t < n_leaf; ++t) {
-            const std::uint8_t b = col[leaf_rows[t]];
-            dst[b].g += static_cast<double>(g_ordered[t]);
-            dst[b].h += static_cast<double>(h_ordered[t]);
-            dst[b].c += 1;
+    } else {
+        for (std::size_t w_base = 0; w_base < n_chunks; w_base += kWaveChunks) {
+            const std::size_t w_len = std::min(kWaveChunks, n_chunks - w_base);
+            for (std::size_t w = 0; w < w_len; ++w) {
+                const std::size_t c = w_base + w;
+                const std::size_t r0 = c * kDetChunkRows;
+                const std::size_t r1 = std::min(r0 + kDetChunkRows, n_leaf);
+                std::memset(wave_hist_buf, 0, total_bins * sizeof(HistBin));
+                for (const std::uint32_t f : layout.active_features) {
+                    const std::uint8_t* col = bins_base + static_cast<std::size_t>(f) * n_rows;
+                    build_axis_feature_range(col, layout.offsets[f], leaf_rows, r0, r1,
+                                             is_contiguous_root, g, h, g_ordered, h_ordered,
+                                             wave_hist_buf);
+                }
+                for (std::size_t b = 0; b < total_bins; ++b) {
+                    hist_out[b].g += wave_hist_buf[b].g;
+                    hist_out[b].h += wave_hist_buf[b].h;
+                    hist_out[b].c += wave_hist_buf[b].c;
+                }
+            }
         }
     }
 }

@@ -98,7 +98,7 @@ TrainResult fit_booster(const Dataset& ds, Objective objective, std::span<const 
     Model model;
     model.miter_version = std::string(version());
     model.objective = objective;
-    model.init_score = compute_init_score(objective, y, sample_weight);
+    model.init_score = compute_init_score(objective, y, sample_weight, params.n_jobs);
     model.learning_rate = params.learning_rate;
     model.n_features = p;
     model.params = params;
@@ -152,21 +152,23 @@ TrainResult fit_booster(const Dataset& ds, Objective objective, std::span<const 
             }
         }
 
-        compute_gradients(objective, scores, y, sample_weight, g.data(), h.data());
+        compute_gradients(objective, scores, y, sample_weight, g.data(), h.data(), params.n_jobs);
         Tree tree = grow_tree(ds, g.data(), h.data(), params, static_cast<std::size_t>(t), ws,
                               scores.data());
         model.trees.push_back(std::move(tree));
 
-        result.train_loss.push_back(compute_loss(objective, scores, y, sample_weight));
+        result.train_loss.push_back(
+            compute_loss(objective, scores, y, sample_weight, params.n_jobs));
 
         if (has_valid) {
             const std::int16_t* valid_codes =
                 (valid_ds->n_num_features > 0U) ? valid_ds->codes_row_major.data() : nullptr;
             Evaluator::add_tree_predictions_from_codes(
                 model.trees.back(), valid_codes, valid_ds->n_rows, valid_ds->n_num_features,
-                feature_to_num_idx, valid_scores.data(), valid_ds->bins_col_major.data());
+                feature_to_num_idx, valid_scores.data(), valid_ds->bins_col_major.data(),
+                params.n_jobs);
             const double vloss =
-                compute_loss(objective, valid_scores, y_valid, valid_sample_weight);
+                compute_loss(objective, valid_scores, y_valid, valid_sample_weight, params.n_jobs);
             result.valid_loss.push_back(vloss);
 
             if (vloss < best_val - 1e-12) {

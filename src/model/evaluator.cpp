@@ -10,6 +10,7 @@
 
 #include "core/objective.hpp"
 #include "data/quantizer.hpp"
+#include "util/threading.hpp"
 
 namespace miter {
 
@@ -165,7 +166,7 @@ std::vector<double> Model::feature_importances_gain() const {
 
 void Evaluator::predict_raw(const Model& model, const double* data, std::size_t n_rows,
                             std::size_t n_cols, bool col_major, double* out,
-                            std::size_t num_iteration) {
+                            std::size_t num_iteration, int n_jobs) {
     if (n_rows == 0U) {
         return;
     }
@@ -173,12 +174,12 @@ void Evaluator::predict_raw(const Model& model, const double* data, std::size_t 
         throw std::invalid_argument("Evaluator::predict_raw feature count mismatch");
     }
     auto views = make_eval_views(data, n_rows, n_cols, col_major);
-    predict_raw_views(model, n_rows, views, out, num_iteration);
+    predict_raw_views(model, n_rows, views, out, num_iteration, n_jobs);
 }
 
 void Evaluator::predict_raw(const Model& model, const float* data, std::size_t n_rows,
                             std::size_t n_cols, bool col_major, double* out,
-                            std::size_t num_iteration) {
+                            std::size_t num_iteration, int n_jobs) {
     if (n_rows == 0U) {
         return;
     }
@@ -186,12 +187,12 @@ void Evaluator::predict_raw(const Model& model, const float* data, std::size_t n
         throw std::invalid_argument("Evaluator::predict_raw feature count mismatch");
     }
     auto views = make_eval_views(data, n_rows, n_cols, col_major);
-    predict_raw_views(model, n_rows, views, out, num_iteration);
+    predict_raw_views(model, n_rows, views, out, num_iteration, n_jobs);
 }
 
 void Evaluator::predict_raw_views(const Model& model, std::size_t n_rows,
                                   const std::vector<NumericColumnView>& num_cols, double* out,
-                                  std::size_t num_iteration) {
+                                  std::size_t num_iteration, int n_jobs) {
     if (n_rows == 0U) {
         return;
     }
@@ -219,9 +220,11 @@ void Evaluator::predict_raw_views(const Model& model, std::size_t n_rows,
                                      model.quantizers[f].is_constant};
     }
 
-    std::vector<std::uint16_t> block_codes(kEvalBlockRows * p);
+    const std::size_t n_blocks = (n_rows + kEvalBlockRows - 1U) / kEvalBlockRows;
+    const int n_threads = resolve_num_threads(n_jobs);
 
-    for (std::size_t base = 0; base < n_rows; base += kEvalBlockRows) {
+    auto eval_block = [&](std::size_t blk_idx, std::uint16_t* block_codes) noexcept {
+        const std::size_t base = blk_idx * kEvalBlockRows;
         const std::size_t blk = std::min(kEvalBlockRows, n_rows - base);
 
         for (std::size_t f = 0; f < p; ++f) {
@@ -242,11 +245,29 @@ void Evaluator::predict_raw_views(const Model& model, std::size_t n_rows,
 
         for (std::size_t r = 0; r < blk; ++r) {
             double score = model.init_score;
-            const std::uint16_t* row_codes = block_codes.data() + r * p;
+            const std::uint16_t* row_codes = block_codes + r * p;
             for (std::size_t t = 0; t < max_trees; ++t) {
                 score += eval_tree_u16(model.trees[t], row_codes);
             }
             out[base + r] = score;
+        }
+    };
+
+    if (n_threads > 1 && n_rows >= 4096U && n_blocks >= 2U) {
+#ifdef _OPENMP
+#pragma omp parallel num_threads(n_threads)
+        {
+            std::vector<std::uint16_t> block_codes(kEvalBlockRows * p);
+#pragma omp for schedule(static)
+            for (std::ptrdiff_t bi = 0; bi < static_cast<std::ptrdiff_t>(n_blocks); ++bi) {
+                eval_block(static_cast<std::size_t>(bi), block_codes.data());
+            }
+        }
+#endif
+    } else {
+        std::vector<std::uint16_t> block_codes(kEvalBlockRows * p);
+        for (std::size_t bi = 0; bi < n_blocks; ++bi) {
+            eval_block(bi, block_codes.data());
         }
     }
 }
@@ -254,7 +275,7 @@ void Evaluator::predict_raw_views(const Model& model, std::size_t n_rows,
 void Evaluator::predict_raw_mixed(const Model& model, std::size_t n_rows,
                                   const std::vector<NumericColumnView>& num_cols,
                                   const std::vector<CategoricalColumnView>& cat_cols, double* out,
-                                  std::size_t num_iteration) {
+                                  std::size_t num_iteration, int n_jobs) {
     if (n_rows == 0U) {
         return;
     }
@@ -328,8 +349,11 @@ void Evaluator::predict_raw_mixed(const Model& model, std::size_t n_rows,
                                       ? std::min(model.best_iteration, model.trees.size())
                                       : std::min(num_iteration, model.trees.size());
 
-    std::vector<std::uint16_t> block_codes(kEvalBlockRows * p);
-    for (std::size_t base = 0; base < n_rows; base += kEvalBlockRows) {
+    const std::size_t n_blocks = (n_rows + kEvalBlockRows - 1U) / kEvalBlockRows;
+    const int n_threads = resolve_num_threads(n_jobs);
+
+    auto eval_block = [&](std::size_t blk_idx, std::uint16_t* block_codes) noexcept {
+        const std::size_t base = blk_idx * kEvalBlockRows;
         const std::size_t blk = std::min(kEvalBlockRows, n_rows - base);
 
         for (std::size_t f = 0; f < p; ++f) {
@@ -362,11 +386,29 @@ void Evaluator::predict_raw_mixed(const Model& model, std::size_t n_rows,
 
         for (std::size_t r = 0; r < blk; ++r) {
             double score = model.init_score;
-            const std::uint16_t* row_codes = block_codes.data() + r * p;
+            const std::uint16_t* row_codes = block_codes + r * p;
             for (std::size_t t = 0; t < max_trees; ++t) {
                 score += eval_tree_u16(model.trees[t], row_codes);
             }
             out[base + r] = score;
+        }
+    };
+
+    if (n_threads > 1 && n_rows >= 4096U && n_blocks >= 2U) {
+#ifdef _OPENMP
+#pragma omp parallel num_threads(n_threads)
+        {
+            std::vector<std::uint16_t> block_codes(kEvalBlockRows * p);
+#pragma omp for schedule(static)
+            for (std::ptrdiff_t bi = 0; bi < static_cast<std::ptrdiff_t>(n_blocks); ++bi) {
+                eval_block(static_cast<std::size_t>(bi), block_codes.data());
+            }
+        }
+#endif
+    } else {
+        std::vector<std::uint16_t> block_codes(kEvalBlockRows * p);
+        for (std::size_t bi = 0; bi < n_blocks; ++bi) {
+            eval_block(bi, block_codes.data());
         }
     }
 }
@@ -383,9 +425,12 @@ void Evaluator::add_tree_predictions_from_codes(const Tree& tree,
                                                 const std::int16_t* codes_row_major,
                                                 std::size_t n_rows, std::size_t n_num_features,
                                                 const std::vector<std::size_t>& feature_to_num_idx,
-                                                double* scores,
-                                                const std::uint8_t* bins_col_major) noexcept {
-    for (std::size_t i = 0; i < n_rows; ++i) {
+                                                double* scores, const std::uint8_t* bins_col_major,
+                                                int n_jobs) noexcept {
+    const int n_threads = resolve_num_threads(n_jobs);
+    const bool use_omp = (n_threads > 1) && (n_rows >= 4096U);
+
+    auto score_row = [&](std::size_t i) noexcept {
         const std::int16_t* row = (n_num_features > 0U && codes_row_major != nullptr)
                                       ? (codes_row_major + i * n_num_features)
                                       : nullptr;
@@ -449,6 +494,19 @@ void Evaluator::add_tree_predictions_from_codes(const Tree& tree,
                 }
             }
             nid = go_left ? node.left_child : node.right_child;
+        }
+    };
+
+    if (use_omp) {
+#ifdef _OPENMP
+#pragma omp parallel for schedule(static) num_threads(n_threads)
+#endif
+        for (std::ptrdiff_t i = 0; i < static_cast<std::ptrdiff_t>(n_rows); ++i) {
+            score_row(static_cast<std::size_t>(i));
+        }
+    } else {
+        for (std::size_t i = 0; i < n_rows; ++i) {
+            score_row(i);
         }
     }
 }
