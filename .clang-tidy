@@ -1,0 +1,17 @@
+Checks: >-
+  -*,
+  clang-analyzer-*,
+  bugprone-*,
+  performance-*,
+  -bugprone-easily-swappable-parameters,
+  -bugprone-narrowing-conversions,
+  -bugprone-implicit-widening-of-multiplication-result,
+  -bugprone-branch-clone,
+  -bugprone-reserved-identifier,
+  -bugprone-signed-bitwise,
+  -performance-avoid-endl,
+  -performance-enum-size,
+  -clang-analyzer-optin.*,
+  -clang-analyzer-unix.Errno
+WarningsAsErrors: '*'
+HeaderFilterRegex: 'include[/\\]miter[/\\]|src[/\\](data|core|model|util)[/\\]'
