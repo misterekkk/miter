@@ -1,0 +1,25 @@
+add_executable(miter_tests
+    test_smoke.cpp
+)
+
+target_link_libraries(miter_tests PRIVATE
+    miter
+    GTest::gtest_main
+)
+
+if(MSVC)
+    target_compile_options(miter_tests PRIVATE /fp:precise /W4)
+    if(MITER_WARNINGS_AS_ERRORS)
+        target_compile_options(miter_tests PRIVATE /WX)
+    endif()
+else()
+    target_compile_options(miter_tests PRIVATE -ffp-contract=off -fno-math-errno)
+    if(MITER_WARNINGS_AS_ERRORS)
+        target_compile_options(miter_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
+    endif()
+endif()
+
+miter_apply_sanitizers(miter_tests)
+
+include(GoogleTest)
+gtest_discover_tests(miter_tests)
