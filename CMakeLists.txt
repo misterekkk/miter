@@ -74,6 +74,7 @@ endif()
 add_library(miter STATIC
     src/miter.cpp
     src/core/booster.cpp
+    src/core/categorical.cpp
     src/core/histogram.cpp
     src/core/objective.cpp
     src/core/oblique.cpp

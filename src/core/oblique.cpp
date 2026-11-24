@@ -94,6 +94,26 @@ void scan_oblique_hist(const HistBin* hist, double parent_g, double parent_h, st
             }
         }
     }
+
+    // Final split: all valid projections left vs missing-any-feature right.
+    gl += hist[kObliqueBins - 1].g;
+    hl += hist[kObliqueBins - 1].h;
+    cl += hist[kObliqueBins - 1].c;
+    const std::int32_t cr_fin = parent_c - cl;
+    if (cl >= min_c && cr_fin >= min_c) {
+        const double hr_fin = parent_h - hl;
+        if (hl >= min_h && hr_fin >= min_h) {
+            const double gr_fin = parent_g - gl;
+            const double gain =
+                (gl * gl) / (hl + lam) + (gr_fin * gr_fin) / (hr_fin + lam) - parent_score;
+            if (gain > best_gain && gain > min_gain) {
+                best_gain = gain;
+                best_thr = oblique_bin_threshold(pmin, range, kObliqueBins - 1);
+                best_nan_left = false;
+                found = true;
+            }
+        }
+    }
 }
 
 ObliqueSplitCandidate eval_oblique_i64_candidates(
@@ -145,7 +165,7 @@ ObliqueSplitCandidate eval_oblique_i64_candidates(
             }
         }
 
-        if (c_valid < 2 || pmin >= pmax) {
+        if (c_valid < 1 || pmin > pmax || (pmin == pmax && c_nan == 0)) {
             continue;
         }
 
@@ -412,8 +432,9 @@ ObliqueSplitCandidate find_best_oblique_split(const Dataset& ds, const std::uint
 
     std::size_t n_active = 0U;
     for (std::size_t j = 0; j < m; ++j) {
-        if (scratch.cand_k[j] >= 2U && scratch.cand_valid_cnt[j] >= 2 &&
-            scratch.cand_pmin[j] < scratch.cand_pmax[j]) {
+        if (scratch.cand_k[j] >= 2U && scratch.cand_valid_cnt[j] >= 1 &&
+            (scratch.cand_pmin[j] < scratch.cand_pmax[j] ||
+             (scratch.cand_pmin[j] == scratch.cand_pmax[j] && scratch.cand_c_nan[j] > 0))) {
             scratch.active_cands[n_active] = static_cast<std::uint32_t>(j);
             scratch.active_ranges[n_active] = static_cast<std::int64_t>(scratch.cand_pmax[j]) -
                                               static_cast<std::int64_t>(scratch.cand_pmin[j]) + 1;

@@ -10,21 +10,37 @@ FeatureHistLayout FeatureHistLayout::build(const Dataset& ds) {
     layout.offsets.assign(p, 0);
     layout.num_regular_bins.assign(p, 0);
     layout.has_nan.assign(p, 0);
+    layout.is_categorical.assign(p, 0);
 
     std::size_t offset = 0;
     for (std::size_t f = 0; f < p; ++f) {
-        if (ds.feature_kinds()[f] != FeatureKind::Numeric) {
-            continue;
+        if (ds.feature_kinds()[f] == FeatureKind::Numeric) {
+            const auto& binner = ds.binner(f);
+            if (binner.num_bins < 2U && !binner.has_nan) {
+                continue;
+            }
+            layout.offsets[f] = offset;
+            layout.num_regular_bins[f] = binner.num_bins;
+            layout.has_nan[f] = binner.has_nan ? 1U : 0U;
+            layout.is_categorical[f] = 0U;
+            const auto fi = static_cast<std::uint32_t>(f);
+            layout.active_features.push_back(fi);
+            layout.active_num_features.push_back(fi);
+            offset += static_cast<std::size_t>(binner.num_bins) + (binner.has_nan ? 1U : 0U);
+        } else {
+            const std::uint16_t nc = ds.cat_encoder(f).num_codes();
+            if (nc < 2U) {
+                continue;
+            }
+            layout.offsets[f] = offset;
+            layout.num_regular_bins[f] = nc;
+            layout.has_nan[f] = 0U;
+            layout.is_categorical[f] = 1U;
+            const auto fi = static_cast<std::uint32_t>(f);
+            layout.active_features.push_back(fi);
+            layout.active_cat_features.push_back(fi);
+            offset += static_cast<std::size_t>(nc);
         }
-        const auto& binner = ds.binner(f);
-        if (binner.num_bins < 2U) {
-            continue;
-        }
-        layout.offsets[f] = offset;
-        layout.num_regular_bins[f] = binner.num_bins;
-        layout.has_nan[f] = binner.has_nan ? 1U : 0U;
-        layout.active_features.push_back(static_cast<std::uint32_t>(f));
-        offset += static_cast<std::size_t>(binner.num_bins) + (binner.has_nan ? 1U : 0U);
     }
     layout.total_bins = offset;
     return layout;
@@ -138,7 +154,7 @@ AxisSplitCandidate find_best_axis_split(const Dataset& ds, const FeatureHistLayo
                                         const HistBin* hist, double parent_g, double parent_h,
                                         std::int32_t parent_c, const Params& params) noexcept {
     AxisSplitCandidate best;
-    if (layout.active_features.empty() || parent_c < 2 * params.min_data_in_leaf) {
+    if (layout.active_num_features.empty() || parent_c < 2 * params.min_data_in_leaf) {
         return best;
     }
 
@@ -148,7 +164,7 @@ AxisSplitCandidate find_best_axis_split(const Dataset& ds, const FeatureHistLayo
     const double min_gain = params.min_gain_to_split;
     const double parent_score = (parent_g * parent_g) / (parent_h + lam);
 
-    for (const std::uint32_t f : layout.active_features) {
+    for (const std::uint32_t f : layout.active_num_features) {
         const std::uint16_t nb = layout.num_regular_bins[f];
         const HistBin* fh = hist + layout.offsets[f];
         const auto& edges = ds.binner(f).edges;
@@ -238,6 +254,28 @@ AxisSplitCandidate find_best_axis_split(const Dataset& ds, const FeatureHistLayo
                                 best.valid = true;
                             }
                         }
+                    }
+                }
+            }
+
+            // Final split: all finite bins left vs NaN right.
+            gl += fh[nb - 1U].g;
+            hl += fh[nb - 1U].h;
+            cl += fh[nb - 1U].c;
+            const std::int32_t cr_fin = parent_c - cl;
+            if (cl >= min_c && cr_fin >= min_c) {
+                const double hr_fin = parent_h - hl;
+                if (hl >= min_h && hr_fin >= min_h) {
+                    const double gr_fin = parent_g - gl;
+                    const double gain =
+                        (gl * gl) / (hl + lam) + (gr_fin * gr_fin) / (hr_fin + lam) - parent_score;
+                    if (gain > best.gain && gain > min_gain) {
+                        best.gain = gain;
+                        best.feature = f;
+                        best.bin_idx = static_cast<std::uint8_t>(nb - 1U);
+                        best.threshold_u16 = kQ16NanCode;
+                        best.nan_go_left = false;
+                        best.valid = true;
                     }
                 }
             }

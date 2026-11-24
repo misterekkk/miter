@@ -22,7 +22,10 @@ struct FeatureHistLayout {
     std::vector<std::size_t> offsets;
     std::vector<std::uint16_t> num_regular_bins;
     std::vector<std::uint8_t> has_nan;
+    std::vector<std::uint8_t> is_categorical;
     std::vector<std::uint32_t> active_features;
+    std::vector<std::uint32_t> active_num_features;
+    std::vector<std::uint32_t> active_cat_features;
     std::size_t total_bins = 0;
 
     static FeatureHistLayout build(const Dataset& ds);

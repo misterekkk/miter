@@ -2,6 +2,7 @@
 
 #include <miter/params.hpp>
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <string>
@@ -32,10 +33,26 @@ struct Node {
     std::int32_t threshold_i32 = 0;  // Oblique (k <= 3): left iff P < threshold_i32
     std::uint32_t oblique_features[3] = {0, 0, 0};
     std::int16_t oblique_weights[3] = {0, 0, 0};
-    std::uint32_t overflow_offset = 0; // Index into Tree::oblique_overflow when oblique_k > 3
-    double leaf_value = 0.0;           // Scaled by learning_rate
+    std::uint32_t overflow_offset = 0;   // Index into Tree::oblique_overflow when oblique_k > 3
+    std::uint32_t cat_bitset_offset = 0; // Index into Tree::cat_bitsets when kind == Categorical
+    double leaf_value = 0.0;             // Scaled by learning_rate
     double split_gain = 0.0;
 };
+
+struct CatBitset {
+    std::array<std::uint64_t, 4> words = {0ULL, 0ULL, 0ULL, 0ULL};
+};
+
+inline void cat_bitset_set(CatBitset& bs, std::uint8_t code) noexcept {
+    bs.words[static_cast<std::size_t>(code) >> 6U] |=
+        (std::uint64_t{1} << (static_cast<unsigned int>(code) & 63U));
+}
+
+inline bool cat_bitset_test(const CatBitset& bs, std::uint8_t code) noexcept {
+    return ((bs.words[static_cast<std::size_t>(code) >> 6U] >>
+             (static_cast<unsigned int>(code) & 63U)) &
+            1ULL) != 0ULL;
+}
 
 struct ObliqueOverflow {
     std::vector<std::uint32_t> features;
@@ -46,6 +63,7 @@ struct ObliqueOverflow {
 struct Tree {
     std::vector<Node> nodes;
     std::vector<ObliqueOverflow> oblique_overflow;
+    std::vector<CatBitset> cat_bitsets;
     std::uint32_t n_leaves = 1;
 };
 
