@@ -25,6 +25,12 @@ class Params:
     lambda_l2: float
     min_gain_to_split: float
     max_bin: int
+    max_cat_to_onehot: int
+    min_data_per_group: int
+    max_categories: int
+    cat_smooth: float
+    cat_l2: float
+    max_cat_threshold: int
     m_mult: int
     k_proj: int
     oblique_max_depth: int
@@ -43,6 +49,8 @@ class Model:
     best_iteration: int
     params: Params
     feature_names: list[str]
+    @property
+    def is_categorical(self) -> list[bool]: ...
     def feature_importances_split(self) -> NDArray[np.uint64]: ...
     def feature_importances_gain(self) -> NDArray[np.float64]: ...
 
@@ -140,6 +148,22 @@ def predict_proba_f64(
 ) -> NDArray[np.float64]: ...
 def predict_proba_f32(
     model: Model, arr: NDArray[np.float32], num_iteration: int = 0
+) -> NDArray[np.float64]: ...
+def predict_raw_mixed(
+    model: Model,
+    n_rows: int,
+    num_cols: list[NDArray[np.float64] | NDArray[np.float32]],
+    cat_vocabs: list[list[str]],
+    cat_indices: list[NDArray[np.int32]],
+    num_iteration: int = 0,
+) -> NDArray[np.float64]: ...
+def predict_proba_mixed(
+    model: Model,
+    n_rows: int,
+    num_cols: list[NDArray[np.float64] | NDArray[np.float32]],
+    cat_vocabs: list[list[str]],
+    cat_indices: list[NDArray[np.int32]],
+    num_iteration: int = 0,
 ) -> NDArray[np.float64]: ...
 def model_to_json(model: Model) -> str: ...
 def model_from_json(json_text: str) -> Model: ...

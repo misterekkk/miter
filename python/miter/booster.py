@@ -9,7 +9,71 @@ import numpy as np
 from numpy.typing import NDArray
 
 from miter import _core
-from miter.data import Dataset, _is_pandas_dataframe
+from miter.data import (
+    Dataset,
+    _factorize_categorical_values,
+    _is_pandas_dataframe,
+    _prepare_numeric_1d,
+)
+
+
+def _extract_mixed_predict_inputs(
+    X: Any,
+    model: _core.Model,
+    *,
+    fitted_on_dataframe: bool,
+) -> tuple[
+    int,
+    list[NDArray[np.float64] | NDArray[np.float32]],
+    list[list[str]],
+    list[NDArray[np.int32]],
+]:
+    is_cat = model.is_categorical
+    expected_features = model.n_features
+    expected_feature_names = model.feature_names
+    is_df = _is_pandas_dataframe(X)
+
+    if is_df:
+        n_rows, n_features = X.shape
+        if n_features != expected_features:
+            raise ValueError(f"Expected {expected_features} features, got {n_features}")
+        if fitted_on_dataframe:
+            cols = [str(c) for c in X.columns]
+            if cols != expected_feature_names:
+                raise ValueError(
+                    f"Feature names mismatch: expected {expected_feature_names}, got {cols}"
+                )
+        num_cols: list[NDArray[np.float64] | NDArray[np.float32]] = []
+        cat_vocabs: list[list[str]] = []
+        cat_indices: list[NDArray[np.int32]] = []
+        for j in range(n_features):
+            col = X.iloc[:, j]
+            if is_cat[j]:
+                vocab, codes = _factorize_categorical_values(col, is_pandas=True)
+                cat_vocabs.append(vocab)
+                cat_indices.append(codes)
+            else:
+                num_cols.append(_prepare_numeric_1d(col, is_pandas=True))
+        return n_rows, num_cols, cat_vocabs, cat_indices
+
+    arr = np.asarray(X)
+    if arr.ndim != 2:
+        raise ValueError(f"Expected 2D array, got shape {arr.shape}")
+    n_rows, n_features = arr.shape
+    if n_features != expected_features:
+        raise ValueError(f"Expected {expected_features} features, got {n_features}")
+    num_cols = []
+    cat_vocabs = []
+    cat_indices = []
+    for j in range(n_features):
+        col = arr[:, j]
+        if is_cat[j]:
+            vocab, codes = _factorize_categorical_values(col, is_pandas=False)
+            cat_vocabs.append(vocab)
+            cat_indices.append(codes)
+        else:
+            num_cols.append(_prepare_numeric_1d(col, is_pandas=False))
+    return n_rows, num_cols, cat_vocabs, cat_indices
 
 
 def _to_numeric_matrix_view(
@@ -62,6 +126,12 @@ class _BaseMiterEstimator:
         lambda_l2: float = 1.0,
         min_gain_to_split: float = 0.0,
         max_bin: int = 255,
+        max_cat_to_onehot: int = 4,
+        min_data_per_group: int = 100,
+        max_categories: int = 253,
+        cat_smooth: float = 10.0,
+        cat_l2: float = 10.0,
+        max_cat_threshold: int = 32,
         m_mult: int = 2,
         k_proj: int = 0,
         preset: str = "default",
@@ -84,6 +154,12 @@ class _BaseMiterEstimator:
         self.lambda_l2 = lambda_l2
         self.min_gain_to_split = min_gain_to_split
         self.max_bin = max_bin
+        self.max_cat_to_onehot = max_cat_to_onehot
+        self.min_data_per_group = min_data_per_group
+        self.max_categories = max_categories
+        self.cat_smooth = cat_smooth
+        self.cat_l2 = cat_l2
+        self.max_cat_threshold = max_cat_threshold
         self.m_mult = m_mult
         self.k_proj = k_proj
         self.preset = preset
@@ -100,6 +176,10 @@ class _BaseMiterEstimator:
     def _build_params(self) -> _core.Params:
         if self.preset not in ("default", "fast", "accurate"):
             raise ValueError(f"Unknown preset: {self.preset!r}")
+        if self.cat_mode != "k1":
+            raise ValueError(
+                f"Unsupported cat_mode={self.cat_mode!r} in v1.0; only 'k1' is supported"
+            )
         p = _core.Params()
         p.n_estimators = int(self.n_estimators)
         p.learning_rate = float(self.learning_rate)
@@ -110,6 +190,12 @@ class _BaseMiterEstimator:
         p.lambda_l2 = float(self.lambda_l2)
         p.min_gain_to_split = float(self.min_gain_to_split)
         p.max_bin = int(self.max_bin)
+        p.max_cat_to_onehot = int(self.max_cat_to_onehot)
+        p.min_data_per_group = int(self.min_data_per_group)
+        p.max_categories = int(self.max_categories)
+        p.cat_smooth = float(self.cat_smooth)
+        p.cat_l2 = float(self.cat_l2)
+        p.max_cat_threshold = int(self.max_cat_threshold)
         if self.preset == "fast":
             p.m_mult = int(self.m_mult)
             p.oblique_max_depth = 1
@@ -149,7 +235,13 @@ class _BaseMiterEstimator:
     ) -> _core.TrainResult:
         params = self._build_params()
         self._fitted_on_dataframe = _is_pandas_dataframe(X)
-        ds = Dataset(X, categorical_feature=categorical_feature, max_bin=self.max_bin)
+        ds = Dataset(
+            X,
+            categorical_feature=categorical_feature,
+            max_bin=self.max_bin,
+            min_data_per_group=self.min_data_per_group,
+            max_categories=self.max_categories,
+        )
         y_arr = self._encode_targets(y, is_fit=True)
         sw_arr = (
             None
@@ -190,10 +282,25 @@ class _BaseMiterEstimator:
     def _predict_raw(self, X: Any, num_iteration: int | None = None) -> NDArray[np.float64]:
         model = self._check_fitted()
         n_iter = 0 if num_iteration is None else int(num_iteration)
+        fitted_on_df = getattr(self, "_fitted_on_dataframe", False)
+        if any(model.is_categorical):
+            n_rows, num_cols, cat_vocabs, cat_indices = _extract_mixed_predict_inputs(
+                X,
+                model,
+                fitted_on_dataframe=fitted_on_df,
+            )
+            return _core.predict_raw_mixed(
+                model,
+                n_rows,
+                num_cols,
+                cat_vocabs,
+                cat_indices,
+                n_iter,
+            )
         arr = _to_numeric_matrix_view(
             X,
             expected_features=model.n_features,
-            fitted_on_dataframe=getattr(self, "_fitted_on_dataframe", False),
+            fitted_on_dataframe=fitted_on_df,
             expected_feature_names=model.feature_names,
         )
         if arr.dtype == np.float32:
@@ -217,6 +324,12 @@ class _BaseMiterEstimator:
             lambda_l2=p.lambda_l2,
             min_gain_to_split=p.min_gain_to_split,
             max_bin=p.max_bin,
+            max_cat_to_onehot=p.max_cat_to_onehot,
+            min_data_per_group=p.min_data_per_group,
+            max_categories=p.max_categories,
+            cat_smooth=p.cat_smooth,
+            cat_l2=p.cat_l2,
+            max_cat_threshold=p.max_cat_threshold,
             m_mult=p.m_mult,
             k_proj=p.k_proj,
             early_stopping_rounds=None if p.early_stopping_rounds == 0 else p.early_stopping_rounds,
@@ -245,6 +358,12 @@ class _BaseMiterEstimator:
             "lambda_l2": self.lambda_l2,
             "min_gain_to_split": self.min_gain_to_split,
             "max_bin": self.max_bin,
+            "max_cat_to_onehot": self.max_cat_to_onehot,
+            "min_data_per_group": self.min_data_per_group,
+            "max_categories": self.max_categories,
+            "cat_smooth": self.cat_smooth,
+            "cat_l2": self.cat_l2,
+            "max_cat_threshold": self.max_cat_threshold,
             "m_mult": self.m_mult,
             "k_proj": self.k_proj,
             "preset": self.preset,
@@ -347,10 +466,25 @@ class MiterClassifier(_BaseMiterEstimator):
     def predict_proba(self, X: Any, num_iteration: int | None = None) -> NDArray[np.float64]:
         model = self._check_fitted()
         n_iter = 0 if num_iteration is None else int(num_iteration)
+        fitted_on_df = getattr(self, "_fitted_on_dataframe", False)
+        if any(model.is_categorical):
+            n_rows, num_cols, cat_vocabs, cat_indices = _extract_mixed_predict_inputs(
+                X,
+                model,
+                fitted_on_dataframe=fitted_on_df,
+            )
+            return _core.predict_proba_mixed(
+                model,
+                n_rows,
+                num_cols,
+                cat_vocabs,
+                cat_indices,
+                n_iter,
+            )
         arr = _to_numeric_matrix_view(
             X,
             expected_features=model.n_features,
-            fitted_on_dataframe=getattr(self, "_fitted_on_dataframe", False),
+            fitted_on_dataframe=fitted_on_df,
             expected_feature_names=model.feature_names,
         )
         if arr.dtype == np.float32:

@@ -345,6 +345,42 @@ predict_proba_py(const miter::Model& model,
     return vec_to_ndarray_2d(std::move(proba), n_rows, 2U);
 }
 
+nb::ndarray<nb::numpy, double, nb::ndim<1>> predict_raw_mixed_py(
+    const miter::Model& model, std::size_t n_rows, const nb::list& num_cols,
+    std::vector<std::vector<std::string>> cat_vocabs,
+    const std::vector<nb::ndarray<const std::int32_t, nb::ndim<1>, nb::c_contig, nb::device::cpu>>&
+        cat_indices,
+    std::size_t num_iteration) {
+    auto num_views = extract_num_col_views(num_cols, n_rows);
+    auto cat_views = extract_cat_col_views(std::move(cat_vocabs), cat_indices, n_rows);
+    std::vector<double> out(n_rows);
+    {
+        nb::gil_scoped_release release;
+        miter::Evaluator::predict_raw_mixed(model, n_rows, num_views, cat_views, out.data(),
+                                            num_iteration);
+    }
+    return vec_to_ndarray_1d(std::move(out));
+}
+
+nb::ndarray<nb::numpy, double, nb::ndim<2>> predict_proba_mixed_py(
+    const miter::Model& model, std::size_t n_rows, const nb::list& num_cols,
+    std::vector<std::vector<std::string>> cat_vocabs,
+    const std::vector<nb::ndarray<const std::int32_t, nb::ndim<1>, nb::c_contig, nb::device::cpu>>&
+        cat_indices,
+    std::size_t num_iteration) {
+    auto num_views = extract_num_col_views(num_cols, n_rows);
+    auto cat_views = extract_cat_col_views(std::move(cat_vocabs), cat_indices, n_rows);
+    std::vector<double> raw(n_rows);
+    std::vector<double> proba(n_rows * 2U);
+    {
+        nb::gil_scoped_release release;
+        miter::Evaluator::predict_raw_mixed(model, n_rows, num_views, cat_views, raw.data(),
+                                            num_iteration);
+        miter::Evaluator::predict_proba_from_raw(raw.data(), n_rows, proba.data());
+    }
+    return vec_to_ndarray_2d(std::move(proba), n_rows, 2U);
+}
+
 } // namespace
 
 NB_MODULE(_core, m) {
@@ -377,6 +413,12 @@ NB_MODULE(_core, m) {
         .def_rw("lambda_l2", &miter::Params::lambda_l2)
         .def_rw("min_gain_to_split", &miter::Params::min_gain_to_split)
         .def_rw("max_bin", &miter::Params::max_bin)
+        .def_rw("max_cat_to_onehot", &miter::Params::max_cat_to_onehot)
+        .def_rw("min_data_per_group", &miter::Params::min_data_per_group)
+        .def_rw("max_categories", &miter::Params::max_categories)
+        .def_rw("cat_smooth", &miter::Params::cat_smooth)
+        .def_rw("cat_l2", &miter::Params::cat_l2)
+        .def_rw("max_cat_threshold", &miter::Params::max_cat_threshold)
         .def_rw("m_mult", &miter::Params::m_mult)
         .def_rw("k_proj", &miter::Params::k_proj)
         .def_rw("oblique_max_depth", &miter::Params::oblique_max_depth)
@@ -394,6 +436,15 @@ NB_MODULE(_core, m) {
         .def_ro("best_iteration", &miter::Model::best_iteration)
         .def_ro("params", &miter::Model::params)
         .def_ro("feature_names", &miter::Model::feature_names)
+        .def_prop_ro("is_categorical",
+                     [](const miter::Model& model) {
+                         std::vector<bool> flags;
+                         flags.reserve(model.feature_kinds.size());
+                         for (const std::uint8_t k : model.feature_kinds) {
+                             flags.push_back(k == 1U);
+                         }
+                         return flags;
+                     })
         .def("feature_importances_split",
              [](const miter::Model& model) {
                  return vec_to_ndarray_1d(model.feature_importances_split());
@@ -529,6 +580,12 @@ NB_MODULE(_core, m) {
           nb::arg("arr").noconvert(), nb::arg("num_iteration") = 0);
     m.def("predict_proba_f32", &predict_proba_py<float>, nb::arg("model"),
           nb::arg("arr").noconvert(), nb::arg("num_iteration") = 0);
+    m.def("predict_raw_mixed", &predict_raw_mixed_py, nb::arg("model"), nb::arg("n_rows"),
+          nb::arg("num_cols"), nb::arg("cat_vocabs"), nb::arg("cat_indices"),
+          nb::arg("num_iteration") = 0);
+    m.def("predict_proba_mixed", &predict_proba_mixed_py, nb::arg("model"), nb::arg("n_rows"),
+          nb::arg("num_cols"), nb::arg("cat_vocabs"), nb::arg("cat_indices"),
+          nb::arg("num_iteration") = 0);
 
     m.def("model_to_json", &miter::model_to_json, nb::arg("model"));
     m.def("model_from_json", &miter::model_from_json, nb::arg("json_text"));

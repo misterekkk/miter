@@ -19,7 +19,7 @@ def _is_pandas_dataframe(obj: Any) -> bool:
 
 
 def _canonical_cat_str(val: Any) -> str:
-    if isinstance(val, float) and val.is_integer():
+    if isinstance(val, (float, np.floating)) and float(val).is_integer():
         return str(int(val))
     return str(val)
 
