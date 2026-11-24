@@ -169,13 +169,19 @@ jobs:
         run: mypy
 
       - name: clang-format
-        run: clang-format --dry-run --Werror include/miter/*.hpp src/*.cpp python/bindings.cpp tests/cpp/*.cpp
+        shell: bash
+        run: |
+          shopt -s globstar
+          clang-format --dry-run --Werror include/**/*.hpp src/**/*.hpp src/**/*.cpp python/bindings.cpp tests/cpp/*.cpp
 
       - name: Configure for clang-tidy
         run: cmake -S . -B build -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_EXPORT_COMPILE_COMMANDS=ON -DCMAKE_BUILD_TYPE=Release
 
       - name: clang-tidy
-        run: clang-tidy -p build --quiet src/miter.cpp
+        shell: bash
+        run: |
+          shopt -s globstar
+          clang-tidy -p build --quiet src/**/*.cpp
 
   wheel-smoke:
     name: Wheel build smoke test (${{ matrix.os }})
