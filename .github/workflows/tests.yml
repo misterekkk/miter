@@ -1,0 +1,221 @@
+name: Tests
+
+on:
+  push:
+    branches: [main, "m*"]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  cpp:
+    name: C++ tests (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install libomp (macOS)
+        if: runner.os == 'macOS'
+        run: brew install libomp
+
+      - name: Clone local lignum dependency
+        shell: bash
+        run: |
+          git clone --branch v0.4.3 https://github.com/misterekkk/lignum extern/lignum
+          git -C extern/lignum checkout -b miter-integration
+          if compgen -G "lignum_patches/*.patch" > /dev/null; then
+            git -C extern/lignum -c user.name="CI" -c user.email="ci@example.invalid" am ../../lignum_patches/*.patch
+          fi
+
+      - name: Configure
+        run: cmake -S . -B build -DMITER_BUILD_TESTS=ON -DCMAKE_BUILD_TYPE=Release ${{ runner.os != 'Windows' && '-DMITER_WARNINGS_AS_ERRORS=ON' || '' }}
+
+      - name: Build
+        run: cmake --build build --config Release --parallel
+
+      - name: Test
+        run: ctest --test-dir build -C Release --output-on-failure
+
+  sanitizers:
+    name: C++ tests with ASan + UBSan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Clone local lignum dependency
+        shell: bash
+        run: |
+          git clone --branch v0.4.3 https://github.com/misterekkk/lignum extern/lignum
+          git -C extern/lignum checkout -b miter-integration
+          if compgen -G "lignum_patches/*.patch" > /dev/null; then
+            git -C extern/lignum -c user.name="CI" -c user.email="ci@example.invalid" am ../../lignum_patches/*.patch
+          fi
+
+      - name: Configure
+        env:
+          CC: clang
+          CXX: clang++
+        run: cmake -S . -B build -DMITER_BUILD_TESTS=ON -DMITER_SANITIZE=ON -DCMAKE_BUILD_TYPE=RelWithDebInfo
+
+      - name: Build
+        run: cmake --build build --parallel
+
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+
+  python:
+    name: Python ${{ matrix.python-version }} (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        python-version: ["3.10", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install libomp (macOS)
+        if: runner.os == 'macOS'
+        run: brew install libomp
+
+      - name: Clone local lignum dependency
+        shell: bash
+        run: |
+          git clone --branch v0.4.3 https://github.com/misterekkk/lignum extern/lignum
+          git -C extern/lignum checkout -b miter-integration
+          if compgen -G "lignum_patches/*.patch" > /dev/null; then
+            git -C extern/lignum -c user.name="CI" -c user.email="ci@example.invalid" am ../../lignum_patches/*.patch
+          fi
+
+      - name: Install package
+        run: python -m pip install ".[test]"
+
+      - name: Run pytest
+        run: python -m pytest tests/python -v
+
+  python-sanitizers:
+    name: Python tests with ASan + UBSan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Clone local lignum dependency
+        shell: bash
+        run: |
+          git clone --branch v0.4.3 https://github.com/misterekkk/lignum extern/lignum
+          git -C extern/lignum checkout -b miter-integration
+          if compgen -G "lignum_patches/*.patch" > /dev/null; then
+            git -C extern/lignum -c user.name="CI" -c user.email="ci@example.invalid" am ../../lignum_patches/*.patch
+          fi
+
+      - name: Install package with sanitizers
+        env:
+          CC: clang
+          CXX: clang++
+          CMAKE_ARGS: -DMITER_SANITIZE=ON -DCMAKE_BUILD_TYPE=RelWithDebInfo
+        run: python -m pip install ".[test]"
+
+      - name: Run pytest under ASan + UBSan
+        shell: bash
+        run: |
+          ASAN_SO="$(clang++ -print-file-name=libclang_rt.asan-x86_64.so)"
+          if [[ ! -f "${ASAN_SO}" ]]; then
+            ASAN_SO="$(find /usr/lib /usr/local -name 'libclang_rt.asan*x86_64.so' 2>/dev/null | head -n 1)"
+          fi
+          export LD_PRELOAD="${ASAN_SO}"
+          export ASAN_OPTIONS=detect_leaks=0:abort_on_error=1
+          export UBSAN_OPTIONS=print_stacktrace=1
+          python -m pytest tests/python -v -p no:cacheprovider
+
+  lint:
+    name: Lint and static analysis
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Clone local lignum dependency
+        shell: bash
+        run: |
+          git clone --branch v0.4.3 https://github.com/misterekkk/lignum extern/lignum
+          git -C extern/lignum checkout -b miter-integration
+          if compgen -G "lignum_patches/*.patch" > /dev/null; then
+            git -C extern/lignum -c user.name="CI" -c user.email="ci@example.invalid" am ../../lignum_patches/*.patch
+          fi
+
+      - name: Install lint tools
+        run: python -m pip install ruff mypy clang-format clang-tidy numpy
+
+      - name: ruff
+        run: ruff check .
+
+      - name: mypy
+        run: mypy
+
+      - name: clang-format
+        run: clang-format --dry-run --Werror include/miter/*.hpp src/*.cpp python/bindings.cpp tests/cpp/*.cpp
+
+      - name: Configure for clang-tidy
+        run: cmake -S . -B build -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_EXPORT_COMPILE_COMMANDS=ON -DCMAKE_BUILD_TYPE=Release
+
+      - name: clang-tidy
+        run: clang-tidy -p build --quiet src/miter.cpp
+
+  wheel-smoke:
+    name: Wheel build smoke test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install libomp (macOS)
+        if: runner.os == 'macOS'
+        run: brew install libomp
+
+      - name: Clone local lignum dependency
+        shell: bash
+        run: |
+          git clone --branch v0.4.3 https://github.com/misterekkk/lignum extern/lignum
+          git -C extern/lignum checkout -b miter-integration
+          if compgen -G "lignum_patches/*.patch" > /dev/null; then
+            git -C extern/lignum -c user.name="CI" -c user.email="ci@example.invalid" am ../../lignum_patches/*.patch
+          fi
+
+      - name: Build wheel
+        run: python -m pip wheel --no-deps --wheel-dir dist .
+
+      - name: Install wheel and test outside source tree
+        shell: bash
+        run: |
+          python -m venv "${RUNNER_TEMP}/smoke-venv"
+          if [[ "${RUNNER_OS}" == "Windows" ]]; then
+            VENV_PY="${RUNNER_TEMP}/smoke-venv/Scripts/python.exe"
+          else
+            VENV_PY="${RUNNER_TEMP}/smoke-venv/bin/python"
+          fi
+          "${VENV_PY}" -m pip install dist/*.whl pytest
+          cd "${RUNNER_TEMP}"
+          "${VENV_PY}" -m pytest "${GITHUB_WORKSPACE}/tests/python" -v
