@@ -6,10 +6,13 @@ from miter._core import (
     lignum_linked,
     openmp_max_threads,
 )
+from miter.data import Dataset, TransformedData
 
 __version__ = "0.1.0.dev0"
 
 __all__ = [
+    "Dataset",
+    "TransformedData",
     "__version__",
     "has_openmp",
     "hello",
