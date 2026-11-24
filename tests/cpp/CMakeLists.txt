@@ -8,6 +8,7 @@ add_executable(miter_tests
     test_booster.cpp
     test_oblique.cpp
     test_categorical.cpp
+    test_determinism.cpp
 )
 
 target_include_directories(miter_tests PRIVATE
