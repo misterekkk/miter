@@ -73,6 +73,10 @@ endif()
 # ---------------------------------------------------------------------------
 add_library(miter STATIC
     src/miter.cpp
+    src/data/axis_binner.cpp
+    src/data/cat_encoder.cpp
+    src/data/dataset.cpp
+    src/data/quantizer.cpp
 )
 
 set_target_properties(miter PROPERTIES
@@ -141,6 +145,7 @@ if(SKBUILD)
     find_package(nanobind CONFIG REQUIRED)
 
     nanobind_add_module(_core STABLE_ABI python/bindings.cpp)
+    target_include_directories(_core PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
     target_link_libraries(_core PRIVATE miter)
     if(MSVC)
         target_compile_options(_core PRIVATE /fp:precise /W4)

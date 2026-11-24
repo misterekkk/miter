@@ -1,5 +1,13 @@
 add_executable(miter_tests
     test_smoke.cpp
+    test_quantizer.cpp
+    test_axis_binner.cpp
+    test_cat_encoder.cpp
+    test_dataset.cpp
+)
+
+target_include_directories(miter_tests PRIVATE
+    "${CMAKE_SOURCE_DIR}/src"
 )
 
 target_link_libraries(miter_tests PRIVATE
