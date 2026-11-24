@@ -1,4 +1,4 @@
-"""M5 performance, OpenMP scaling, and 12-dataset TabArena leaderboard benchmark."""
+"""M5 performance, OpenMP scaling, and 12-dataset own-protocol (TabArena-style) leaderboard benchmark."""
 
 from __future__ import annotations
 
@@ -544,9 +544,12 @@ def run_part_c_tabarena(lines: list[str]) -> None:
 
     lb = _compute_tabarena_leaderboard(methods, split_errors, dataset_means, train_times)
     lines.append(
-        "\n## Part C: Hard TabArena 12-Dataset Regression Suite (3 folds, ES=50, `n_jobs=4`)\n"
+        "\n## Part C: Own protocol (TabArena-style), 12 regression datasets (3 folds, ES=50, `n_jobs=4`)\n"
     )
-    lines.append("### TabArena-Style Leaderboard Score\n")
+    lines.append("### Internal leaderboard (TabArena-style metrics; Elo internal to these 6 methods)\n")
+    lines.append(
+        '> **Own protocol (TabArena-style), not TabArena results.** 12 regression datasets taken from the TabArena suite, run with our own splits (`KFold(3, shuffle=True, random_state=42)`), budgets (ES=50) and default configurations only (no tuning, no ensembling, no time limits). Metrics are modelled on the TabArena leaderboard, but **Elo is internal**: a Bradley–Terry fit over the 6 methods in this table only (base 1000); it is not comparable to Elo values published on the TabArena leaderboard.\n'
+    )
     lines.append("| Method | Elo | Win-rate (%) | Avg Rank | Improvability (%) | Normalized Error | Median Train (s) |")
     lines.append("|---|---|---|---|---|---|---|")
     for r in lb:
@@ -580,12 +583,12 @@ def main() -> None:
     import miter
 
     lines = [
-        "# M5 Performance, OpenMP Scaling, and TabArena Leaderboard Summary",
+        "# M5 Performance, OpenMP Scaling, and Own-Protocol (TabArena-style) Leaderboard Summary",
         "",
         f"- Hardware: `{platform.machine()}` (`{platform.platform()}`)",
         f"- Python: `{platform.python_version()}`",
         f"- Versions: `miter {miter.__version__}`, `lightgbm {lgb.__version__}`, `catboost {catboost.__version__}`, `numpy {np.__version__}`",
-        "- Protocol: Part A uses 1 thread; Part B tests 1/2/4/8 threads; Part C uses `n_jobs=4` across 12 TabArena datasets (3 folds, ES=50).",
+        "- Protocol: Part A uses 1 thread; Part B tests 1/2/4/8 threads; Part C uses `n_jobs=4` on 12 regression datasets from the TabArena suite under our own protocol (3 folds, ES=50); not TabArena results.",
         "",
     ]
     run_part_a_single_thread(lines)

@@ -1,9 +1,9 @@
-# M5 Performance, OpenMP Scaling, and TabArena Leaderboard Summary
+# M5 Performance, OpenMP Scaling, and Own-Protocol (TabArena-style) Leaderboard Summary
 
 - Hardware: `arm64` (`macOS-26.6.2-arm64-arm-64bit-Mach-O`)
 - Python: `3.13.1`
 - Versions: `miter 0.1.0.dev0`, `lightgbm 4.7.0`, `catboost 1.2.10`, `numpy 2.5.5`
-- Protocol: Part A uses 1 thread; Part B tests 1/2/4/8 threads; Part C uses `n_jobs=4` across 12 TabArena datasets (3 folds, ES=50).
+- Protocol: Part A uses 1 thread; Part B tests 1/2/4/8 threads; Part C uses `n_jobs=4` on 12 regression datasets from the TabArena suite under our own protocol (3 folds, ES=50); not TabArena results.
 
 ## Part A: Single-thread training speed (100 trees, median of 5 runs, `n_jobs=1`)
 
@@ -32,9 +32,11 @@
 
 - Verified byte-for-byte identical JSON model for `500k x 50` (5 trees, `m_mult=2`) across `n_jobs=1` vs `n_jobs=8`.
 
-## Part C: Hard TabArena 12-Dataset Regression Suite (3 folds, ES=50, `n_jobs=4`)
+## Part C: Own protocol (TabArena-style), 12 regression datasets (3 folds, ES=50, `n_jobs=4`)
 
-### TabArena-Style Leaderboard Score
+### Internal leaderboard (TabArena-style metrics; Elo internal to these 6 methods)
+
+> **Own protocol (TabArena-style), not TabArena results.** 12 regression datasets taken from the TabArena suite, run with our own splits (`KFold(3, shuffle=True, random_state=42)`), budgets (ES=50) and default configurations only (no tuning, no ensembling, no time limits). Metrics are modelled on the TabArena leaderboard, but **Elo is internal**: a Bradley–Terry fit over the 6 methods in this table only (base 1000); it is not comparable to Elo values published on the TabArena leaderboard.
 
 | Method | Elo | Win-rate (%) | Avg Rank | Improvability (%) | Normalized Error | Median Train (s) |
 |---|---|---|---|---|---|---|
