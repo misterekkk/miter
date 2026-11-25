@@ -9,6 +9,7 @@ add_executable(miter_tests
     test_oblique.cpp
     test_categorical.cpp
     test_determinism.cpp
+    test_options.cpp
     test_lignum_export.cpp
 )
 

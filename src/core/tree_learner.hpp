@@ -31,6 +31,15 @@ struct TreeWorkspace {
     std::vector<float> g_ordered;
     std::vector<float> h_ordered;
 
+    // feature_fraction: full active lists (the layout's lists are narrowed per tree).
+    std::vector<std::uint32_t> base_active_features;
+    std::vector<std::uint32_t> base_active_num_features;
+    std::vector<std::uint32_t> base_active_cat_features;
+    std::vector<std::uint8_t> feature_selected;
+    // bagging_fraction: rows outside the bag of the current tree, and feature -> numeric index.
+    std::vector<std::uint32_t> oob_rows;
+    std::vector<std::size_t> feature_to_num_idx;
+
     void prepare(const Dataset& ds, const Params& params);
 };
 

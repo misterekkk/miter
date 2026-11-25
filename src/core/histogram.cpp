@@ -1,8 +1,10 @@
 #include "core/histogram.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cstring>
 
+#include "core/rng.hpp"
 #include "util/threading.hpp"
 
 namespace miter {
@@ -266,12 +268,134 @@ void subtract_histograms(HistBin* dst_large, const HistBin* parent, const HistBi
     }
 }
 
+namespace {
+
+// RNG purpose id for extra_trees threshold draws (0 is used by oblique candidates).
+constexpr std::uint64_t kPurposeExtraTrees = 3U;
+
+/**
+ * extra_trees: for every feature one threshold is drawn uniformly among the valid ones (those
+ * where both children satisfy min_data_in_leaf / min_sum_hessian_in_leaf for at least one NaN
+ * direction; the "all finite bins vs NaN" split counts as one more position). Only that
+ * threshold is evaluated (with the better valid NaN direction); the best feature wins.
+ * RNG key: (random_state, tree_index, node_id, feature, kPurposeExtraTrees).
+ */
+AxisSplitCandidate find_random_axis_split(const Dataset& ds, const FeatureHistLayout& layout,
+                                          const HistBin* hist, double parent_g, double parent_h,
+                                          std::int32_t parent_c, const Params& params,
+                                          std::size_t tree_index, std::uint32_t node_id) noexcept {
+    struct Pos {
+        double gain;
+        std::uint16_t bin;
+        bool nan_left;
+        bool final_nan;
+    };
+    AxisSplitCandidate best;
+    const double lam = params.lambda_l2;
+    const double min_h = params.min_sum_hessian_in_leaf;
+    const std::int32_t min_c = params.min_data_in_leaf;
+    const double parent_score = (parent_g * parent_g) / (parent_h + lam);
+    std::array<Pos, 257> pos{};
+
+    for (const std::uint32_t f : layout.active_num_features) {
+        const std::uint16_t nb = layout.num_regular_bins[f];
+        const HistBin* fh = hist + layout.offsets[f];
+        const auto& edges = ds.binner(f).edges;
+        const bool has_nan = layout.has_nan[f] != 0U && fh[nb].c != 0;
+        const double g_nan = has_nan ? fh[nb].g : 0.0;
+        const double h_nan = has_nan ? fh[nb].h : 0.0;
+        const std::int32_t c_nan = has_nan ? fh[nb].c : 0;
+
+        auto eval = [&](double gl, double hl, std::int32_t cl, Pos& out) noexcept {
+            const std::int32_t cr = parent_c - cl;
+            const double hr = parent_h - hl;
+            if (cl < min_c || cr < min_c || hl < min_h || hr < min_h) {
+                return false;
+            }
+            const double gr = parent_g - gl;
+            out.gain = (gl * gl) / (hl + lam) + (gr * gr) / (hr + lam) - parent_score;
+            return true;
+        };
+
+        std::size_t nv = 0;
+        double gl = 0.0;
+        double hl = 0.0;
+        std::int32_t cl = 0;
+        for (std::uint16_t b = 0; b + 1U < nb; ++b) {
+            gl += fh[b].g;
+            hl += fh[b].h;
+            cl += fh[b].c;
+            Pos cand{};
+            cand.bin = b;
+            cand.final_nan = false;
+            bool ok = false;
+            if (!has_nan) {
+                ok = eval(gl, hl, cl, cand);
+                cand.nan_left = (hl >= (parent_h - hl));
+            } else {
+                Pos a{};
+                Pos r{};
+                const bool ok_a = eval(gl + g_nan, hl + h_nan, cl + c_nan, a);
+                const bool ok_b = eval(gl, hl, cl, r);
+                if (ok_a && (!ok_b || a.gain >= r.gain)) {
+                    cand.gain = a.gain;
+                    cand.nan_left = true;
+                    ok = true;
+                } else if (ok_b) {
+                    cand.gain = r.gain;
+                    cand.nan_left = false;
+                    ok = true;
+                }
+            }
+            if (ok) {
+                pos[nv++] = cand;
+            }
+        }
+        if (has_nan) {
+            gl += fh[nb - 1U].g;
+            hl += fh[nb - 1U].h;
+            cl += fh[nb - 1U].c;
+            Pos cand{};
+            cand.bin = static_cast<std::uint16_t>(nb - 1U);
+            cand.nan_left = false;
+            cand.final_nan = true;
+            if (eval(gl, hl, cl, cand)) {
+                pos[nv++] = cand;
+            }
+        }
+        if (nv == 0U) {
+            continue;
+        }
+
+        CounterRng rng(params.random_state, static_cast<std::uint64_t>(tree_index),
+                       static_cast<std::uint64_t>(node_id), static_cast<std::uint64_t>(f),
+                       kPurposeExtraTrees);
+        const Pos& chosen = pos[static_cast<std::size_t>(rng.next_u64() % nv)];
+        if (chosen.gain > best.gain && chosen.gain > params.min_gain_to_split) {
+            best.gain = chosen.gain;
+            best.feature = f;
+            best.bin_idx = static_cast<std::uint8_t>(chosen.bin);
+            best.threshold_u16 = chosen.final_nan ? kQ16NanCode : edges[chosen.bin];
+            best.nan_go_left = chosen.nan_left;
+            best.valid = true;
+        }
+    }
+    return best;
+}
+
+} // namespace
+
 AxisSplitCandidate find_best_axis_split(const Dataset& ds, const FeatureHistLayout& layout,
                                         const HistBin* hist, double parent_g, double parent_h,
-                                        std::int32_t parent_c, const Params& params) noexcept {
+                                        std::int32_t parent_c, const Params& params,
+                                        std::size_t tree_index, std::uint32_t node_id) noexcept {
     AxisSplitCandidate best;
     if (layout.active_num_features.empty() || parent_c < 2 * params.min_data_in_leaf) {
         return best;
+    }
+    if (params.extra_trees) {
+        return find_random_axis_split(ds, layout, hist, parent_g, parent_h, parent_c, params,
+                                      tree_index, node_id);
     }
 
     const double lam = params.lambda_l2;

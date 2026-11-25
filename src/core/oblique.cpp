@@ -442,15 +442,20 @@ void ObliqueScratch::prepare(const Dataset& ds, const Params& params) {
         }
     }
 
+    all_eligible_features = eligible_features;
+    all_eligible_num_indices = eligible_num_indices;
+
     const std::size_t p_elig = eligible_features.size();
     if (params.m_mult <= 0 || p_elig < 2U) {
         max_m = 0U;
+        cur_m = 0U;
         max_chunks = 0U;
         return;
     }
 
     const auto m0 = static_cast<std::size_t>(std::ceil(std::sqrt(static_cast<double>(p_elig))));
     max_m = static_cast<std::size_t>(params.m_mult) * m0;
+    cur_m = max_m;
     max_chunks = (ds.n_rows() + kDetChunkRows - 1U) / kDetChunkRows;
 
     const std::size_t needed_proj = std::min(ds.n_rows() * max_m, kObliqueScratchLimitInts);
@@ -487,6 +492,25 @@ void ObliqueScratch::prepare(const Dataset& ds, const Params& params) {
     i64_candidates.resize(max_m);
 }
 
+void ObliqueScratch::restrict_pool(const std::vector<std::uint8_t>& selected,
+                                   const Params& params) {
+    eligible_features.clear();
+    eligible_num_indices.clear();
+    for (std::size_t i = 0; i < all_eligible_features.size(); ++i) {
+        if (selected[all_eligible_features[i]] != 0U) {
+            eligible_features.push_back(all_eligible_features[i]);
+            eligible_num_indices.push_back(all_eligible_num_indices[i]);
+        }
+    }
+    const std::size_t p_elig = eligible_features.size();
+    if (max_m == 0U || params.m_mult <= 0 || p_elig < 2U) {
+        cur_m = 0U;
+        return;
+    }
+    const auto m0 = static_cast<std::size_t>(std::ceil(std::sqrt(static_cast<double>(p_elig))));
+    cur_m = std::min(max_m, static_cast<std::size_t>(params.m_mult) * m0);
+}
+
 ObliqueSplitCandidate find_best_oblique_split(const Dataset& ds, const std::uint32_t* leaf_rows,
                                               std::size_t n_leaf, const float* g_seq,
                                               const float* h_seq, double parent_g, double parent_h,
@@ -495,12 +519,12 @@ ObliqueSplitCandidate find_best_oblique_split(const Dataset& ds, const std::uint
                                               ObliqueScratch& scratch) noexcept {
     ObliqueSplitCandidate best;
     const std::size_t p_elig = scratch.eligible_features.size();
-    if (params.m_mult <= 0 || p_elig < 2U || scratch.max_m == 0U ||
+    if (params.m_mult <= 0 || p_elig < 2U || scratch.cur_m == 0U ||
         parent_c < 2 * params.min_data_in_leaf) {
         return best;
     }
 
-    const std::size_t m = scratch.max_m;
+    const std::size_t m = scratch.cur_m;
     const std::size_t p_num = ds.n_num_features();
     const std::int16_t* codes = ds.codes_row_major().data();
 

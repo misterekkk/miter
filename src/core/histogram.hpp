@@ -74,6 +74,8 @@ void subtract_histograms(HistBin* dst_large, const HistBin* parent, const HistBi
 
 AxisSplitCandidate find_best_axis_split(const Dataset& ds, const FeatureHistLayout& layout,
                                         const HistBin* hist, double parent_g, double parent_h,
-                                        std::int32_t parent_c, const Params& params) noexcept;
+                                        std::int32_t parent_c, const Params& params,
+                                        std::size_t tree_index = 0,
+                                        std::uint32_t node_id = 0) noexcept;
 
 } // namespace miter

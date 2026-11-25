@@ -32,6 +32,12 @@ struct Params {
     double time_limit = 0.0;
     int n_jobs = -1;
     std::uint64_t random_state = 0;
+    /// Per-tree fraction of features (axis + categorical candidates and oblique pool), in (0, 1].
+    double feature_fraction = 1.0;
+    /// Per-tree fraction of rows (exact-size sample without replacement), in (0, 1].
+    double bagging_fraction = 1.0;
+    /// Axis candidates: one random valid threshold per feature instead of the best one.
+    bool extra_trees = false;
 };
 
 } // namespace miter

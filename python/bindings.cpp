@@ -478,7 +478,10 @@ NB_MODULE(_core, m) {
         .def_rw("early_stopping_rounds", &miter::Params::early_stopping_rounds)
         .def_rw("time_limit", &miter::Params::time_limit)
         .def_rw("n_jobs", &miter::Params::n_jobs)
-        .def_rw("random_state", &miter::Params::random_state);
+        .def_rw("random_state", &miter::Params::random_state)
+        .def_rw("feature_fraction", &miter::Params::feature_fraction)
+        .def_rw("bagging_fraction", &miter::Params::bagging_fraction)
+        .def_rw("extra_trees", &miter::Params::extra_trees);
 
     nb::class_<miter::Model>(m, "Model")
         .def_ro("miter_version", &miter::Model::miter_version)

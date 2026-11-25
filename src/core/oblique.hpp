@@ -57,6 +57,11 @@ struct ObliqueScratch {
     std::vector<std::uint32_t> eligible_num_indices;
     std::vector<std::uint8_t> num_has_nan;
     std::size_t max_m = 0;
+    // Candidates drawn per node in the current tree (== max_m unless feature_fraction < 1).
+    std::size_t cur_m = 0;
+    // Full eligible pool (set once in prepare); eligible_* above is the per-tree view.
+    std::vector<std::uint32_t> all_eligible_features;
+    std::vector<std::uint32_t> all_eligible_num_indices;
     std::size_t max_chunks = 0;
 
     AlignedBuffer<std::int32_t> proj_buf;
@@ -90,6 +95,10 @@ struct ObliqueScratch {
     std::vector<ObliqueSplitCandidate> i64_candidates;
 
     void prepare(const Dataset& ds, const Params& params);
+
+    /// Restrict the projection pool to features with selected[feature] != 0 and recompute cur_m
+    /// (m_mult * ceil(sqrt(p_eligible))), as the plan's p_eligible "after feature_fraction".
+    void restrict_pool(const std::vector<std::uint8_t>& selected, const Params& params);
 };
 
 ObliqueSplitCandidate find_best_oblique_split(const Dataset& ds, const std::uint32_t* leaf_rows,

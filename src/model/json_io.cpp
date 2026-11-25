@@ -449,7 +449,18 @@ std::string model_to_json(const Model& model) {
        << ", \"oblique_max_depth\": " << model.params.oblique_max_depth
        << ", \"early_stopping_rounds\": " << model.params.early_stopping_rounds
        << ", \"time_limit\": " << model.params.time_limit << ", \"n_jobs\": " << model.params.n_jobs
-       << ", \"random_state\": " << model.params.random_state << "},\n";
+       << ", \"random_state\": " << model.params.random_state;
+    // Written only when set, so models trained with defaults keep byte-identical JSON.
+    if (model.params.feature_fraction != 1.0) {
+        os << ", \"feature_fraction\": " << model.params.feature_fraction;
+    }
+    if (model.params.bagging_fraction != 1.0) {
+        os << ", \"bagging_fraction\": " << model.params.bagging_fraction;
+    }
+    if (model.params.extra_trees) {
+        os << ", \"extra_trees\": 1";
+    }
+    os << "},\n";
 
     os << "  \"feature_names\": [";
     for (std::size_t i = 0; i < model.feature_names.size(); ++i) {
@@ -636,6 +647,15 @@ Model model_from_json(std::string_view json_text) {
         model.params.n_jobs = static_cast<int>(require_field(p, "n_jobs").as_i64());
         model.params.random_state =
             static_cast<std::uint64_t>(require_field(p, "random_state").as_i64());
+        if (const auto ff = p.find("feature_fraction"); ff != p.end()) {
+            model.params.feature_fraction = ff->second.as_double();
+        }
+        if (const auto bf = p.find("bagging_fraction"); bf != p.end()) {
+            model.params.bagging_fraction = bf->second.as_double();
+        }
+        if (const auto et = p.find("extra_trees"); et != p.end()) {
+            model.params.extra_trees = (et->second.as_i64() != 0);
+        }
     }
 
     for (const auto& fn : require_field(root, "feature_names").as_array()) {

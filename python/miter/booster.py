@@ -292,6 +292,12 @@ class _BaseMiterEstimator(_SklearnBase):
             raise ValueError(
                 f"Unsupported cat_mode={self.cat_mode!r} in v1.0; only 'k1' is supported"
             )
+        if self.robust:
+            raise ValueError("robust=True is not available in miter v1.0")
+        for name in ("feature_fraction", "bagging_fraction"):
+            value = float(getattr(self, name))
+            if not (0.0 < value <= 1.0):  # also rejects NaN
+                raise ValueError(f"{name} must be in (0, 1], got {getattr(self, name)!r}")
         p = _core.Params()
         p.n_estimators = int(self.n_estimators)
         p.learning_rate = float(self.learning_rate)
@@ -322,6 +328,9 @@ class _BaseMiterEstimator(_SklearnBase):
         p.time_limit = 0.0 if self.time_limit is None else float(self.time_limit)
         p.n_jobs = int(self.n_jobs)
         p.random_state = int(self.random_state)
+        p.feature_fraction = float(self.feature_fraction)
+        p.bagging_fraction = float(self.bagging_fraction)
+        p.extra_trees = bool(self.extra_trees)
         return p
 
     def _check_fitted(self) -> _core.Model:
@@ -508,6 +517,9 @@ class _BaseMiterEstimator(_SklearnBase):
             time_limit=None if p.time_limit <= 0.0 else p.time_limit,
             n_jobs=p.n_jobs,
             random_state=p.random_state,
+            feature_fraction=p.feature_fraction,
+            bagging_fraction=p.bagging_fraction,
+            extra_trees=p.extra_trees,
         )
         est._model = model
         est._lignum_cache = {}

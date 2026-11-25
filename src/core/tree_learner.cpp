@@ -1,6 +1,7 @@
 #include "core/tree_learner.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
@@ -8,12 +9,79 @@
 #include <vector>
 
 #include "core/categorical.hpp"
+#include "core/rng.hpp"
 #include "data/quantizer.hpp"
+#include "model/evaluator.hpp"
 #include "util/threading.hpp"
 
 namespace miter {
 
 namespace {
+
+// RNG purpose ids (0 is used by oblique candidates, 3 by extra_trees axis thresholds).
+constexpr std::uint64_t kPurposeFeatureFraction = 1U;
+constexpr std::uint64_t kPurposeBagging = 2U;
+
+// Number of items kept for a fraction in (0, 1]: round(total * fraction), at least 1.
+std::size_t fraction_count(std::size_t total, double fraction) noexcept {
+    const auto k = static_cast<std::size_t>(std::llround(static_cast<double>(total) * fraction));
+    return std::min(total, std::max<std::size_t>(1U, k));
+}
+
+// Exact-size sample without replacement (selection sampling over a single counter-based stream
+// keyed by (random_state, tree_index, 0, 0, purpose)); bag rows ascending in row_indices[0, n_bag),
+// the remaining rows ascending in oob_rows. Returns n_bag.
+std::uint32_t draw_bag(const Params& params, std::size_t tree_index, std::size_t n,
+                       std::uint32_t* bag, std::vector<std::uint32_t>& oob) {
+    const std::size_t n_bag = fraction_count(n, params.bagging_fraction);
+    CounterRng rng(params.random_state, static_cast<std::uint64_t>(tree_index), 0U, 0U,
+                   kPurposeBagging);
+    oob.clear();
+    std::size_t needed = n_bag;
+    std::size_t taken = 0;
+    for (std::size_t i = 0; i < n; ++i) {
+        const std::size_t remaining = n - i;
+        if (needed > 0U &&
+            rng.next_uniform01() * static_cast<double>(remaining) < static_cast<double>(needed)) {
+            bag[taken++] = static_cast<std::uint32_t>(i);
+            --needed;
+        } else {
+            oob.push_back(static_cast<std::uint32_t>(i));
+        }
+    }
+    return static_cast<std::uint32_t>(taken);
+}
+
+// Per-tree feature subset (Fisher-Yates prefix over the active features, keyed by
+// (random_state, tree_index, 0, 0, purpose)); narrows the layout's active lists and the oblique
+// projection pool. Selected features keep ascending order, so iteration order is deterministic.
+void select_features(const Params& params, std::size_t tree_index, TreeWorkspace& ws) {
+    const auto& all = ws.base_active_features;
+    const std::size_t k = fraction_count(all.size(), params.feature_fraction);
+    std::vector<std::uint32_t> perm(all);
+    CounterRng rng(params.random_state, static_cast<std::uint64_t>(tree_index), 0U, 0U,
+                   kPurposeFeatureFraction);
+    for (std::size_t i = 0; i < k; ++i) {
+        const std::size_t j = i + static_cast<std::size_t>(rng.next_u64() % (perm.size() - i));
+        std::swap(perm[i], perm[j]);
+    }
+    std::fill(ws.feature_selected.begin(), ws.feature_selected.end(), std::uint8_t{0});
+    for (std::size_t i = 0; i < k; ++i) {
+        ws.feature_selected[perm[i]] = 1U;
+    }
+    auto narrow = [&](const std::vector<std::uint32_t>& src, std::vector<std::uint32_t>& dst) {
+        dst.clear();
+        for (const std::uint32_t f : src) {
+            if (ws.feature_selected[f] != 0U) {
+                dst.push_back(f);
+            }
+        }
+    };
+    narrow(ws.base_active_features, ws.layout.active_features);
+    narrow(ws.base_active_num_features, ws.layout.active_num_features);
+    narrow(ws.base_active_cat_features, ws.layout.active_cat_features);
+    ws.oblique.restrict_pool(ws.feature_selected, params);
+}
 
 struct SplitChoice {
     NodeKind kind = NodeKind::Leaf;
@@ -310,7 +378,7 @@ SplitChoice evaluate_leaf_splits(const Dataset& ds, LeafState& leaf, const float
 
     if (!ws.layout.active_num_features.empty()) {
         choice.axis = find_best_axis_split(ds, ws.layout, ws.pool.slot(leaf.hist_slot), leaf.g_sum,
-                                           leaf.h_sum, parent_c, params);
+                                           leaf.h_sum, parent_c, params, tree_index, leaf.node_id);
         if (choice.axis.valid) {
             choice.kind = NodeKind::Axis;
             choice.gain = choice.axis.gain;
@@ -331,7 +399,7 @@ SplitChoice evaluate_leaf_splits(const Dataset& ds, LeafState& leaf, const float
 
     const bool allow_oblique = (params.m_mult > 0) && (params.oblique_max_depth < 0 ||
                                                        leaf.depth <= params.oblique_max_depth);
-    if (allow_oblique && ws.oblique.max_m > 0U) {
+    if (allow_oblique && ws.oblique.cur_m > 0U) {
         choice.oblique = find_best_oblique_split(ds, ws.row_indices.data() + leaf.start, n_leaf,
                                                  g_seq, h_seq, leaf.g_sum, leaf.h_sum, parent_c,
                                                  tree_index, leaf.node_id, params, ws.oblique);
@@ -349,6 +417,21 @@ SplitChoice evaluate_leaf_splits(const Dataset& ds, LeafState& leaf, const float
 
 void TreeWorkspace::prepare(const Dataset& ds, const Params& params) {
     layout = FeatureHistLayout::build(ds);
+    base_active_features = layout.active_features;
+    base_active_num_features = layout.active_num_features;
+    base_active_cat_features = layout.active_cat_features;
+    feature_selected.assign(ds.n_features(), 1U);
+    feature_to_num_idx.assign(ds.n_features(), 0U);
+    {
+        const auto& num_indices = ds.num_feature_indices();
+        for (std::size_t j = 0; j < num_indices.size(); ++j) {
+            feature_to_num_idx[num_indices[j]] = j;
+        }
+    }
+    oob_rows.clear();
+    if (params.bagging_fraction < 1.0) {
+        oob_rows.reserve(ds.n_rows());
+    }
     const std::size_t slots = static_cast<std::size_t>(std::max(params.num_leaves, 1)) + 1U;
     pool.reset(slots, layout.total_bins);
     oblique.prepare(ds, params);
@@ -376,7 +459,16 @@ Tree grow_tree(const Dataset& ds, const float* g, const float* h, const Params& 
                std::size_t tree_index, TreeWorkspace& ws, double* train_scores) {
     const std::size_t n = ds.n_rows();
     const auto max_leaves = static_cast<std::size_t>(std::max(params.num_leaves, 1));
-    std::iota(ws.row_indices.begin(), ws.row_indices.end(), 0U);
+    const bool bagging = params.bagging_fraction < 1.0;
+    std::size_t n_root = n;
+    if (bagging) {
+        n_root = draw_bag(params, tree_index, n, ws.row_indices.data(), ws.oob_rows);
+    } else {
+        std::iota(ws.row_indices.begin(), ws.row_indices.end(), 0U);
+    }
+    if (params.feature_fraction < 1.0) {
+        select_features(params, tree_index, ws);
+    }
 
     Tree tree;
     tree.nodes.reserve(2U * max_leaves);
@@ -388,7 +480,7 @@ Tree grow_tree(const Dataset& ds, const float* g, const float* h, const Params& 
     LeafState root;
     root.node_id = 0U;
     root.start = 0U;
-    root.end = static_cast<std::uint32_t>(n);
+    root.end = static_cast<std::uint32_t>(n_root);
     root.depth = 0;
     root.hist_slot = 0U;
     sum_leaf_stats(ws.row_indices.data(), root.start, root.end, g, h, params.n_jobs, ws, root.g_sum,
@@ -396,14 +488,27 @@ Tree grow_tree(const Dataset& ds, const float* g, const float* h, const Params& 
 
     const bool root_can_split = (max_leaves > 1U) &&
                                 (params.max_depth < 0 || root.depth < params.max_depth) &&
-                                (static_cast<std::int32_t>(n) >= 2 * params.min_data_in_leaf);
+                                (static_cast<std::int32_t>(n_root) >= 2 * params.min_data_in_leaf);
     if (root_can_split) {
-        if (ws.layout.total_bins > 0U) {
-            build_axis_histograms(ds, ws.layout, ws.row_indices.data(), n, true, g, h,
-                                  ws.g_ordered.data(), ws.h_ordered.data(), ws.pool.slot(0),
-                                  params.n_jobs, ws.axis_wave_hists.data());
+        if (!bagging) {
+            if (ws.layout.total_bins > 0U) {
+                build_axis_histograms(ds, ws.layout, ws.row_indices.data(), n, true, g, h,
+                                      ws.g_ordered.data(), ws.h_ordered.data(), ws.pool.slot(0),
+                                      params.n_jobs, ws.axis_wave_hists.data());
+            }
+            root.split = evaluate_leaf_splits(ds, root, g, h, tree_index, params, ws);
+        } else {
+            // The bag is a row subset: gradients are gathered into bag order.
+            gather_leaf_gh(ws.row_indices.data(), n_root, g, h, params.n_jobs, ws.g_ordered.data(),
+                           ws.h_ordered.data());
+            if (ws.layout.total_bins > 0U) {
+                build_axis_histograms(ds, ws.layout, ws.row_indices.data(), n_root, false, g, h,
+                                      ws.g_ordered.data(), ws.h_ordered.data(), ws.pool.slot(0),
+                                      params.n_jobs, ws.axis_wave_hists.data());
+            }
+            root.split = evaluate_leaf_splits(ds, root, ws.g_ordered.data(), ws.h_ordered.data(),
+                                              tree_index, params, ws);
         }
-        root.split = evaluate_leaf_splits(ds, root, g, h, tree_index, params, ws);
     }
     leaves.push_back(root);
 
@@ -538,7 +643,7 @@ Tree grow_tree(const Dataset& ds, const float* g, const float* h, const Params& 
                     (params.m_mult > 0) &&
                     (params.oblique_max_depth < 0 ||
                      right_leaf.depth <= params.oblique_max_depth) &&
-                    ws.oblique.max_m > 0U &&
+                    ws.oblique.cur_m > 0U &&
                     (static_cast<std::int32_t>(nr) >= 2 * params.min_data_in_leaf);
                 if (right_needs_oblique) {
                     gather_leaf_gh(ws.row_indices.data() + right_leaf.start, nr, g, h,
@@ -568,7 +673,7 @@ Tree grow_tree(const Dataset& ds, const float* g, const float* h, const Params& 
                 const bool left_needs_oblique =
                     (params.m_mult > 0) &&
                     (params.oblique_max_depth < 0 || left_leaf.depth <= params.oblique_max_depth) &&
-                    ws.oblique.max_m > 0U &&
+                    ws.oblique.cur_m > 0U &&
                     (static_cast<std::int32_t>(nl) >= 2 * params.min_data_in_leaf);
                 if (left_needs_oblique) {
                     gather_leaf_gh(ws.row_indices.data() + left_leaf.start, nl, g, h, params.n_jobs,
@@ -612,6 +717,14 @@ Tree grow_tree(const Dataset& ds, const float* g, const float* h, const Params& 
                 }
             }
         }
+    }
+
+    if (bagging && train_scores != nullptr && !ws.oob_rows.empty()) {
+        // Rows outside the bag follow the finished tree, exactly as prediction would.
+        const std::int16_t* codes = (p_num > 0U) ? ds.codes_row_major().data() : nullptr;
+        Evaluator::add_tree_predictions_from_codes(tree, codes, n, p_num, ws.feature_to_num_idx,
+                                                   train_scores, bins_base, params.n_jobs,
+                                                   ws.oob_rows.data(), ws.oob_rows.size());
     }
 
     return tree;

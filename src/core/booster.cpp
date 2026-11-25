@@ -63,6 +63,12 @@ void validate_params(const Params& params) {
     if (params.m_mult < 0) {
         throw std::invalid_argument("m_mult must be >= 0");
     }
+    if (!(params.feature_fraction > 0.0 && params.feature_fraction <= 1.0)) {
+        throw std::invalid_argument("feature_fraction must be in (0, 1]");
+    }
+    if (!(params.bagging_fraction > 0.0 && params.bagging_fraction <= 1.0)) {
+        throw std::invalid_argument("bagging_fraction must be in (0, 1]");
+    }
     if (params.k_proj != 0 && (params.k_proj < 2 || params.k_proj > 8)) {
         throw std::invalid_argument("k_proj must be 0 or in [2, 8]");
     }

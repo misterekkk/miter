@@ -38,6 +38,9 @@ class Params:
     time_limit: float
     n_jobs: int
     random_state: int
+    feature_fraction: float
+    bagging_fraction: float
+    extra_trees: bool
     def __init__(self) -> None: ...
 
 class Model:

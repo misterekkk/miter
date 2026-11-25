@@ -426,9 +426,12 @@ void Evaluator::add_tree_predictions_from_codes(const Tree& tree,
                                                 std::size_t n_rows, std::size_t n_num_features,
                                                 const std::vector<std::size_t>& feature_to_num_idx,
                                                 double* scores, const std::uint8_t* bins_col_major,
-                                                int n_jobs) noexcept {
+                                                int n_jobs, const std::uint32_t* row_subset,
+                                                std::size_t n_subset) noexcept {
     const int n_threads = resolve_num_threads(n_jobs);
-    const bool use_omp = (n_threads > 1) && (n_rows >= 4096U);
+    // With a row subset only rows row_subset[0, n_subset) are scored (n_rows stays the stride).
+    const std::size_t n_iter = (row_subset != nullptr) ? n_subset : n_rows;
+    const bool use_omp = (n_threads > 1) && (n_iter >= 4096U);
 
     auto score_row = [&](std::size_t i) noexcept {
         const std::int16_t* row = (n_num_features > 0U && codes_row_major != nullptr)
@@ -501,12 +504,13 @@ void Evaluator::add_tree_predictions_from_codes(const Tree& tree,
 #ifdef _OPENMP
 #pragma omp parallel for schedule(static) num_threads(n_threads)
 #endif
-        for (std::ptrdiff_t i = 0; i < static_cast<std::ptrdiff_t>(n_rows); ++i) {
-            score_row(static_cast<std::size_t>(i));
+        for (std::ptrdiff_t i = 0; i < static_cast<std::ptrdiff_t>(n_iter); ++i) {
+            const auto t = static_cast<std::size_t>(i);
+            score_row(row_subset != nullptr ? row_subset[t] : t);
         }
     } else {
-        for (std::size_t i = 0; i < n_rows; ++i) {
-            score_row(i);
+        for (std::size_t t = 0; t < n_iter; ++t) {
+            score_row(row_subset != nullptr ? row_subset[t] : t);
         }
     }
 }
