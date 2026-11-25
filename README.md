@@ -55,6 +55,9 @@ proba = clf.predict_proba(X_test)                     # shape (n, 2)
 | `time_limit` | `None` | stop adding trees after this many seconds |
 | `n_jobs` | -1 | threads (the result does not depend on it) |
 | `random_state` | 0 | seed |
+| `feature_fraction` | 1.0 | fraction of features per tree (also the pool for oblique splits) |
+| `bagging_fraction` | 1.0 | fraction of rows per tree (sampled without replacement) |
+| `extra_trees` | False | one random valid threshold per feature instead of the best one |
 
 All parameters, including the categorical ones (`max_cat_to_onehot`, `min_data_per_group`,
 `cat_smooth`, `cat_l2`, `max_cat_threshold`, `max_categories`), are documented in
