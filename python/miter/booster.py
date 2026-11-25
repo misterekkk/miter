@@ -41,6 +41,7 @@ except ImportError:  # pragma: no cover
         pass
 
 
+from miter.cat_ts import CatObliqueTSEncoder, resolve_categorical_indices_for_X
 from miter.data import (
     Dataset,
     _factorize_categorical_values,
@@ -253,6 +254,8 @@ class _BaseMiterEstimator(_SklearnBase):
         extra_trees: bool = False,
         robust: bool = False,
         cat_mode: str = "k1",
+        cat_oblique_ts: bool = False,
+        cat_ts_smooth: float = 10.0,
         early_stopping_rounds: int | None = 50,
         time_limit: float | None = None,
         n_jobs: int = -1,
@@ -282,6 +285,8 @@ class _BaseMiterEstimator(_SklearnBase):
         self.extra_trees = extra_trees
         self.robust = robust
         self.cat_mode = cat_mode
+        self.cat_oblique_ts = cat_oblique_ts
+        self.cat_ts_smooth = cat_ts_smooth
         self.early_stopping_rounds = early_stopping_rounds
         self.time_limit = time_limit
         self.n_jobs = n_jobs
@@ -300,6 +305,9 @@ class _BaseMiterEstimator(_SklearnBase):
             value = float(getattr(self, name))
             if not (0.0 < value <= 1.0):  # also rejects NaN
                 raise ValueError(f"{name} must be in (0, 1], got {getattr(self, name)!r}")
+        smooth = float(self.cat_ts_smooth)
+        if not np.isfinite(smooth) or smooth <= 0.0:
+            raise ValueError(f"cat_ts_smooth must be finite and > 0, got {self.cat_ts_smooth!r}")
         p = _core.Params()
         p.n_estimators = int(self.n_estimators)
         p.learning_rate = float(self.learning_rate)
@@ -373,15 +381,36 @@ class _BaseMiterEstimator(_SklearnBase):
         y = _check_target(y, n_rows, name=name)
         sw_arr = _check_sample_weight(sample_weight, n_rows)
         self._fitted_on_dataframe = _is_pandas_dataframe(X)
+        y_arr = self._encode_targets(y, is_fit=True)
+
+        encoder: CatObliqueTSEncoder | None = None
+        X_fit: Any = X
+        ds_cat_arg: str | Sequence[int | str] | None = categorical_feature
+        if self.cat_oblique_ts:
+            cat_idx = resolve_categorical_indices_for_X(X, categorical_feature)
+            if cat_idx:
+                encoder = CatObliqueTSEncoder(
+                    smooth=float(self.cat_ts_smooth),
+                    n_folds=5,
+                    random_state=int(self.random_state),
+                )
+                X_fit = encoder.fit_transform(
+                    X,
+                    y_arr,
+                    sw_arr,
+                    cat_idx,
+                    is_binary=(self._objective == _core.Objective.Binary),
+                )
+                ds_cat_arg = cat_idx
+
         ds = Dataset(
-            X,
-            categorical_feature=categorical_feature,
+            X_fit,
+            categorical_feature=ds_cat_arg,
             max_bin=self.max_bin,
             min_data_per_group=self.min_data_per_group,
             max_categories=self.max_categories,
             n_jobs=int(self.n_jobs),
         )
-        y_arr = self._encode_targets(y, is_fit=True)
 
         valid_ds_inner = None
         y_val_arr = None
@@ -391,7 +420,8 @@ class _BaseMiterEstimator(_SklearnBase):
             X_val, y_val = eval_set[0]
             n_val, _ = _check_input_X(X_val, name=name)
             y_val = _check_target(y_val, n_val, name=name)
-            valid_ds_inner = ds.transform(X_val)._inner
+            X_val_fit = encoder.transform(X_val) if encoder is not None else X_val
+            valid_ds_inner = ds.transform(X_val_fit)._inner
             y_val_arr = self._encode_targets(y_val, is_fit=False)
 
         result = _core.fit_booster(
@@ -405,10 +435,15 @@ class _BaseMiterEstimator(_SklearnBase):
             params,
         )
         self._model = result.model
+        self._cat_ts_encoder = encoder
         self._lignum_cache: dict[int, _core.LignumPredictor | None] = {}
         self.best_iteration_ = result.model.best_iteration
-        self.n_features_in_ = result.model.n_features
-        self.feature_names_in_ = np.array(result.model.feature_names, dtype=object)
+        if encoder is not None:
+            self.n_features_in_ = encoder.n_input_features_
+            self.feature_names_in_ = np.array(encoder.input_feature_names_, dtype=object)
+        else:
+            self.n_features_in_ = result.model.n_features
+            self.feature_names_in_ = np.array(result.model.feature_names, dtype=object)
         self.feature_importances_ = result.model.feature_importances_split()
         self.feature_importances_gain_ = result.model.feature_importances_gain()
         self.train_loss_ = list(result.train_loss)
@@ -438,7 +473,11 @@ class _BaseMiterEstimator(_SklearnBase):
         """Raw scores through lignum (M6); bitwise equal to miter's own evaluator."""
         model = self._check_fitted()
         _, n_features = _check_input_X(X, name=type(self).__name__)
-        if n_features != model.n_features:
+        enc: CatObliqueTSEncoder | None = getattr(self, "_cat_ts_encoder", None)
+        if enc is not None:
+            X = enc.transform(X)
+            n_features = model.n_features
+        elif n_features != model.n_features:
             raise ValueError(
                 f"X has {n_features} features, but {type(self).__name__} is expecting "
                 f"{model.n_features} features as input."
@@ -501,6 +540,8 @@ class _BaseMiterEstimator(_SklearnBase):
 
     def save_model(self, path: str) -> None:
         model = self._check_fitted()
+        if getattr(self, "_cat_ts_encoder", None) is not None:
+            raise NotImplementedError("save_model JSON does not yet support cat_oblique_ts=True; use pickle")
         _core.save_model_json(model, str(path))
 
     @classmethod
