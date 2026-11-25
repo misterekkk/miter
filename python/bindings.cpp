@@ -464,12 +464,17 @@ NB_MODULE(_core, m) {
         .value("Regression", miter::Objective::Regression)
         .value("Binary", miter::Objective::Binary);
 
+    nb::enum_<miter::GrowPolicy>(m, "GrowPolicy")
+        .value("Leafwise", miter::GrowPolicy::Leafwise)
+        .value("Symmetric", miter::GrowPolicy::Symmetric);
+
     nb::class_<miter::Params>(m, "Params")
         .def(nb::init<>())
         .def_rw("n_estimators", &miter::Params::n_estimators)
         .def_rw("learning_rate", &miter::Params::learning_rate)
         .def_rw("num_leaves", &miter::Params::num_leaves)
         .def_rw("max_depth", &miter::Params::max_depth)
+        .def_rw("grow_policy", &miter::Params::grow_policy)
         .def_rw("min_data_in_leaf", &miter::Params::min_data_in_leaf)
         .def_rw("min_sum_hessian_in_leaf", &miter::Params::min_sum_hessian_in_leaf)
         .def_rw("lambda_l2", &miter::Params::lambda_l2)

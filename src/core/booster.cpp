@@ -27,6 +27,16 @@ void validate_params(const Params& params) {
     if (params.num_leaves < 2) {
         throw std::invalid_argument("num_leaves must be >= 2");
     }
+    if (params.grow_policy != GrowPolicy::Leafwise && params.grow_policy != GrowPolicy::Symmetric) {
+        throw std::invalid_argument("grow_policy must be Leafwise or Symmetric");
+    }
+    if (params.grow_policy == GrowPolicy::Symmetric) {
+        const int sym_depth = (params.max_depth > 0) ? params.max_depth : 6;
+        if (sym_depth < 1 || sym_depth > 8) {
+            throw std::invalid_argument(
+                "For symmetric grow_policy, max_depth must be -1 or in [1, 8]");
+        }
+    }
     if (params.min_data_in_leaf < 1) {
         throw std::invalid_argument("min_data_in_leaf must be >= 1");
     }

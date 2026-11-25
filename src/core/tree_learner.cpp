@@ -821,27 +821,48 @@ void TreeWorkspace::prepare(const Dataset& ds, const Params& params) {
     if (params.bagging_fraction < 1.0) {
         oob_rows.reserve(ds.n_rows());
     }
-    const std::size_t slots = static_cast<std::size_t>(std::max(params.num_leaves, 1)) + 1U;
-    pool.reset(slots, layout.total_bins);
     oblique.prepare(ds, params);
     const std::size_t n = ds.n_rows();
     const std::size_t max_chunks = (n + kDetChunkRows - 1U) / kDetChunkRows;
+    row_indices.resize(n);
+    chunk_g.resize(max_chunks);
+    chunk_h.resize(max_chunks);
+    g_ordered.resize(n);
+    h_ordered.resize(n);
+
+    if (params.grow_policy == GrowPolicy::Symmetric) {
+        sym.prepare(ds, params);
+        pool.reset(0U, 0U);
+        axis_wave_hists.resize(0U);
+        tmp_left.resize(0U);
+        tmp_right.resize(0U);
+        split_flags.resize(0U);
+        chunk_left_counts.resize(0U);
+        chunk_left_offs.resize(0U);
+        chunk_right_offs.resize(0U);
+        work_g.resize(0U);
+        work_h.resize(0U);
+        work_f32_tmp_l.resize(0U);
+        work_f32_tmp_r.resize(0U);
+        work_codes.resize(0U);
+        work_code_threads = 0U;
+        work_col_tmp.resize(0U);
+        return;
+    }
+
+    const std::size_t slots = static_cast<std::size_t>(std::max(params.num_leaves, 1)) + 1U;
+    pool.reset(slots, layout.total_bins);
     if (layout.active_features.size() < 16U && n >= 32768U) {
         axis_wave_hists.resize(kWaveChunks * layout.total_bins);
     } else {
         axis_wave_hists.resize(0U);
     }
-    row_indices.resize(n);
     tmp_left.resize(n + 1U);
     tmp_right.resize(n + 1U);
     split_flags.resize(n);
-    chunk_g.resize(max_chunks);
-    chunk_h.resize(max_chunks);
     chunk_left_counts.resize(max_chunks);
     chunk_left_offs.resize(max_chunks);
     chunk_right_offs.resize(max_chunks);
-    g_ordered.resize(n);
-    h_ordered.resize(n);
 
     const bool alloc_work_gh = (params.bagging_fraction >= 1.0) && (n >= 16384U) &&
                                (params.num_leaves > 1) && (params.m_mult > 0) &&
@@ -886,6 +907,9 @@ Tree grow_tree(const Dataset& ds, const float* g, const float* h, const Params& 
     }
     if (params.feature_fraction < 1.0) {
         select_features(params, tree_index, ws);
+    }
+    if (params.grow_policy == GrowPolicy::Symmetric) {
+        return grow_symmetric_tree(ds, g, h, params, tree_index, ws, n_root, bagging, train_scores);
     }
 
     Tree tree;

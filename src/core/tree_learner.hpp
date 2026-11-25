@@ -9,6 +9,7 @@
 
 #include "core/histogram.hpp"
 #include "core/oblique.hpp"
+#include "core/symmetric_tree.hpp"
 #include "data/dataset.hpp"
 #include "util/aligned_buffer.hpp"
 
@@ -18,6 +19,7 @@ struct TreeWorkspace {
     FeatureHistLayout layout;
     HistPool pool;
     ObliqueScratch oblique;
+    SymmetricWorkspace sym;
     AlignedBuffer<HistBin> axis_wave_hists;
     std::vector<std::uint32_t> row_indices;
     std::vector<std::uint32_t> tmp_left;

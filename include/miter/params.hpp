@@ -5,6 +5,14 @@
 namespace miter {
 
 /**
+ * @brief Tree growth strategy: best-first leaf-wise (default) or level-wise symmetric (oblivious).
+ */
+enum class GrowPolicy : std::uint8_t {
+    Leafwise = 0,
+    Symmetric = 1,
+};
+
+/**
  * @brief Training and model hyperparameters for miter.
  *
  * Default values match the frozen research protocol in docs/IMPLEMENTATION_PLAN.md (Section 2.6).
@@ -14,6 +22,7 @@ struct Params {
     double learning_rate = 0.05;
     int num_leaves = 31;
     int max_depth = -1;
+    GrowPolicy grow_policy = GrowPolicy::Leafwise;
     int min_data_in_leaf = 20;
     double min_sum_hessian_in_leaf = 1e-3;
     double lambda_l2 = 1.0;

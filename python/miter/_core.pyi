@@ -15,11 +15,16 @@ class Objective(Enum):
     Regression = ...
     Binary = ...
 
+class GrowPolicy(Enum):
+    Leafwise = ...
+    Symmetric = ...
+
 class Params:
     n_estimators: int
     learning_rate: float
     num_leaves: int
     max_depth: int
+    grow_policy: GrowPolicy
     min_data_in_leaf: int
     min_sum_hessian_in_leaf: float
     lambda_l2: float

@@ -233,6 +233,7 @@ class _BaseMiterEstimator(_SklearnBase):
         learning_rate: float = 0.05,
         num_leaves: int = 31,
         max_depth: int = -1,
+        grow_policy: str = "leafwise",
         min_data_in_leaf: int = 20,
         min_sum_hessian_in_leaf: float = 1e-3,
         lambda_l2: float = 1.0,
@@ -261,6 +262,7 @@ class _BaseMiterEstimator(_SklearnBase):
         self.learning_rate = learning_rate
         self.num_leaves = num_leaves
         self.max_depth = max_depth
+        self.grow_policy = grow_policy
         self.min_data_in_leaf = min_data_in_leaf
         self.min_sum_hessian_in_leaf = min_sum_hessian_in_leaf
         self.lambda_l2 = lambda_l2
@@ -303,6 +305,14 @@ class _BaseMiterEstimator(_SklearnBase):
         p.learning_rate = float(self.learning_rate)
         p.num_leaves = int(self.num_leaves)
         p.max_depth = int(self.max_depth)
+        if self.grow_policy == "leafwise":
+            p.grow_policy = _core.GrowPolicy.Leafwise
+        elif self.grow_policy == "symmetric":
+            p.grow_policy = _core.GrowPolicy.Symmetric
+        else:
+            raise ValueError(
+                f"Unknown grow_policy: {self.grow_policy!r} (expected 'leafwise' or 'symmetric')"
+            )
         p.min_data_in_leaf = int(self.min_data_in_leaf)
         p.min_sum_hessian_in_leaf = float(self.min_sum_hessian_in_leaf)
         p.lambda_l2 = float(self.lambda_l2)
@@ -501,6 +511,7 @@ class _BaseMiterEstimator(_SklearnBase):
             learning_rate=p.learning_rate,
             num_leaves=p.num_leaves,
             max_depth=p.max_depth,
+            grow_policy="symmetric" if p.grow_policy == _core.GrowPolicy.Symmetric else "leafwise",
             min_data_in_leaf=p.min_data_in_leaf,
             min_sum_hessian_in_leaf=p.min_sum_hessian_in_leaf,
             lambda_l2=p.lambda_l2,
