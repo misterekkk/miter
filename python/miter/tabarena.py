@@ -50,6 +50,8 @@ _FORWARDED = (
     "cat_smooth",
     "cat_l2",
     "max_cat_threshold",
+    "cat_oblique_ts",
+    "cat_ts_smooth",
     "m_mult",
     "k_proj",
     "preset",
@@ -148,18 +150,29 @@ def generate_configs_miter(num_random_configs: int = 200, seed: int = 1234) -> l
     The first configuration TabArena evaluates is the default (``manual_configs=[{}]``); these are
     the additional random ones for "tuned" and "tuned + ensembled" results.
     """
-    from ConfigSpace import Categorical, ConfigurationSpace, Float, Integer
+    from ConfigSpace import (
+        Categorical,
+        ConfigurationSpace,
+        EqualsCondition,
+        Float,
+        Integer,
+    )
 
+    gp = Categorical("grow_policy", ["leafwise", "symmetric"])
+    nl = Integer("num_leaves", (4, 128), log=True)
+    md = Integer("max_depth", (4, 8))
     space = ConfigurationSpace(
         space=[
             Float("learning_rate", (1e-2, 1e-1), log=True),
-            Categorical("grow_policy", ["leafwise", "symmetric"]),
-            Integer("num_leaves", (4, 128), log=True),
-            Integer("min_data_in_leaf", (2, 64), log=True),
+            gp,
+            nl,
+            md,
+            Integer("min_data_in_leaf", (1, 64), log=True),
             Float("lambda_l2", (1e-3, 10.0), log=True),
             Categorical("m_mult", [1, 2, 4]),
             Float("feature_fraction", (0.5, 1.0)),
             Categorical("extra_trees", [False, True]),
+            Categorical("cat_oblique_ts", [False, True]),
             Integer("min_data_per_group", (2, 100), log=True),
             Float("cat_l2", (5e-3, 10.0), log=True),
             Float("cat_smooth", (1e-3, 100.0), log=True),
@@ -167,12 +180,13 @@ def generate_configs_miter(num_random_configs: int = 200, seed: int = 1234) -> l
         ],
         seed=seed,
     )
+    space.add([EqualsCondition(nl, gp, "leafwise"), EqualsCondition(md, gp, "symmetric")])
     configs = space.sample_configuration(num_random_configs)
     if num_random_configs == 1:
         configs = [configs]
     out = []
     for config in configs:
-        out.append({k: v.item() if isinstance(v, np.generic) else v for k, v in dict(config).items()})
+        out.append({k: v.item() if isinstance(v, np.generic) else v for k, v in dict(config).items() if v is not None})
     return out
 
 
