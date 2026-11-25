@@ -194,6 +194,68 @@ def cmd_summarize() -> None:
     print(f"wrote {SUMMARY_PATH}")
 
 
+SUMMARY51_PATH = HERE.parent / "results" / "tabarena_t12_full51_summary.md"
+
+
+def _multiclass_tasks() -> list[str]:
+    tm = TabArenaContext().task_metadata
+    return sorted(tm[tm.problem_type == "multiclass"]["name"].tolist())
+
+
+def cmd_run_multiclass(shard: int, nshards: int) -> None:
+    """Addendum (tabarena_t12_full51_prereg.md): the 8 multiclass tasks, miter one-vs-rest."""
+    order = _order(_multiclass_tasks())
+    mine = [d for i, d in enumerate(order) if i % nshards == shard]
+    print(f"Multiclass shard {shard}/{nshards}: {mine}", flush=True)
+    for name in mine:
+        t0 = time.time()
+        ctx = TabArenaContext()
+        exps = TabArenaV0pt1ExperimentBundle(models=_models()).build_experiments()
+        res = ctx.build_and_run_jobs(
+            exps,
+            expname=str(EXP_ROOT / name),
+            new_result_prefix="[New] ",
+            build_kwargs={"dataset_names": [name], "split_indices": "lite"},
+            debug_mode=True,
+        )
+        print(
+            f"DONE dataset={name} jobs={len(res)} wall={time.time() - t0:.1f}s",
+            flush=True,
+        )
+
+
+def cmd_summarize51() -> None:
+    reg, binary = _tasks()
+    mc = _multiclass_tasks()
+    names = reg + binary + mc
+    new = _new_results(names)
+    lines = [
+        "# MITER_T12 on TabArena `lite`, all 51 tasks (multiclass via one-vs-rest)",
+        "",
+        "Addendum to `tabarena_t12_full43_prereg.md`: `tabarena_t12_full51_prereg.md`. Multiclass "
+        "tasks use miter one-vs-rest (one binary model per class, normalised probabilities), not "
+        "native softmax.",
+        "",
+    ]
+    lb_g, per_g = _leaderboard(new, names, True, "gbdt_only_51")
+    lines += ["## gbdt_only pool, 51 tasks", ""] + _lb_lines(
+        lb_g, "gbdt_only, 51 tasks", True
+    )
+    lines += (
+        _paired(per_g, names, "all 51")
+        + _paired(per_g, mc, "multiclass 8 (OvR)")
+        + [""]
+    )
+    lb_m, _ = _leaderboard(new, mc, True, "gbdt_only_multiclass")
+    lines += _lb_lines(lb_m, "gbdt_only, multiclass 8 (OvR)", True)
+    lb_f, _ = _leaderboard(new, names, False, "full_pool_51")
+    lines += ["## full pool, 51 tasks", ""] + _lb_lines(
+        lb_f, "full pool, 51 tasks", False
+    )
+    SUMMARY51_PATH.write_text("\n".join(lines) + "\n")
+    print(f"wrote {SUMMARY51_PATH}")
+
+
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     sp = ap.add_subparsers(dest="cmd", required=True)
@@ -201,5 +263,16 @@ if __name__ == "__main__":
     r.add_argument("--shard", type=int, required=True)
     r.add_argument("--nshards", type=int, required=True)
     sp.add_parser("summarize")
+    rm = sp.add_parser("run-multiclass")
+    rm.add_argument("--shard", type=int, required=True)
+    rm.add_argument("--nshards", type=int, required=True)
+    sp.add_parser("summarize51")
     a = ap.parse_args()
-    cmd_run(a.shard, a.nshards) if a.cmd == "run" else cmd_summarize()
+    if a.cmd == "run":
+        cmd_run(a.shard, a.nshards)
+    elif a.cmd == "run-multiclass":
+        cmd_run_multiclass(a.shard, a.nshards)
+    elif a.cmd == "summarize51":
+        cmd_summarize51()
+    else:
+        cmd_summarize()

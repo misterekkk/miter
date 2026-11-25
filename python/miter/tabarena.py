@@ -1,4 +1,4 @@
-"""miter as an AutoGluon / TabArena model (regression and binary classification).
+"""miter as an AutoGluon / TabArena model (regression, binary and one-vs-rest multiclass).
 
 Requires ``autogluon.tabular`` (and ``tabarena`` plus ``ConfigSpace`` for the config generators);
 neither is a dependency of miter. Usage inside a TabArena experiment::
@@ -9,6 +9,10 @@ The wrapper adds nothing to miter's own behaviour: categorical columns (pandas `
 AutoGluon produces them; ``object`` columns are cast to ``category``) go to miter's native K1
 handling, NaN stays NaN (miter handles it natively), and TabArena's ``time_limit`` is forwarded to
 miter's ``time_limit``. Early stopping (50 rounds) uses the bagging fold's validation set.
+
+Multiclass (miter v1.0 is binary only) is handled one-vs-rest: one binary miter model per class
+(each with its own early stopping, ``time_limit`` split evenly), probabilities normalised to sum
+to 1. This is a stop-gap until native softmax (v1.1) and is reported as "miter OvR".
 """
 
 from __future__ import annotations
@@ -17,7 +21,7 @@ from typing import Any
 
 import numpy as np
 from autogluon.common.features.types import R_CATEGORY, R_FLOAT, R_INT, R_OBJECT
-from autogluon.core.constants import BINARY, REGRESSION
+from autogluon.core.constants import BINARY, MULTICLASS, REGRESSION
 from autogluon.core.models import AbstractModel
 
 _DEFAULTS: dict[str, Any] = {
@@ -71,7 +75,7 @@ class MiterModel(AbstractModel):  # type: ignore[misc]
 
     @classmethod
     def supported_problem_types(cls) -> list[str]:
-        return [REGRESSION, BINARY]
+        return [REGRESSION, BINARY, MULTICLASS]
 
     def _get_default_auxiliary_params(self) -> dict[str, Any]:
         params: dict[str, Any] = super()._get_default_auxiliary_params()
@@ -121,6 +125,9 @@ class MiterModel(AbstractModel):  # type: ignore[misc]
         params = self._get_model_params()
         X = self._prep(self.preprocess(X, is_train=True))
         has_val = X_val is not None
+        if self.problem_type == MULTICLASS:
+            self._fit_ovr(params, X, y, X_val, y_val, time_limit=time_limit, n_jobs=int(num_cpus))
+            return
         self.model = self._estimator(params, has_val=has_val, time_limit=time_limit, n_jobs=int(num_cpus))
         fit_kwargs: dict[str, Any] = {}
         if has_val:
@@ -128,8 +135,41 @@ class MiterModel(AbstractModel):  # type: ignore[misc]
         self.model.fit(X, np.asarray(y, dtype=np.float64), **fit_kwargs)
         self.params_trained["n_estimators"] = int(self.model.best_iteration_)
 
+    def _fit_ovr(
+        self, params: dict[str, Any], X: Any, y: Any, X_val: Any, y_val: Any, *, time_limit: float | None, n_jobs: int
+    ) -> None:
+        y_arr = np.asarray(y).astype(np.int64)
+        n_classes = int(getattr(self, "num_classes", None) or (int(np.max(y_arr)) + 1))
+        has_val = X_val is not None
+        Xv = self._prep(self.preprocess(X_val)) if has_val else None
+        yv = np.asarray(y_val).astype(np.int64) if has_val else None
+        per_class_time = None if time_limit is None else time_limit / n_classes
+        models: list[Any] = []
+        best = 0
+        for k in range(n_classes):
+            yk = (y_arr == k).astype(np.float64)
+            if np.min(yk) == np.max(yk):  # class absent (or the only one) in this fold: constant probability
+                models.append(float(yk[0]))
+                continue
+            est = self._estimator(params, has_val=has_val, time_limit=per_class_time, n_jobs=n_jobs)
+            fit_kwargs: dict[str, Any] = {}
+            if has_val:
+                fit_kwargs["eval_set"] = [(Xv, np.equal(yv, k).astype(np.float64))]
+            est.fit(X, yk, **fit_kwargs)
+            best = max(best, int(est.best_iteration_))
+            models.append(est)
+        self.model = models
+        self.params_trained["n_estimators"] = max(best, 1)
+
     def _predict_proba(self, X: Any, **kwargs: Any) -> Any:
         X = self._prep(self.preprocess(X, **kwargs))
+        if self.problem_type == MULTICLASS:
+            n = len(X)
+            cols = [np.full(n, m) if isinstance(m, float) else m.predict_proba(X)[:, 1] for m in self.model]
+            proba = np.column_stack(cols)
+            total = proba.sum(axis=1, keepdims=True)
+            uniform = np.full_like(proba, 1.0 / proba.shape[1])
+            return np.where(total > 0, proba / np.where(total > 0, total, 1.0), uniform)
         if self.problem_type == REGRESSION:
             return self.model.predict(X)
         return self.model.predict_proba(X)[:, 1]  # AutoGluon expects P(class 1) for binary
