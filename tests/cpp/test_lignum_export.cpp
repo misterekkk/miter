@@ -10,6 +10,7 @@
 #include "data/dataset.hpp"
 #include "data/quantizer.hpp"
 #include "model/evaluator.hpp"
+#include "model/lignum_bridge.hpp"
 #include "model/lignum_export.hpp"
 
 namespace {
@@ -164,6 +165,79 @@ TEST(LignumExportTest, RawForestMatchesEvaluatorBitwise) {
         const double got = eval_raw(raw, &rows[i * p]);
         ASSERT_EQ(std::bit_cast<std::uint64_t>(got), std::bit_cast<std::uint64_t>(ref[i]))
             << "row " << i << ": " << got << " vs " << ref[i];
+    }
+}
+
+TEST(LignumBridgeTest, LignumPredictionsEqualMiterEvaluatorBitwise) {
+    // Regression and binary models with NaN, oblique and axis splits; lignum's KNode kernel
+    // (binned falls back for oblique trees) must give miter's raw scores bit for bit.
+    constexpr std::size_t n = 5000U;
+    constexpr std::size_t p = 6U;
+    std::mt19937_64 rng(77);
+    std::normal_distribution<double> norm(0.0, 1.0);
+    std::lognormal_distribution<double> heavy(0.0, 1.5);
+    std::vector<double> X(n * p);
+    std::vector<double> y(n);
+    std::vector<double> yb(n);
+    for (std::size_t i = 0; i < n; ++i) {
+        for (std::size_t j = 0; j < p; ++j) {
+            const bool nan = (j == 1U && i % 13U == 0U) || (j == 4U && i % 31U == 0U);
+            X[i * p + j] = nan ? kNan : ((j % 2U == 0U) ? heavy(rng) : norm(rng));
+        }
+        const double x1 = std::isnan(X[i * p + 1U]) ? -1.0 : X[i * p + 1U];
+        y[i] = std::sin(X[i * p + 0U]) + x1 * X[i * p + 3U] + 0.2 * norm(rng);
+        yb[i] = (y[i] > 0.0) ? 1.0 : 0.0;
+    }
+    std::vector<double> rows(X.begin(), X.begin() + 3000 * p);
+    const double specials[] = {kNan, kInf, -kInf, 1e300, -1e300, 0.0};
+    for (std::size_t s = 0; s < 300; ++s) {
+        std::vector<double> r(X.begin() + s * p, X.begin() + (s + 1) * p);
+        r[s % p] = specials[s % 6U];
+        rows.insert(rows.end(), r.begin(), r.end());
+    }
+    const auto ds = miter::Dataset::fit_numeric(X.data(), n, p, false);
+    for (const auto obj : {miter::Objective::Regression, miter::Objective::Binary}) {
+        miter::Params prm{};
+        prm.n_estimators = 30;
+        prm.num_leaves = 31;
+        prm.m_mult = 2;
+        prm.early_stopping_rounds = 0;
+        prm.random_state = 3;
+        const auto& target = (obj == miter::Objective::Binary) ? yb : y;
+        const auto res = miter::fit_booster(ds, obj, target, {}, nullptr, {}, {}, prm);
+        // Rows on and one ulp below every axis threshold of this model.
+        std::vector<double> test_rows = rows;
+        const auto raw = miter::export_raw_forest(res.model);
+        std::size_t n_oblique = 0;
+        for (const auto& t : raw.trees) {
+            for (const auto& nd : t.nodes) {
+                n_oblique += nd.kind == miter::RawNode::Kind::Oblique ? 1U : 0U;
+                if (nd.kind != miter::RawNode::Kind::Numeric) {
+                    continue;
+                }
+                for (const double x : {nd.threshold, std::nextafter(nd.threshold, -kInf)}) {
+                    std::vector<double> r(X.begin(), X.begin() + p);
+                    r[nd.feature] = x;
+                    test_rows.insert(test_rows.end(), r.begin(), r.end());
+                }
+            }
+        }
+        ASSERT_GT(n_oblique, 0U);
+        const std::size_t m = test_rows.size() / p;
+        std::vector<double> ref(m);
+        miter::Evaluator::predict_raw(res.model, test_rows.data(), m, p, false, ref.data());
+        for (const bool binned : {false, true}) {
+            const lignum::Model lm = miter::to_lignum(res.model, 0, binned);
+            EXPECT_EQ(lm.n_oblique, n_oblique);
+            std::vector<double> got(m);
+            lm.predict_raw(test_rows.data(), m, p, got.data(), 2);
+            for (std::size_t i = 0; i < m; ++i) {
+                ASSERT_EQ(std::bit_cast<std::uint64_t>(got[i]),
+                          std::bit_cast<std::uint64_t>(ref[i]))
+                    << "objective " << static_cast<int>(obj) << " binned " << binned << " row "
+                    << i;
+            }
+        }
     }
 }
 

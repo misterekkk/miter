@@ -86,6 +86,7 @@ add_library(miter STATIC
     src/model/evaluator.cpp
     src/model/json_io.cpp
     src/model/lignum_export.cpp
+    src/model/lignum_bridge.cpp
 )
 
 set_target_properties(miter PROPERTIES

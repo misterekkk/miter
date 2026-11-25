@@ -85,7 +85,18 @@ RawForest export_raw_forest(const Model& model, std::size_t num_iteration) {
             case NodeKind::Axis:
                 r.kind = RawNode::Kind::Numeric;
                 r.feature = n.feature;
-                r.threshold = axis_raw_threshold(model.quantizers.at(n.feature), n.threshold_u16);
+                if (n.threshold_u16 == kQ16NanCode) {
+                    // NaN-vs-rest split: every non-NaN value goes left. No double x satisfies
+                    // encode(x) >= 65535, so swap the children: threshold -inf sends every
+                    // non-NaN value right (to the old left child), NaN takes the flipped default.
+                    r.threshold = -std::numeric_limits<double>::infinity();
+                    r.left = n.right_child;
+                    r.right = n.left_child;
+                    r.default_right = n.nan_go_left;
+                } else {
+                    r.threshold =
+                        axis_raw_threshold(model.quantizers.at(n.feature), n.threshold_u16);
+                }
                 break;
             case NodeKind::Categorical: {
                 r.kind = RawNode::Kind::Categorical;

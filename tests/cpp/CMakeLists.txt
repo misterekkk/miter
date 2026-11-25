@@ -18,6 +18,7 @@ target_include_directories(miter_tests PRIVATE
 
 target_link_libraries(miter_tests PRIVATE
     miter
+    lignum
     GTest::gtest_main
 )
 

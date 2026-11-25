@@ -17,6 +17,8 @@ namespace miter {
  *              P = sum_q weights[q] * (u(x_{features[q]}) - 32768) in int32, u = Q16r code.
  *
  * Axis splits need no quantization: miter's `u >= t` is exactly `x >= axis_raw_threshold(q, t)`.
+ * A NaN-vs-rest split (t = 65535: every non-NaN value left) is exported with threshold -inf and
+ * swapped children / flipped default direction, which routes every input identically.
  */
 struct RawNode {
     enum class Kind : std::uint8_t { Leaf = 0, Numeric = 1, Categorical = 2, Oblique = 3 };
