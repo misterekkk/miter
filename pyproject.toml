@@ -42,7 +42,17 @@ wheel.packages = ["python/miter"]
 wheel.py-api = "cp312"
 metadata.version.provider = "scikit_build_core.metadata.regex"
 metadata.version.input = "python/miter/__init__.py"
-sdist.exclude = ["benchmarks", "docs", ".github", "tests", "lignum_patches", ".venv"]
+# extern/lignum (gitignored, patched in place) is shipped so the sdist builds on its own.
+sdist.include = [
+    "extern/lignum/CMakeLists.txt",
+    "extern/lignum/LICENSE",
+    "extern/lignum/NOTICE",
+    "extern/lignum/include/**",
+    "extern/lignum/src/**",
+    "extern/lignum/extern/simdjson/**",
+    "extern/lignum/python/lignum/__init__.py",
+]
+sdist.exclude = ["benchmarks", "docs", ".github", "tests", "lignum_patches", ".venv*", "build*", "catboost_info", "GEMINI.md", "CLAUDE.md"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests/python"]
@@ -63,3 +73,15 @@ ignore_missing_imports = true
 [[tool.mypy.overrides]]
 module = ["sklearn", "sklearn.*", "autogluon.*", "ConfigSpace", "ConfigSpace.*", "tabarena.*"]
 ignore_missing_imports = true
+
+[tool.cibuildwheel]
+# cp310 / cp311 get version-specific wheels; cp312 builds one abi3 wheel for 3.12+ (wheel.py-api).
+build = ["cp310-*", "cp311-*", "cp312-*"]
+skip = ["*-musllinux_*", "*-win32", "*_i686"]
+test-requires = ["pytest", "pandas", "scikit-learn"]
+test-command = "pytest {project}/tests/python -q"
+
+[tool.cibuildwheel.macos]
+before-all = "brew install libomp"
+# Homebrew's libomp targets the runner's macOS; delocate bundles it into the wheel.
+environment = { MACOSX_DEPLOYMENT_TARGET = "14.0" }

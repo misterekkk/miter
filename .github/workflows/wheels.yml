@@ -1,0 +1,66 @@
+name: Wheels
+
+# Builds release wheels and the sdist; nothing is uploaded anywhere (the author publishes).
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+    branches: ["m7*"]
+
+permissions:
+  contents: read
+
+jobs:
+  wheels:
+    name: Wheels (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # x86_64 Linux, aarch64 Linux, Windows x64, macOS arm64
+        os: [ubuntu-latest, ubuntu-24.04-arm, windows-latest, macos-14]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Clone local lignum dependency
+        shell: bash
+        run: |
+          git clone --branch v0.4.3 https://github.com/misterekkk/lignum extern/lignum
+          git -C extern/lignum checkout -b miter-integration
+          if compgen -G "lignum_patches/*.patch" > /dev/null; then
+            git -C extern/lignum -c user.name="CI" -c user.email="ci@example.invalid" am "$PWD"/lignum_patches/*.patch
+          fi
+
+      - name: Build and test wheels
+        run: |
+          python -m pip install "cibuildwheel>=3,<4"
+          python -m cibuildwheel --output-dir wheelhouse
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheels-${{ matrix.os }}
+          path: wheelhouse/*.whl
+
+  sdist:
+    name: sdist
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Build sdist
+        run: |
+          python -m pip install build
+          python -m build --sdist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sdist
+          path: dist/*.tar.gz
