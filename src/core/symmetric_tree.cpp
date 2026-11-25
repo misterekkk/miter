@@ -85,20 +85,122 @@ void build_axis_hist_feat(const std::uint8_t* col, const std::uint32_t* leaf_row
                           std::size_t stride, const float* g_seq, const float* h_seq,
                           HistBin* hist_out) noexcept {
     if (is_contiguous) {
-        for (std::size_t t = r0; t < r1; ++t) {
-            const std::uint8_t b = col[t];
-            HistBin& dst = hist_out[static_cast<std::size_t>(leaf_ids[t]) * stride + b];
-            dst.g += static_cast<double>(g_seq[t]);
-            dst.h += static_cast<double>(h_seq[t]);
-            dst.c += 1;
+        std::size_t t = r0;
+        for (; t + 4U <= r1; t += 4U) {
+            const std::size_t idx0 = static_cast<std::size_t>(leaf_ids[t]) * stride + col[t];
+            const std::size_t idx1 =
+                static_cast<std::size_t>(leaf_ids[t + 1U]) * stride + col[t + 1U];
+            const std::size_t idx2 =
+                static_cast<std::size_t>(leaf_ids[t + 2U]) * stride + col[t + 2U];
+            const std::size_t idx3 =
+                static_cast<std::size_t>(leaf_ids[t + 3U]) * stride + col[t + 3U];
+            hist_out[idx0].g += static_cast<double>(g_seq[t]);
+            hist_out[idx0].h += static_cast<double>(h_seq[t]);
+            hist_out[idx0].c += 1;
+            hist_out[idx1].g += static_cast<double>(g_seq[t + 1U]);
+            hist_out[idx1].h += static_cast<double>(h_seq[t + 1U]);
+            hist_out[idx1].c += 1;
+            hist_out[idx2].g += static_cast<double>(g_seq[t + 2U]);
+            hist_out[idx2].h += static_cast<double>(h_seq[t + 2U]);
+            hist_out[idx2].c += 1;
+            hist_out[idx3].g += static_cast<double>(g_seq[t + 3U]);
+            hist_out[idx3].h += static_cast<double>(h_seq[t + 3U]);
+            hist_out[idx3].c += 1;
+        }
+        for (; t < r1; ++t) {
+            const std::size_t idx = static_cast<std::size_t>(leaf_ids[t]) * stride + col[t];
+            hist_out[idx].g += static_cast<double>(g_seq[t]);
+            hist_out[idx].h += static_cast<double>(h_seq[t]);
+            hist_out[idx].c += 1;
         }
     } else {
-        for (std::size_t t = r0; t < r1; ++t) {
-            const std::uint8_t b = col[leaf_rows[t]];
-            HistBin& dst = hist_out[static_cast<std::size_t>(leaf_ids[t]) * stride + b];
-            dst.g += static_cast<double>(g_seq[t]);
-            dst.h += static_cast<double>(h_seq[t]);
-            dst.c += 1;
+        std::size_t t = r0;
+        for (; t + 4U <= r1; t += 4U) {
+            const std::size_t idx0 =
+                static_cast<std::size_t>(leaf_ids[t]) * stride + col[leaf_rows[t]];
+            const std::size_t idx1 =
+                static_cast<std::size_t>(leaf_ids[t + 1U]) * stride + col[leaf_rows[t + 1U]];
+            const std::size_t idx2 =
+                static_cast<std::size_t>(leaf_ids[t + 2U]) * stride + col[leaf_rows[t + 2U]];
+            const std::size_t idx3 =
+                static_cast<std::size_t>(leaf_ids[t + 3U]) * stride + col[leaf_rows[t + 3U]];
+            hist_out[idx0].g += static_cast<double>(g_seq[t]);
+            hist_out[idx0].h += static_cast<double>(h_seq[t]);
+            hist_out[idx0].c += 1;
+            hist_out[idx1].g += static_cast<double>(g_seq[t + 1U]);
+            hist_out[idx1].h += static_cast<double>(h_seq[t + 1U]);
+            hist_out[idx1].c += 1;
+            hist_out[idx2].g += static_cast<double>(g_seq[t + 2U]);
+            hist_out[idx2].h += static_cast<double>(h_seq[t + 2U]);
+            hist_out[idx2].c += 1;
+            hist_out[idx3].g += static_cast<double>(g_seq[t + 3U]);
+            hist_out[idx3].h += static_cast<double>(h_seq[t + 3U]);
+            hist_out[idx3].c += 1;
+        }
+        for (; t < r1; ++t) {
+            const std::size_t idx =
+                static_cast<std::size_t>(leaf_ids[t]) * stride + col[leaf_rows[t]];
+            hist_out[idx].g += static_cast<double>(g_seq[t]);
+            hist_out[idx].h += static_cast<double>(h_seq[t]);
+            hist_out[idx].c += 1;
+        }
+    }
+}
+
+void build_axis_hist_small_pairs(const std::uint8_t* col, const std::uint32_t* small_rows,
+                                 const std::uint8_t* small_pairs, const float* small_g,
+                                 const float* small_h, std::size_t s0, std::size_t s1,
+                                 std::size_t stride, HistBin* small_hist_out) noexcept {
+    std::size_t s = s0;
+    for (; s + 4U <= s1; s += 4U) {
+        const std::size_t idx0 =
+            static_cast<std::size_t>(small_pairs[s]) * stride + col[small_rows[s]];
+        const std::size_t idx1 =
+            static_cast<std::size_t>(small_pairs[s + 1U]) * stride + col[small_rows[s + 1U]];
+        const std::size_t idx2 =
+            static_cast<std::size_t>(small_pairs[s + 2U]) * stride + col[small_rows[s + 2U]];
+        const std::size_t idx3 =
+            static_cast<std::size_t>(small_pairs[s + 3U]) * stride + col[small_rows[s + 3U]];
+        small_hist_out[idx0].g += static_cast<double>(small_g[s]);
+        small_hist_out[idx0].h += static_cast<double>(small_h[s]);
+        small_hist_out[idx0].c += 1;
+        small_hist_out[idx1].g += static_cast<double>(small_g[s + 1U]);
+        small_hist_out[idx1].h += static_cast<double>(small_h[s + 1U]);
+        small_hist_out[idx1].c += 1;
+        small_hist_out[idx2].g += static_cast<double>(small_g[s + 2U]);
+        small_hist_out[idx2].h += static_cast<double>(small_h[s + 2U]);
+        small_hist_out[idx2].c += 1;
+        small_hist_out[idx3].g += static_cast<double>(small_g[s + 3U]);
+        small_hist_out[idx3].h += static_cast<double>(small_h[s + 3U]);
+        small_hist_out[idx3].c += 1;
+    }
+    for (; s < s1; ++s) {
+        const std::size_t idx =
+            static_cast<std::size_t>(small_pairs[s]) * stride + col[small_rows[s]];
+        small_hist_out[idx].g += static_cast<double>(small_g[s]);
+        small_hist_out[idx].h += static_cast<double>(small_h[s]);
+        small_hist_out[idx].c += 1;
+    }
+}
+
+void reconstruct_sym_hist_from_small(HistBin* hist_f, const HistBin* prev_f,
+                                     const std::uint8_t* small_bit, std::size_t n_pairs,
+                                     std::size_t stride) noexcept {
+    // Reconstruct right-to-left so in-place writes to 2*p / 2*p+1 never clobber unprocessed pairs.
+    for (std::size_t p = n_pairs; p > 0U; --p) {
+        const std::size_t pp = p - 1U;
+        const std::size_t sb = small_bit[pp];
+        const std::size_t small_l = 2U * pp + sb;
+        const std::size_t large_l = 2U * pp + (1U - sb);
+        const HistBin* src_small = hist_f + pp * stride;
+        const HistBin* src_prev = prev_f + pp * stride;
+        HistBin* dst_small = hist_f + small_l * stride;
+        HistBin* dst_large = hist_f + large_l * stride;
+        for (std::size_t b = 0U; b < stride; ++b) {
+            const HistBin sh = src_small[b];
+            const HistBin ph = src_prev[b];
+            dst_small[b] = sh;
+            dst_large[b] = HistBin{ph.g - sh.g, ph.h - sh.h, ph.c - sh.c};
         }
     }
 }
@@ -631,7 +733,30 @@ void sym_oblique_pass2_cand(const std::int16_t* codes, std::size_t n_rows,
                     }
                 }
             }
-            for (std::size_t i = 0; i < len; ++i) {
+            std::size_t i = 0U;
+            for (; i + 4U <= len; i += 4U) {
+                const std::size_t t = mb0 + i;
+                const std::size_t idx0 = static_cast<std::size_t>(leaf_ids[t]) * kStride + bins[i];
+                const std::size_t idx1 =
+                    static_cast<std::size_t>(leaf_ids[t + 1U]) * kStride + bins[i + 1U];
+                const std::size_t idx2 =
+                    static_cast<std::size_t>(leaf_ids[t + 2U]) * kStride + bins[i + 2U];
+                const std::size_t idx3 =
+                    static_cast<std::size_t>(leaf_ids[t + 3U]) * kStride + bins[i + 3U];
+                hist_out[idx0].g += static_cast<double>(g_seq[t]);
+                hist_out[idx0].h += static_cast<double>(h_seq[t]);
+                hist_out[idx0].c += 1;
+                hist_out[idx1].g += static_cast<double>(g_seq[t + 1U]);
+                hist_out[idx1].h += static_cast<double>(h_seq[t + 1U]);
+                hist_out[idx1].c += 1;
+                hist_out[idx2].g += static_cast<double>(g_seq[t + 2U]);
+                hist_out[idx2].h += static_cast<double>(h_seq[t + 2U]);
+                hist_out[idx2].c += 1;
+                hist_out[idx3].g += static_cast<double>(g_seq[t + 3U]);
+                hist_out[idx3].h += static_cast<double>(h_seq[t + 3U]);
+                hist_out[idx3].c += 1;
+            }
+            for (; i < len; ++i) {
                 const std::size_t t = mb0 + i;
                 HistBin& dst = hist_out[static_cast<std::size_t>(leaf_ids[t]) * kStride + bins[i]];
                 dst.g += static_cast<double>(g_seq[t]);
@@ -710,7 +835,30 @@ void sym_oblique_pass2_cand(const std::int16_t* codes, std::size_t n_rows,
                 }
             }
         }
-        for (std::size_t i = 0; i < len; ++i) {
+        std::size_t i = 0U;
+        for (; i + 4U <= len; i += 4U) {
+            const std::size_t t = mb0 + i;
+            const std::size_t idx0 = static_cast<std::size_t>(leaf_ids[t]) * kStride + bins[i];
+            const std::size_t idx1 =
+                static_cast<std::size_t>(leaf_ids[t + 1U]) * kStride + bins[i + 1U];
+            const std::size_t idx2 =
+                static_cast<std::size_t>(leaf_ids[t + 2U]) * kStride + bins[i + 2U];
+            const std::size_t idx3 =
+                static_cast<std::size_t>(leaf_ids[t + 3U]) * kStride + bins[i + 3U];
+            hist_out[idx0].g += static_cast<double>(g_seq[t]);
+            hist_out[idx0].h += static_cast<double>(h_seq[t]);
+            hist_out[idx0].c += 1;
+            hist_out[idx1].g += static_cast<double>(g_seq[t + 1U]);
+            hist_out[idx1].h += static_cast<double>(h_seq[t + 1U]);
+            hist_out[idx1].c += 1;
+            hist_out[idx2].g += static_cast<double>(g_seq[t + 2U]);
+            hist_out[idx2].h += static_cast<double>(h_seq[t + 2U]);
+            hist_out[idx2].c += 1;
+            hist_out[idx3].g += static_cast<double>(g_seq[t + 3U]);
+            hist_out[idx3].h += static_cast<double>(h_seq[t + 3U]);
+            hist_out[idx3].c += 1;
+        }
+        for (; i < len; ++i) {
             const std::size_t t = mb0 + i;
             HistBin& dst = hist_out[static_cast<std::size_t>(leaf_ids[t]) * kStride + bins[i]];
             dst.g += static_cast<double>(g_seq[t]);
@@ -1223,7 +1371,7 @@ find_sym_oblique_split(const Dataset& ds, const std::uint32_t* leaf_rows, std::s
     }
 
     HistBin* hist = sym.oblique_thread_hists.data();
-    const bool use_chunk_wave = (n_chunks > 1U) && (n_root >= 32768U);
+    const bool use_chunk_wave = (n_active == 1U) && (n_chunks > 1U) && (n_root >= 32768U);
     for (std::size_t a = 0; a < n_active; ++a) {
         const std::uint32_t j = scratch.active_cands[a];
         const ObliqueCandMeta& cm = metas[j];
@@ -1369,6 +1517,211 @@ void advance_sym_leaves(const SymSplitChoice& /*unused*/, std::uint8_t* leaf_ids
     }
 }
 
+std::size_t collect_small_pair_rows(const std::uint8_t* leaf_ids, const std::uint32_t* rows,
+                                    std::size_t n_root, bool is_contiguous, const float* g_seq,
+                                    const float* h_seq, const std::int32_t* leaf_c,
+                                    std::size_t n_leaves, int n_threads, SymmetricWorkspace& sym,
+                                    std::uint8_t* small_bit_out) noexcept {
+    const std::size_t n_pairs = n_leaves / 2U;
+    for (std::size_t p = 0U; p < n_pairs; ++p) {
+        small_bit_out[p] = (leaf_c[2U * p] <= leaf_c[2U * p + 1U]) ? 0U : 1U;
+    }
+    const std::size_t n_chunks = (n_root + kDetChunkRows - 1U) / kDetChunkRows;
+    const bool use_omp = (n_threads > 1) && (n_chunks > 1U) && (n_root >= 32768U);
+    if (use_omp) {
+#ifdef _OPENMP
+#pragma omp parallel for schedule(dynamic, 1) num_threads(n_threads)
+#endif
+        for (std::ptrdiff_t c = 0; c < static_cast<std::ptrdiff_t>(n_chunks); ++c) {
+            const auto cu = static_cast<std::size_t>(c);
+            const std::size_t r0 = cu * kDetChunkRows;
+            const std::size_t r1 = std::min(r0 + kDetChunkRows, n_root);
+            std::size_t cnt = 0U;
+            for (std::size_t t = r0; t < r1; ++t) {
+                const std::uint8_t l = leaf_ids[t];
+                if ((l & 1U) == small_bit_out[l >> 1U]) {
+                    ++cnt;
+                }
+            }
+            sym.chunk_small_counts[cu] = cnt;
+        }
+    } else {
+        for (std::size_t c = 0U; c < n_chunks; ++c) {
+            const std::size_t r0 = c * kDetChunkRows;
+            const std::size_t r1 = std::min(r0 + kDetChunkRows, n_root);
+            std::size_t cnt = 0U;
+            for (std::size_t t = r0; t < r1; ++t) {
+                const std::uint8_t l = leaf_ids[t];
+                if ((l & 1U) == small_bit_out[l >> 1U]) {
+                    ++cnt;
+                }
+            }
+            sym.chunk_small_counts[c] = cnt;
+        }
+    }
+
+    std::size_t n_small = 0U;
+    sym.chunk_small_offs[0] = 0U;
+    for (std::size_t c = 0U; c < n_chunks; ++c) {
+        n_small += sym.chunk_small_counts[c];
+        sym.chunk_small_offs[c + 1U] = n_small;
+    }
+    if (n_small == 0U) {
+        return 0U;
+    }
+
+    if (use_omp) {
+#ifdef _OPENMP
+#pragma omp parallel for schedule(dynamic, 1) num_threads(n_threads)
+#endif
+        for (std::ptrdiff_t c = 0; c < static_cast<std::ptrdiff_t>(n_chunks); ++c) {
+            const auto cu = static_cast<std::size_t>(c);
+            const std::size_t r0 = cu * kDetChunkRows;
+            const std::size_t r1 = std::min(r0 + kDetChunkRows, n_root);
+            std::size_t pos = sym.chunk_small_offs[cu];
+            for (std::size_t t = r0; t < r1; ++t) {
+                const std::uint8_t l = leaf_ids[t];
+                if ((l & 1U) == small_bit_out[l >> 1U]) {
+                    sym.small_rows[pos] = is_contiguous ? static_cast<std::uint32_t>(t) : rows[t];
+                    sym.small_pairs[pos] = static_cast<std::uint8_t>(l >> 1U);
+                    sym.small_g[pos] = g_seq[t];
+                    sym.small_h[pos] = h_seq[t];
+                    ++pos;
+                }
+            }
+        }
+    } else {
+        for (std::size_t c = 0U; c < n_chunks; ++c) {
+            const std::size_t r0 = c * kDetChunkRows;
+            const std::size_t r1 = std::min(r0 + kDetChunkRows, n_root);
+            std::size_t pos = sym.chunk_small_offs[c];
+            for (std::size_t t = r0; t < r1; ++t) {
+                const std::uint8_t l = leaf_ids[t];
+                if ((l & 1U) == small_bit_out[l >> 1U]) {
+                    sym.small_rows[pos] = is_contiguous ? static_cast<std::uint32_t>(t) : rows[t];
+                    sym.small_pairs[pos] = static_cast<std::uint8_t>(l >> 1U);
+                    sym.small_g[pos] = g_seq[t];
+                    sym.small_h[pos] = h_seq[t];
+                    ++pos;
+                }
+            }
+        }
+    }
+    return n_small;
+}
+
+void build_sym_feature_hist(const std::uint8_t* col, const std::uint32_t* rows, std::size_t n_root,
+                            bool is_contiguous, const std::uint8_t* leaf_ids, const float* g_seq,
+                            const float* h_seq, std::size_t d, std::size_t depth_limit,
+                            std::size_t n_leaves, std::size_t stride, bool allow_wave,
+                            int n_threads, std::size_t n_small, const std::uint8_t* small_bit,
+                            SymmetricWorkspace& sym, HistBin* hist_f, HistBin* prev_f) noexcept {
+    const bool use_sub = sym.use_axis_sub && (d >= 1U);
+    if (!use_sub) {
+        const std::size_t h_elems = n_leaves * stride;
+        std::memset(static_cast<void*>(hist_f), 0, h_elems * sizeof(HistBin));
+        const std::size_t n_chunks = (n_root + kDetChunkRows - 1U) / kDetChunkRows;
+        const bool use_wave = allow_wave && (n_chunks > 1U) && (n_root >= 32768U);
+        if (!use_wave) {
+            build_axis_hist_feat(col, rows, 0U, n_root, is_contiguous, leaf_ids, stride, g_seq,
+                                 h_seq, hist_f);
+        } else {
+            for (std::size_t w_base = 0; w_base < n_chunks; w_base += kWaveChunks) {
+                const std::size_t w_len = std::min(kWaveChunks, n_chunks - w_base);
+                if (n_threads > 1) {
+#ifdef _OPENMP
+#pragma omp parallel for schedule(dynamic, 1) num_threads(n_threads)
+#endif
+                    for (std::ptrdiff_t w = 0; w < static_cast<std::ptrdiff_t>(w_len); ++w) {
+                        const auto wu = static_cast<std::size_t>(w);
+                        const std::size_t c = w_base + wu;
+                        const std::size_t r0 = c * kDetChunkRows;
+                        const std::size_t r1 = std::min(r0 + kDetChunkRows, n_root);
+                        HistBin* wh = sym.wave_hists.data() + wu * h_elems;
+                        std::memset(static_cast<void*>(wh), 0, h_elems * sizeof(HistBin));
+                        build_axis_hist_feat(col, rows, r0, r1, is_contiguous, leaf_ids, stride,
+                                             g_seq, h_seq, wh);
+                    }
+                } else {
+                    for (std::size_t wu = 0; wu < w_len; ++wu) {
+                        const std::size_t c = w_base + wu;
+                        const std::size_t r0 = c * kDetChunkRows;
+                        const std::size_t r1 = std::min(r0 + kDetChunkRows, n_root);
+                        HistBin* wh = sym.wave_hists.data() + wu * h_elems;
+                        std::memset(static_cast<void*>(wh), 0, h_elems * sizeof(HistBin));
+                        build_axis_hist_feat(col, rows, r0, r1, is_contiguous, leaf_ids, stride,
+                                             g_seq, h_seq, wh);
+                    }
+                }
+                for (std::size_t w = 0; w < w_len; ++w) {
+                    const HistBin* wh = sym.wave_hists.data() + w * h_elems;
+                    for (std::size_t b = 0; b < h_elems; ++b) {
+                        hist_f[b].g += wh[b].g;
+                        hist_f[b].h += wh[b].h;
+                        hist_f[b].c += wh[b].c;
+                    }
+                }
+            }
+        }
+    } else {
+        const std::size_t n_pairs = n_leaves / 2U;
+        const std::size_t small_elems = n_pairs * stride;
+        std::memset(static_cast<void*>(hist_f), 0, small_elems * sizeof(HistBin));
+        const std::uint32_t* s_rows = sym.small_rows.data();
+        const std::uint8_t* s_pairs = sym.small_pairs.data();
+        const float* sg = sym.small_g.data();
+        const float* sh = sym.small_h.data();
+        const std::size_t n_small_chunks = (n_small + kDetChunkRows - 1U) / kDetChunkRows;
+        const bool use_wave = allow_wave && (n_small_chunks > 1U) && (n_small >= 32768U);
+        if (!use_wave) {
+            build_axis_hist_small_pairs(col, s_rows, s_pairs, sg, sh, 0U, n_small, stride, hist_f);
+        } else {
+            for (std::size_t w_base = 0; w_base < n_small_chunks; w_base += kWaveChunks) {
+                const std::size_t w_len = std::min(kWaveChunks, n_small_chunks - w_base);
+                if (n_threads > 1) {
+#ifdef _OPENMP
+#pragma omp parallel for schedule(dynamic, 1) num_threads(n_threads)
+#endif
+                    for (std::ptrdiff_t w = 0; w < static_cast<std::ptrdiff_t>(w_len); ++w) {
+                        const auto wu = static_cast<std::size_t>(w);
+                        const std::size_t c = w_base + wu;
+                        const std::size_t s0 = c * kDetChunkRows;
+                        const std::size_t s1 = std::min(s0 + kDetChunkRows, n_small);
+                        HistBin* wh = sym.wave_hists.data() + wu * small_elems;
+                        std::memset(static_cast<void*>(wh), 0, small_elems * sizeof(HistBin));
+                        build_axis_hist_small_pairs(col, s_rows, s_pairs, sg, sh, s0, s1, stride,
+                                                    wh);
+                    }
+                } else {
+                    for (std::size_t wu = 0; wu < w_len; ++wu) {
+                        const std::size_t c = w_base + wu;
+                        const std::size_t s0 = c * kDetChunkRows;
+                        const std::size_t s1 = std::min(s0 + kDetChunkRows, n_small);
+                        HistBin* wh = sym.wave_hists.data() + wu * small_elems;
+                        std::memset(static_cast<void*>(wh), 0, small_elems * sizeof(HistBin));
+                        build_axis_hist_small_pairs(col, s_rows, s_pairs, sg, sh, s0, s1, stride,
+                                                    wh);
+                    }
+                }
+                for (std::size_t w = 0; w < w_len; ++w) {
+                    const HistBin* wh = sym.wave_hists.data() + w * small_elems;
+                    for (std::size_t b = 0; b < small_elems; ++b) {
+                        hist_f[b].g += wh[b].g;
+                        hist_f[b].h += wh[b].h;
+                        hist_f[b].c += wh[b].c;
+                    }
+                }
+            }
+        }
+        reconstruct_sym_hist_from_small(hist_f, prev_f, small_bit, n_pairs, stride);
+    }
+
+    if (sym.use_axis_sub && (d + 1U < depth_limit)) {
+        std::memcpy(static_cast<void*>(prev_f), static_cast<const void*>(hist_f),
+                    n_leaves * stride * sizeof(HistBin));
+    }
+}
+
 } // namespace
 
 void SymmetricWorkspace::prepare(const Dataset& ds, const Params& params) {
@@ -1376,6 +1729,7 @@ void SymmetricWorkspace::prepare(const Dataset& ds, const Params& params) {
     const int d = (params.max_depth > 0) ? params.max_depth : 6;
     max_depth = static_cast<std::size_t>(std::clamp(d, 1, 8));
     max_level_leaves = std::size_t{1} << (max_depth - 1U);
+    max_prev_leaves = max_level_leaves / 2U;
     max_threads = static_cast<std::size_t>(std::max(resolve_num_threads(params.n_jobs), 1));
     max_chunks = (n + kDetChunkRows - 1U) / kDetChunkRows;
 
@@ -1385,6 +1739,46 @@ void SymmetricWorkspace::prepare(const Dataset& ds, const Params& params) {
                                 (static_cast<std::size_t>(kObliqueBins) + 1U));
     const std::size_t wave_slots = (max_chunks > 1U) ? std::min(max_chunks, kWaveChunks) : 0U;
     wave_hists.resize(wave_slots * max_level_leaves * 256U);
+
+    const std::size_t p_feat = ds.n_features();
+    prev_axis_offsets.assign(p_feat, 0U);
+    std::size_t total_bins = 0U;
+    for (std::size_t f = 0U; f < p_feat; ++f) {
+        prev_axis_offsets[f] = total_bins;
+        if (ds.feature_kinds()[f] == FeatureKind::Categorical) {
+            const std::uint16_t nc = ds.cat_encoder(f).num_codes();
+            if (nc >= 2U) {
+                total_bins += static_cast<std::size_t>(nc);
+            }
+        } else {
+            const auto& binner = ds.binner(f);
+            if (binner.num_bins >= 2U || binner.has_nan) {
+                total_bins +=
+                    static_cast<std::size_t>(binner.num_bins) + (binner.has_nan ? 1U : 0U);
+            }
+        }
+    }
+    prev_axis_total_bins = total_bins;
+    use_axis_sub = (max_prev_leaves > 0U) && (prev_axis_total_bins > 0U) &&
+                   (prev_axis_total_bins * max_prev_leaves <= 2'000'000U);
+    if (use_axis_sub) {
+        prev_axis_hists.resize(prev_axis_total_bins * max_prev_leaves);
+        const std::size_t max_small = n / 2U + 1U;
+        small_rows.resize(max_small);
+        small_pairs.resize(max_small);
+        small_g.resize(max_small);
+        small_h.resize(max_small);
+        chunk_small_counts.resize(max_chunks);
+        chunk_small_offs.resize(max_chunks + 1U);
+    } else {
+        prev_axis_hists.resize(0);
+        small_rows.resize(0);
+        small_pairs.resize(0);
+        small_g.resize(0);
+        small_h.resize(0);
+        chunk_small_counts.clear();
+        chunk_small_offs.clear();
+    }
 
     const std::size_t final_leaves = std::size_t{1} << max_depth;
     chunk_leaf_g.resize(max_chunks * final_leaves);
@@ -1493,10 +1887,18 @@ Tree grow_symmetric_tree(const Dataset& ds, const float* g, const float* h, cons
         }
 
         SymSplitChoice choice;
-
-        // 1. Axis-aligned numeric splits.
         const auto& active_num = ws.layout.active_num_features;
         const std::size_t n_num_act = active_num.size();
+        const auto& active_cat = ws.layout.active_cat_features;
+        const std::size_t n_cat_act = active_cat.size();
+        std::uint8_t small_bit[kSymMaxLeaves / 2U] = {};
+        std::size_t n_small = 0U;
+        if (d >= 1U && sym.use_axis_sub && (n_num_act + n_cat_act > 0U)) {
+            n_small = collect_small_pair_rows(leaf_ids, rows, n_root, is_contiguous, g_seq, h_seq,
+                                              leaf_c, n_leaves, n_threads, sym, small_bit);
+        }
+
+        // 1. Axis-aligned numeric splits.
         if (n_num_act > 0U) {
             if (n_threads > 1 && n_num_act >= 2U && n_root * n_num_act >= 20000U) {
                 std::vector<AxisSplitCandidate> cand_res(n_num_act);
@@ -1517,10 +1919,14 @@ Tree grow_symmetric_tree(const Dataset& ds, const float* g, const float* h, cons
 #endif
                     HistBin* hist_f =
                         sym.axis_thread_hists.data() + tid * sym.max_level_leaves * 256U;
-                    std::memset(static_cast<void*>(hist_f), 0, n_leaves * stride * sizeof(HistBin));
+                    HistBin* prev_f = sym.use_axis_sub
+                                          ? (sym.prev_axis_hists.data() +
+                                             sym.prev_axis_offsets[f] * sym.max_prev_leaves)
+                                          : nullptr;
                     const std::uint8_t* col = bins_base + static_cast<std::size_t>(f) * n;
-                    build_axis_hist_feat(col, rows, 0U, n_root, is_contiguous, leaf_ids, stride,
-                                         g_seq, h_seq, hist_f);
+                    build_sym_feature_hist(col, rows, n_root, is_contiguous, leaf_ids, g_seq, h_seq,
+                                           d, depth_limit, n_leaves, stride, false, 1, n_small,
+                                           small_bit, sym, hist_f, prev_f);
                     cand_res[idx] =
                         scan_sym_axis_feature(ds, f, nb, has_nan, n_leaves, hist_f, leaf_g, leaf_h,
                                               leaf_c, parent_score, total_h, lam, min_h, min_c,
@@ -1533,59 +1939,19 @@ Tree grow_symmetric_tree(const Dataset& ds, const float* g, const float* h, cons
                 }
             } else {
                 HistBin* hist_f = sym.axis_thread_hists.data();
-                const std::size_t n_chunks = (n_root + kDetChunkRows - 1U) / kDetChunkRows;
-                const bool use_wave = (n_chunks > 1U) && (n_root >= 32768U);
+                const bool allow_wave = (n_num_act == 1U);
                 for (const std::uint32_t f : active_num) {
                     const std::uint16_t nb = ws.layout.num_regular_bins[f];
                     const bool has_nan = ws.layout.has_nan[f] != 0U;
                     const std::size_t stride = static_cast<std::size_t>(nb) + (has_nan ? 1U : 0U);
-                    const std::size_t h_elems = n_leaves * stride;
-                    std::memset(static_cast<void*>(hist_f), 0, h_elems * sizeof(HistBin));
+                    HistBin* prev_f = sym.use_axis_sub
+                                          ? (sym.prev_axis_hists.data() +
+                                             sym.prev_axis_offsets[f] * sym.max_prev_leaves)
+                                          : nullptr;
                     const std::uint8_t* col = bins_base + static_cast<std::size_t>(f) * n;
-                    if (!use_wave) {
-                        build_axis_hist_feat(col, rows, 0U, n_root, is_contiguous, leaf_ids, stride,
-                                             g_seq, h_seq, hist_f);
-                    } else {
-                        for (std::size_t w_base = 0; w_base < n_chunks; w_base += kWaveChunks) {
-                            const std::size_t w_len = std::min(kWaveChunks, n_chunks - w_base);
-                            if (n_threads > 1) {
-#ifdef _OPENMP
-#pragma omp parallel for schedule(dynamic, 1) num_threads(n_threads)
-#endif
-                                for (std::ptrdiff_t w = 0; w < static_cast<std::ptrdiff_t>(w_len);
-                                     ++w) {
-                                    const auto wu = static_cast<std::size_t>(w);
-                                    const std::size_t c = w_base + wu;
-                                    const std::size_t r0 = c * kDetChunkRows;
-                                    const std::size_t r1 = std::min(r0 + kDetChunkRows, n_root);
-                                    HistBin* wh = sym.wave_hists.data() + wu * h_elems;
-                                    std::memset(static_cast<void*>(wh), 0,
-                                                h_elems * sizeof(HistBin));
-                                    build_axis_hist_feat(col, rows, r0, r1, is_contiguous, leaf_ids,
-                                                         stride, g_seq, h_seq, wh);
-                                }
-                            } else {
-                                for (std::size_t wu = 0; wu < w_len; ++wu) {
-                                    const std::size_t c = w_base + wu;
-                                    const std::size_t r0 = c * kDetChunkRows;
-                                    const std::size_t r1 = std::min(r0 + kDetChunkRows, n_root);
-                                    HistBin* wh = sym.wave_hists.data() + wu * h_elems;
-                                    std::memset(static_cast<void*>(wh), 0,
-                                                h_elems * sizeof(HistBin));
-                                    build_axis_hist_feat(col, rows, r0, r1, is_contiguous, leaf_ids,
-                                                         stride, g_seq, h_seq, wh);
-                                }
-                            }
-                            for (std::size_t w = 0; w < w_len; ++w) {
-                                const HistBin* wh = sym.wave_hists.data() + w * h_elems;
-                                for (std::size_t b = 0; b < h_elems; ++b) {
-                                    hist_f[b].g += wh[b].g;
-                                    hist_f[b].h += wh[b].h;
-                                    hist_f[b].c += wh[b].c;
-                                }
-                            }
-                        }
-                    }
+                    build_sym_feature_hist(col, rows, n_root, is_contiguous, leaf_ids, g_seq, h_seq,
+                                           d, depth_limit, n_leaves, stride, allow_wave, n_threads,
+                                           n_small, small_bit, sym, hist_f, prev_f);
                     const AxisSplitCandidate c =
                         scan_sym_axis_feature(ds, f, nb, has_nan, n_leaves, hist_f, leaf_g, leaf_h,
                                               leaf_c, parent_score, total_h, lam, min_h, min_c,
@@ -1603,8 +1969,6 @@ Tree grow_symmetric_tree(const Dataset& ds, const float* g, const float* h, cons
         }
 
         // 2. Categorical K1 splits.
-        const auto& active_cat = ws.layout.active_cat_features;
-        const std::size_t n_cat_act = active_cat.size();
         if (n_cat_act > 0U) {
             if (n_threads > 1 && n_cat_act >= 2U && n_root * n_cat_act >= 20000U) {
                 std::vector<CatSplitCandidate> cand_res(n_cat_act);
@@ -1623,11 +1987,14 @@ Tree grow_symmetric_tree(const Dataset& ds, const float* g, const float* h, cons
 #endif
                     HistBin* hist_f =
                         sym.axis_thread_hists.data() + tid * sym.max_level_leaves * 256U;
-                    std::memset(static_cast<void*>(hist_f), 0,
-                                n_leaves * static_cast<std::size_t>(nb) * sizeof(HistBin));
+                    HistBin* prev_f = sym.use_axis_sub
+                                          ? (sym.prev_axis_hists.data() +
+                                             sym.prev_axis_offsets[f] * sym.max_prev_leaves)
+                                          : nullptr;
                     const std::uint8_t* col = bins_base + static_cast<std::size_t>(f) * n;
-                    build_axis_hist_feat(col, rows, 0U, n_root, is_contiguous, leaf_ids, nb, g_seq,
-                                         h_seq, hist_f);
+                    build_sym_feature_hist(col, rows, n_root, is_contiguous, leaf_ids, g_seq, h_seq,
+                                           d, depth_limit, n_leaves, nb, false, 1, n_small,
+                                           small_bit, sym, hist_f, prev_f);
                     cand_res[idx] =
                         scan_sym_cat_feature(f, nb, n_leaves, hist_f, leaf_g, leaf_h, leaf_c,
                                              total_h, lam, min_h, min_c, min_gain, params);
@@ -1639,57 +2006,17 @@ Tree grow_symmetric_tree(const Dataset& ds, const float* g, const float* h, cons
                 }
             } else {
                 HistBin* hist_f = sym.axis_thread_hists.data();
-                const std::size_t n_chunks = (n_root + kDetChunkRows - 1U) / kDetChunkRows;
-                const bool use_wave = (n_chunks > 1U) && (n_root >= 32768U);
+                const bool allow_wave = (n_cat_act == 1U);
                 for (const std::uint32_t f : active_cat) {
                     const std::uint16_t nb = ws.layout.num_regular_bins[f];
-                    const std::size_t h_elems = n_leaves * static_cast<std::size_t>(nb);
-                    std::memset(static_cast<void*>(hist_f), 0, h_elems * sizeof(HistBin));
+                    HistBin* prev_f = sym.use_axis_sub
+                                          ? (sym.prev_axis_hists.data() +
+                                             sym.prev_axis_offsets[f] * sym.max_prev_leaves)
+                                          : nullptr;
                     const std::uint8_t* col = bins_base + static_cast<std::size_t>(f) * n;
-                    if (!use_wave) {
-                        build_axis_hist_feat(col, rows, 0U, n_root, is_contiguous, leaf_ids, nb,
-                                             g_seq, h_seq, hist_f);
-                    } else {
-                        for (std::size_t w_base = 0; w_base < n_chunks; w_base += kWaveChunks) {
-                            const std::size_t w_len = std::min(kWaveChunks, n_chunks - w_base);
-                            if (n_threads > 1) {
-#ifdef _OPENMP
-#pragma omp parallel for schedule(dynamic, 1) num_threads(n_threads)
-#endif
-                                for (std::ptrdiff_t w = 0; w < static_cast<std::ptrdiff_t>(w_len);
-                                     ++w) {
-                                    const auto wu = static_cast<std::size_t>(w);
-                                    const std::size_t c = w_base + wu;
-                                    const std::size_t r0 = c * kDetChunkRows;
-                                    const std::size_t r1 = std::min(r0 + kDetChunkRows, n_root);
-                                    HistBin* wh = sym.wave_hists.data() + wu * h_elems;
-                                    std::memset(static_cast<void*>(wh), 0,
-                                                h_elems * sizeof(HistBin));
-                                    build_axis_hist_feat(col, rows, r0, r1, is_contiguous, leaf_ids,
-                                                         nb, g_seq, h_seq, wh);
-                                }
-                            } else {
-                                for (std::size_t wu = 0; wu < w_len; ++wu) {
-                                    const std::size_t c = w_base + wu;
-                                    const std::size_t r0 = c * kDetChunkRows;
-                                    const std::size_t r1 = std::min(r0 + kDetChunkRows, n_root);
-                                    HistBin* wh = sym.wave_hists.data() + wu * h_elems;
-                                    std::memset(static_cast<void*>(wh), 0,
-                                                h_elems * sizeof(HistBin));
-                                    build_axis_hist_feat(col, rows, r0, r1, is_contiguous, leaf_ids,
-                                                         nb, g_seq, h_seq, wh);
-                                }
-                            }
-                            for (std::size_t w = 0; w < w_len; ++w) {
-                                const HistBin* wh = sym.wave_hists.data() + w * h_elems;
-                                for (std::size_t b = 0; b < h_elems; ++b) {
-                                    hist_f[b].g += wh[b].g;
-                                    hist_f[b].h += wh[b].h;
-                                    hist_f[b].c += wh[b].c;
-                                }
-                            }
-                        }
-                    }
+                    build_sym_feature_hist(col, rows, n_root, is_contiguous, leaf_ids, g_seq, h_seq,
+                                           d, depth_limit, n_leaves, nb, allow_wave, n_threads,
+                                           n_small, small_bit, sym, hist_f, prev_f);
                     const CatSplitCandidate c =
                         scan_sym_cat_feature(f, nb, n_leaves, hist_f, leaf_g, leaf_h, leaf_c,
                                              total_h, lam, min_h, min_c, min_gain, params);

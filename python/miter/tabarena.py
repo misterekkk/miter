@@ -38,6 +38,7 @@ _FORWARDED = (
     "learning_rate",
     "num_leaves",
     "max_depth",
+    "grow_policy",
     "min_data_in_leaf",
     "min_sum_hessian_in_leaf",
     "lambda_l2",
@@ -152,6 +153,7 @@ def generate_configs_miter(num_random_configs: int = 200, seed: int = 1234) -> l
     space = ConfigurationSpace(
         space=[
             Float("learning_rate", (1e-2, 1e-1), log=True),
+            Categorical("grow_policy", ["leafwise", "symmetric"]),
             Integer("num_leaves", (4, 128), log=True),
             Integer("min_data_in_leaf", (2, 64), log=True),
             Float("lambda_l2", (1e-3, 10.0), log=True),

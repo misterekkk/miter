@@ -19,6 +19,9 @@ struct TreeWorkspace;
 struct SymmetricWorkspace {
     std::size_t max_depth = 0;
     std::size_t max_level_leaves = 0; // 1 << (max_depth - 1)
+    std::size_t max_prev_leaves = 0;  // max_level_leaves / 2
+    std::size_t prev_axis_total_bins = 0;
+    bool use_axis_sub = false;
     std::size_t max_threads = 1;
     std::size_t max_chunks = 0;
 
@@ -26,6 +29,14 @@ struct SymmetricWorkspace {
     AlignedBuffer<HistBin> axis_thread_hists;
     AlignedBuffer<HistBin> oblique_thread_hists;
     AlignedBuffer<HistBin> wave_hists;
+    std::vector<std::size_t> prev_axis_offsets;
+    AlignedBuffer<HistBin> prev_axis_hists;
+    AlignedBuffer<std::uint32_t> small_rows;
+    AlignedBuffer<std::uint8_t> small_pairs;
+    AlignedBuffer<float> small_g;
+    AlignedBuffer<float> small_h;
+    std::vector<std::size_t> chunk_small_counts;
+    std::vector<std::size_t> chunk_small_offs;
     std::vector<double> chunk_leaf_g;
     std::vector<double> chunk_leaf_h;
     std::vector<std::int32_t> chunk_leaf_c;
