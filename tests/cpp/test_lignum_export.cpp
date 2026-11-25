@@ -1,6 +1,9 @@
+#include <lignum/lignum.hpp>
+
 #include <bit>
 #include <cmath>
 #include <cstdint>
+#include <filesystem>
 #include <gtest/gtest.h>
 #include <limits>
 #include <random>
@@ -243,6 +246,19 @@ TEST(LignumBridgeTest, LignumPredictionsEqualMiterEvaluatorBitwise) {
                           std::bit_cast<std::uint64_t>(ref[i]))
                     << "objective " << static_cast<int>(obj) << " binned " << binned << " row "
                     << i;
+            }
+            // Format 0.10 round trip (mmap): still miter's raw scores bit for bit.
+            const auto path =
+                (std::filesystem::temp_directory_path() / "miter_lignum_roundtrip.bin").string();
+            lm.save(path);
+            const lignum::Model loaded = lignum::load(path, "auto", binned);
+            EXPECT_EQ(loaded.source, lignum::model_source::Miter);
+            std::vector<double> again(m);
+            loaded.predict_raw(test_rows.data(), m, p, again.data(), 2);
+            for (std::size_t i = 0; i < m; ++i) {
+                ASSERT_EQ(std::bit_cast<std::uint64_t>(again[i]),
+                          std::bit_cast<std::uint64_t>(ref[i]))
+                    << "after save/load, binned " << binned << " row " << i;
             }
         }
     }
