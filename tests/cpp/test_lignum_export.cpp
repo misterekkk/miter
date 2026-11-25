@@ -230,7 +230,8 @@ TEST(LignumBridgeTest, LignumPredictionsEqualMiterEvaluatorBitwise) {
             const lignum::Model lm = miter::to_lignum(res.model, 0, binned);
             EXPECT_EQ(lm.n_oblique, n_oblique);
             if (binned) {
-                // The binned kernel takes the ONode path for oblique trees (no silent KNode fallback).
+                // The binned kernel takes the ONode path for oblique trees (no silent KNode
+                // fallback).
                 ASSERT_NE(lm.binned, nullptr);
             } else {
                 ASSERT_EQ(lm.binned, nullptr);
