@@ -83,5 +83,4 @@ test-command = "pytest {project}/tests/python -q"
 
 [tool.cibuildwheel.macos]
 before-all = "brew install libomp"
-# Homebrew's libomp targets the runner's macOS; delocate bundles it into the wheel.
-environment = { MACOSX_DEPLOYMENT_TARGET = "14.0" }
+# delocate bundles libomp into the wheel; MACOSX_DEPLOYMENT_TARGET is set by the workflow.
