@@ -262,3 +262,78 @@ mean +0.009%, median +0.000%, post better on 6/13 datasets.
 - The prototype vs miter C++ comparison mixes: different engine (numba vs C++), categorical handling (native K1 vs native K1 in both for 7 cat datasets; no-cat datasets identical preprocessing), NaN handling (median impute + indicator vs native).
 - Not measured: tuning, multi-thread runs, binary/multiclass, hold-out of the 3600 s time limit (whether any child hit it), per-child stop reasons.
 - Exploratory results; no pre-registration for this comparison.
+
+---
+
+# Addendum: `accurate` preset (m = 4*m0) vs default, same protocol
+
+Source files: `raw/tabarena/cmp_acc/{full_pool,gbdt_only}_leaderboard.csv`, `raw/tabarena/analysis_acc.json`, logs `raw/tabarena/logs/a{1,2,3}.log`.
+
+## Provenance
+- New method `MITER_CPP_ACC` (`MiterCppAccModel` in `benchmarks/tabarena/miter_tabarena_model.py`): identical wrapper to the default, only `preset="accurate"` (C++ side: m_mult 4, oblique_max_depth -1). Preset effect verified on a 2-dataset smoke test (results differ from default).
+- Build: reinstalled with `pip install --force-reinstall --no-deps` from HEAD `1ac76b5db2e62f53d442d48d897f46a25ce4929e` with a clean tree. The default (post-fix) results in the same table come from the earlier build described above (not re-run); so the comparison acc vs default mixes two installs of the same lineage. Build equality of the two was NOT verified.
+- 222 jobs (13 datasets, all splits), 0 failures, 3 parallel processes under `nice -n 10`, on a loaded Apple M4. Wall: 1629 s (QSAR-TID-11), 1618 s (physiochemical, diamonds, Food_Delivery), 1679 s (the 9 small/medium sets).
+- compare(): official defaults, full pool, both miter variants as new methods (116 rows). Because one more method is in the pool, default miter's numbers move slightly vs the headline table (Elo 1379.9 -> 1379.4).
+
+## Leaderboard (full pool, 13 regression datasets)
+| method | Elo | rank (mean) | position | winrate | improvability |
+|---|---|---|---|---|---|
+| miter accurate | 1403.2 (+67.5/-77.2) | 60.47 | 59/116 | 0.483 | 0.1183 |
+| miter default | 1379.4 (+64.8/-62.3) | 62.70 | 64/116 | 0.463 | 0.1204 |
+
+Reference rows in the same pool: CAT (tuned+ens) 1506, GBM (tuned+ens) 1499, CAT (tuned) 1484 (from the earlier full-pool table; exact values shift by about 1 Elo; see `cmp_acc/full_pool_leaderboard.csv`).
+
+GBDT-only pool (fillna/calibration None, not comparable with the full-pool Elo): miter accurate Elo 1079.5 (+83.1/-96.4), position 5/11, mean rank 5.23; miter default Elo 997.6 (+70.7/-83.3), position 7/11, mean rank 6.27.
+
+## Accurate vs others (relative RMSE gain on per-dataset means, 13 datasets, + = accurate better)
+| comparison | mean | median | wins | Wilcoxon p |
+|---|---|---|---|---|
+| vs miter default | +0.25% | +0.24% | 12/13 | 0.0081 |
+| vs prototype (numba) | +0.28% | +0.23% | 11/13 | 0.0105 |
+| vs CAT default | +0.67% | +0.14% | 9/13 | 0.54 |
+| vs CAT tuned | -1.27% | -0.14% | 4/13 | 0.15 |
+| vs CAT tuned+ens | -1.42% | -0.57% | 3/13 | 0.057 |
+| vs GBM tuned+ens | -0.75% | -0.91% | 4/13 | 0.22 |
+| vs XGB tuned+ens | -0.20% | +0.04% | 7/13 | 1.0 |
+
+Exploratory; no pre-registration. The only loss of accurate vs default is healthcare_insurance_expenses (-0.33%).
+
+## Per-dataset mean RMSE
+| dataset | default | accurate | CAT def | CAT tuned+ens | GBM tuned+ens | acc vs def |
+|---|---|---|---|---|---|---|
+| Another-Dataset-on-used-Fiat-500 | 738.0545 | 736.8352 | 737.8291 | 732.6861 | 729.4338 | +0.17% |
+| Food_Delivery_Time | 7.3850 | 7.3776 | 7.3791 | 7.3671 | 7.3741 | +0.10% |
+| QSAR-TID-11 | 0.7706 | 0.7687 | 0.7740 | 0.7712 | 0.7558 | +0.25% |
+| QSAR_fish_toxicity | 0.8782 | 0.8759 | 0.8769 | 0.8744 | 0.8829 | +0.26% |
+| airfoil_self_noise | 1.4078 | 1.4044 | 1.5783 | 1.3300 | 1.4512 | +0.24% |
+| concrete_compressive_strength | 4.3631 | 4.3607 | 4.2017 | 4.2018 | 4.2116 | +0.05% |
+| diamonds | 523.9331 | 523.7486 | 520.3787 | 520.6668 | 519.0275 | +0.04% |
+| healthcare_insurance_expenses | 4599.9270 | 4614.9883 | 4528.1672 | 4522.3862 | 4511.9040 | -0.33% |
+| houses | 0.2111 | 0.2099 | 0.2111 | 0.2108 | 0.2112 | +0.58% |
+| miami_housing | 84027.5802 | 83729.8806 | 79760.3760 | 78405.0988 | 79611.9796 | +0.35% |
+| physiochemical_protein | 3.3509 | 3.3224 | 3.5213 | 3.3821 | 3.3844 | +0.85% |
+| superconductivity | 9.3639 | 9.3500 | 9.3661 | 9.3441 | 9.2591 | +0.15% |
+| wine_quality | 0.6149 | 0.6117 | 0.6219 | 0.6044 | 0.6081 | +0.52% |
+
+The three hard datasets stay behind CatBoost: miami_housing accurate 83730 vs CAT default 79760 (4.98% worse) and CAT tuned+ens 78405 (6.8% worse); airfoil beats CAT default (1.404 vs 1.578) but not CAT tuned+ens (1.330); concrete 4.361 vs 4.202 for CAT (3.8% worse). The preset closes only a small part of these gaps.
+
+## Median training time per split (8 bagged children; loaded machine, approximate)
+| dataset | default s | accurate s | ratio |
+|---|---|---|---|
+| Another-Dataset-on-used-Fiat-500 | 0.4 | 0.6 | 1.43 |
+| Food_Delivery_Time | 8.9 | 14.1 | 1.60 |
+| QSAR-TID-11 | 134.2 | 175.2 | 1.30 |
+| QSAR_fish_toxicity | 0.2 | 0.3 | 1.50 |
+| airfoil_self_noise | 4.0 | 5.6 | 1.40 |
+| concrete_compressive_strength | 1.2 | 1.7 | 1.36 |
+| diamonds | 15.0 | 27.0 | 1.80 |
+| healthcare_insurance_expenses | 0.2 | 0.3 | 1.39 |
+| houses | 11.5 | 17.8 | 1.55 |
+| miami_housing | 9.4 | 15.7 | 1.68 |
+| physiochemical_protein | 62.2 | 107.2 | 1.72 |
+| superconductivity | 53.4 | 94.5 | 1.77 |
+| wine_quality | 4.3 | 7.2 | 1.69 |
+
+Ratios are 1.30-1.80x. The default timings come from an earlier run under a different load, so ratios are indicative only.
+
+Not measured: tuned miter, whether any child hit the time limit, the effect of build differences between the default and accurate runs.

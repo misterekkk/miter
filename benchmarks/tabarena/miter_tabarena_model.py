@@ -125,3 +125,22 @@ class MiterCppModel(AbstractModel):
         return ConfigGenerator(
             model_cls=cls, manual_configs=[{}], search_space={}, name="MiterCpp"
         )
+
+
+class MiterCppAccModel(MiterCppModel):
+    """Same wrapper, `accurate` preset (m = 4 * m0); nothing else changed."""
+
+    ag_key = "MITER_CPP_ACC"
+    ag_name = "MiterCppAcc"
+
+    def _set_default_params(self):
+        self._set_default_param_value("preset", "accurate")
+        super()._set_default_params()
+
+    @classmethod
+    def config_generator(cls):
+        from tabarena.utils.config_utils import ConfigGenerator
+
+        return ConfigGenerator(
+            model_cls=cls, manual_configs=[{}], search_space={}, name="MiterCppAcc"
+        )

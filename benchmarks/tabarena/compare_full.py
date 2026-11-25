@@ -17,7 +17,7 @@ import openml
 
 openml.config.set_root_cache_directory(ROOT + "/../openml_cache_pandas2")
 import pandas as pd
-from miter_tabarena_model import MiterCppModel
+from miter_tabarena_model import MiterCppAccModel, MiterCppModel
 from tabarena.benchmark.experiment import TabArenaV0pt1ExperimentBundle
 from tabarena.contexts import TabArenaContext
 
@@ -25,7 +25,16 @@ exp, out = sys.argv[1], sys.argv[2]
 os.makedirs(out, exist_ok=True)
 names = open(ROOT + "/logs/all13").read().split()
 exps = TabArenaV0pt1ExperimentBundle(
-    models=[(MiterCppModel.config_generator(), 0)]
+    models=[
+        (
+            (
+                MiterCppAccModel
+                if os.environ.get("MITER_ACC") == "1"
+                else MiterCppModel
+            ).config_generator(),
+            0,
+        )
+    ]
 ).build_experiments()
 ctx = TabArenaContext()
 res = ctx.build_and_run_jobs(
@@ -35,6 +44,17 @@ res = ctx.build_and_run_jobs(
     build_kwargs=dict(dataset_names=names),
     debug_mode=True,
 )
+if os.environ.get("EXP_ACC"):  # also score the accurate-preset run (cached) in the same table
+    exps2 = TabArenaV0pt1ExperimentBundle(
+        models=[(MiterCppAccModel.config_generator(), 0)]
+    ).build_experiments()
+    res += ctx.build_and_run_jobs(
+        exps2,
+        expname=f"{ROOT}/{os.environ['EXP_ACC']}",
+        new_result_prefix="[New] ",
+        build_kwargs=dict(dataset_names=names),
+        debug_mode=True,
+    )
 new = sorted(ctx._new_method_names)
 print("jobs", len(res), "new", new, flush=True)
 pd.set_option("display.width", 250)

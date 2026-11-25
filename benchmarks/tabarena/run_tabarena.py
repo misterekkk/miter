@@ -21,13 +21,22 @@ import openml
 openml.config.set_root_cache_directory(
     os.path.abspath(HERE + "/../results/raw/openml_cache_pandas2")
 )
-from miter_tabarena_model import MiterCppModel
+from miter_tabarena_model import MiterCppAccModel, MiterCppModel
 from tabarena.benchmark.experiment import TabArenaV0pt1ExperimentBundle
 from tabarena.contexts import TabArenaContext
 
 exp, mode, names = sys.argv[1], sys.argv[2], sys.argv[3:]
 experiments = TabArenaV0pt1ExperimentBundle(
-    models=[(MiterCppModel.config_generator(), 0)]
+    models=[
+        (
+            (
+                MiterCppAccModel
+                if os.environ.get("MITER_ACC") == "1"
+                else MiterCppModel
+            ).config_generator(),
+            0,
+        )
+    ]
 ).build_experiments()
 ctx = TabArenaContext()
 t0 = time.time()

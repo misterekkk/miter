@@ -61,7 +61,7 @@ def cmp(m, b):
     )
 
 
-M = "[New] MITER_CPP (default)"
+M = sys.argv[3] if len(sys.argv) > 3 else "[New] MITER_CPP (default)"
 res = {}
 for b in [c for c in pv.columns if c != M]:
     if M in pv and pv[[M, b]].dropna().shape[0]:
