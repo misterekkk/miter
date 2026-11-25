@@ -130,4 +130,24 @@ TEST(AxisBinnerTest, ConstantAllNanTinyAndInvalid) {
     EXPECT_THROW(miter::AxisBinner::fit(empty, 255), std::invalid_argument);
 }
 
+TEST(AxisBinnerTest, LargeTransformLutMatchesBinExactly) {
+    std::mt19937 rng(98765);
+    std::uniform_int_distribution<std::uint16_t> dist(0, miter::kQ16MaxCode);
+    std::vector<std::uint16_t> codes(10000);
+    for (auto& c : codes) {
+        c = dist(rng);
+    }
+    codes[0] = 0;
+    codes[1] = miter::kQ16MaxCode;
+    codes[2] = miter::kQ16NanCode;
+    codes[9999] = miter::kQ16NanCode;
+
+    const auto binner = miter::AxisBinner::fit(codes, 255);
+    std::vector<std::uint8_t> out(codes.size());
+    binner.transform(codes, out.data());
+    for (std::size_t i = 0; i < codes.size(); ++i) {
+        EXPECT_EQ(out[i], binner.bin(codes[i]));
+    }
+}
+
 } // namespace

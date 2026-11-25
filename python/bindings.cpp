@@ -100,8 +100,8 @@ nb::ndarray<nb::numpy, const std::int16_t, nb::ndim<2>> make_codes_view(nb::obje
     const std::size_t rows = obj.n_rows;
     const std::size_t cols = obj.n_num_features;
     const std::size_t shape[2] = {rows, cols};
-    const std::int64_t strides[2] = {static_cast<std::int64_t>(cols), 1};
-    const std::int16_t* ptr = (cols == 0 || rows == 0) ? nullptr : obj.codes_row_major.data();
+    const std::int64_t strides[2] = {1, static_cast<std::int64_t>(rows)};
+    const std::int16_t* ptr = (cols == 0 || rows == 0) ? nullptr : obj.codes_col_major.data();
     return nb::ndarray<nb::numpy, const std::int16_t, nb::ndim<2>>(ptr, 2, shape, self, strides);
 }
 
@@ -112,8 +112,8 @@ make_codes_view<miter::Dataset>(nb::object self) {
     const std::size_t rows = ds.n_rows();
     const std::size_t cols = ds.n_num_features();
     const std::size_t shape[2] = {rows, cols};
-    const std::int64_t strides[2] = {static_cast<std::int64_t>(cols), 1};
-    const std::int16_t* ptr = (cols == 0 || rows == 0) ? nullptr : ds.codes_row_major().data();
+    const std::int64_t strides[2] = {1, static_cast<std::int64_t>(rows)};
+    const std::int16_t* ptr = (cols == 0 || rows == 0) ? nullptr : ds.codes_col_major().data();
     return nb::ndarray<nb::numpy, const std::int16_t, nb::ndim<2>>(ptr, 2, shape, self, strides);
 }
 
@@ -122,8 +122,11 @@ nb::ndarray<nb::numpy, std::uint16_t, nb::ndim<2>> make_unsigned_codes(const Dat
     const std::size_t rows = obj.n_rows;
     const std::size_t cols = obj.n_num_features;
     std::vector<std::uint16_t> u(rows * cols);
-    for (std::size_t i = 0; i < u.size(); ++i) {
-        u[i] = miter::Q16Quantizer::to_unsigned_code(obj.codes_row_major[i]);
+    for (std::size_t c = 0; c < cols; ++c) {
+        const std::int16_t* col_ptr = obj.codes_col_major.data() + c * rows;
+        for (std::size_t r = 0; r < rows; ++r) {
+            u[r * cols + c] = miter::Q16Quantizer::to_unsigned_code(col_ptr[r]);
+        }
     }
     return vec_to_ndarray_2d(std::move(u), rows, cols);
 }
@@ -134,9 +137,12 @@ make_unsigned_codes<miter::Dataset>(const miter::Dataset& ds) {
     const std::size_t rows = ds.n_rows();
     const std::size_t cols = ds.n_num_features();
     std::vector<std::uint16_t> u(rows * cols);
-    const auto& codes = ds.codes_row_major();
-    for (std::size_t i = 0; i < u.size(); ++i) {
-        u[i] = miter::Q16Quantizer::to_unsigned_code(codes[i]);
+    const auto& codes = ds.codes_col_major();
+    for (std::size_t c = 0; c < cols; ++c) {
+        const std::int16_t* col_ptr = codes.data() + c * rows;
+        for (std::size_t r = 0; r < rows; ++r) {
+            u[r * cols + c] = miter::Q16Quantizer::to_unsigned_code(col_ptr[r]);
+        }
     }
     return vec_to_ndarray_2d(std::move(u), rows, cols);
 }
@@ -223,26 +229,28 @@ std::vector<miter::CategoricalColumnView> extract_cat_col_views(
 }
 
 miter::Dataset fit_numeric_f64(const nb::ndarray<const double, nb::ndim<2>, nb::device::cpu>& arr,
-                               int max_bin, std::vector<std::string> feature_names) {
+                               int max_bin, std::vector<std::string> feature_names, int n_jobs) {
     const std::size_t n_rows = arr.shape(0);
     const std::size_t n_cols = arr.shape(1);
     auto views = views_from_2d(arr);
     std::vector<miter::FeatureKind> kinds(n_cols, miter::FeatureKind::Numeric);
     miter::DataConfig cfg;
     cfg.max_bin = max_bin;
+    cfg.n_jobs = n_jobs;
     nb::gil_scoped_release release;
     return miter::Dataset::fit_mixed(n_rows, std::move(kinds), std::move(feature_names), views, {},
                                      cfg);
 }
 
 miter::Dataset fit_numeric_f32(const nb::ndarray<const float, nb::ndim<2>, nb::device::cpu>& arr,
-                               int max_bin, std::vector<std::string> feature_names) {
+                               int max_bin, std::vector<std::string> feature_names, int n_jobs) {
     const std::size_t n_rows = arr.shape(0);
     const std::size_t n_cols = arr.shape(1);
     auto views = views_from_2d(arr);
     std::vector<miter::FeatureKind> kinds(n_cols, miter::FeatureKind::Numeric);
     miter::DataConfig cfg;
     cfg.max_bin = max_bin;
+    cfg.n_jobs = n_jobs;
     nb::gil_scoped_release release;
     return miter::Dataset::fit_mixed(n_rows, std::move(kinds), std::move(feature_names), views, {},
                                      cfg);
@@ -253,7 +261,7 @@ miter::Dataset fit_mixed_py(
     const nb::list& num_cols, std::vector<std::vector<std::string>> cat_vocabs,
     const std::vector<nb::ndarray<const std::int32_t, nb::ndim<1>, nb::c_contig, nb::device::cpu>>&
         cat_indices,
-    int max_bin, int min_data_per_group, int max_categories) {
+    int max_bin, int min_data_per_group, int max_categories, int n_jobs) {
     std::vector<miter::FeatureKind> kinds;
     kinds.reserve(is_cat.size());
     for (const bool flag : is_cat) {
@@ -265,6 +273,7 @@ miter::Dataset fit_mixed_py(
     cfg.max_bin = max_bin;
     cfg.min_data_per_group = min_data_per_group;
     cfg.max_categories = max_categories;
+    cfg.n_jobs = n_jobs;
     nb::gil_scoped_release release;
     return miter::Dataset::fit_mixed(n_rows, std::move(kinds), std::move(feature_names), num_views,
                                      cat_views, cfg);
@@ -578,45 +587,52 @@ NB_MODULE(_core, m) {
         .def(
             "transform_numeric_f64",
             [](const miter::Dataset& ds,
-               const nb::ndarray<const double, nb::ndim<2>, nb::device::cpu>& arr) {
+               const nb::ndarray<const double, nb::ndim<2>, nb::device::cpu>& arr, int n_jobs) {
                 if (ds.n_cat_features() != 0 || arr.shape(1) != ds.n_num_features()) {
                     throw std::invalid_argument("Feature count or kind mismatch in transform");
                 }
                 const std::size_t n_rows = arr.shape(0);
                 auto views = views_from_2d(arr);
                 nb::gil_scoped_release release;
-                return ds.transform_mixed(n_rows, views, {});
+                return ds.transform_mixed(n_rows, views, {}, n_jobs);
             },
-            nb::arg("arr").noconvert())
+            nb::arg("arr").noconvert(), nb::arg("n_jobs") = 1)
         .def(
             "transform_numeric_f32",
             [](const miter::Dataset& ds,
-               const nb::ndarray<const float, nb::ndim<2>, nb::device::cpu>& arr) {
+               const nb::ndarray<const float, nb::ndim<2>, nb::device::cpu>& arr, int n_jobs) {
                 if (ds.n_cat_features() != 0 || arr.shape(1) != ds.n_num_features()) {
                     throw std::invalid_argument("Feature count or kind mismatch in transform");
                 }
                 const std::size_t n_rows = arr.shape(0);
                 auto views = views_from_2d(arr);
                 nb::gil_scoped_release release;
-                return ds.transform_mixed(n_rows, views, {});
+                return ds.transform_mixed(n_rows, views, {}, n_jobs);
             },
-            nb::arg("arr").noconvert())
-        .def("transform_mixed",
-             [](const miter::Dataset& ds, std::size_t n_rows, const nb::list& num_cols,
-                std::vector<std::vector<std::string>> cat_vocabs,
-                const std::vector<nb::ndarray<const std::int32_t, nb::ndim<1>, nb::c_contig,
-                                              nb::device::cpu>>& cat_indices) {
-                 auto num_views = extract_num_col_views(num_cols, n_rows);
-                 auto cat_views = extract_cat_col_views(std::move(cat_vocabs), cat_indices, n_rows);
-                 nb::gil_scoped_release release;
-                 return ds.transform_mixed(n_rows, num_views, cat_views);
-             });
+            nb::arg("arr").noconvert(), nb::arg("n_jobs") = 1)
+        .def(
+            "transform_mixed",
+            [](const miter::Dataset& ds, std::size_t n_rows, const nb::list& num_cols,
+               std::vector<std::vector<std::string>> cat_vocabs,
+               const std::vector<nb::ndarray<const std::int32_t, nb::ndim<1>, nb::c_contig,
+                                             nb::device::cpu>>& cat_indices,
+               int n_jobs) {
+                auto num_views = extract_num_col_views(num_cols, n_rows);
+                auto cat_views = extract_cat_col_views(std::move(cat_vocabs), cat_indices, n_rows);
+                nb::gil_scoped_release release;
+                return ds.transform_mixed(n_rows, num_views, cat_views, n_jobs);
+            },
+            nb::arg("n_rows"), nb::arg("num_cols"), nb::arg("cat_vocabs"), nb::arg("cat_indices"),
+            nb::arg("n_jobs") = 1);
 
     m.def("fit_numeric_f64", &fit_numeric_f64, nb::arg("arr").noconvert(), nb::arg("max_bin") = 255,
-          nb::arg("feature_names") = std::vector<std::string>{});
+          nb::arg("feature_names") = std::vector<std::string>{}, nb::arg("n_jobs") = 1);
     m.def("fit_numeric_f32", &fit_numeric_f32, nb::arg("arr").noconvert(), nb::arg("max_bin") = 255,
-          nb::arg("feature_names") = std::vector<std::string>{});
-    m.def("fit_mixed", &fit_mixed_py);
+          nb::arg("feature_names") = std::vector<std::string>{}, nb::arg("n_jobs") = 1);
+    m.def("fit_mixed", &fit_mixed_py, nb::arg("n_rows"), nb::arg("is_cat"),
+          nb::arg("feature_names"), nb::arg("num_cols"), nb::arg("cat_vocabs"),
+          nb::arg("cat_indices"), nb::arg("max_bin") = 255, nb::arg("min_data_per_group") = 100,
+          nb::arg("max_categories") = 253, nb::arg("n_jobs") = 1);
 
     m.def("fit_booster", &fit_booster_py, nb::arg("ds"), nb::arg("objective"), nb::arg("y"),
           nb::arg("sample_weight") = nb::none(), nb::arg("valid_ds") = nb::none(),

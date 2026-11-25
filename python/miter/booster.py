@@ -369,6 +369,7 @@ class _BaseMiterEstimator(_SklearnBase):
             max_bin=self.max_bin,
             min_data_per_group=self.min_data_per_group,
             max_categories=self.max_categories,
+            n_jobs=int(self.n_jobs),
         )
         y_arr = self._encode_targets(y, is_fit=True)
 

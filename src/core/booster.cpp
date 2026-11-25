@@ -168,7 +168,7 @@ TrainResult fit_booster(const Dataset& ds, Objective objective, std::span<const 
 
         if (has_valid) {
             const std::int16_t* valid_codes =
-                (valid_ds->n_num_features > 0U) ? valid_ds->codes_row_major.data() : nullptr;
+                (valid_ds->n_num_features > 0U) ? valid_ds->codes_col_major.data() : nullptr;
             Evaluator::add_tree_predictions_from_codes(
                 model.trees.back(), valid_codes, valid_ds->n_rows, valid_ds->n_num_features,
                 feature_to_num_idx, valid_scores.data(), valid_ds->bins_col_major.data(),

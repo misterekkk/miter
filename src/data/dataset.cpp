@@ -1,10 +1,13 @@
 #include "data/dataset.hpp"
 
+#include <algorithm>
 #include <cstddef>
 #include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
+
+#include "util/threading.hpp"
 
 namespace miter {
 
@@ -36,22 +39,35 @@ std::vector<NumericColumnView> make_numeric_views(const FloatT* data, std::size_
     return views;
 }
 
+void validate_numeric_views(const std::vector<NumericColumnView>& num_cols) {
+    for (const auto& col : num_cols) {
+        if (col.row_stride == 0) {
+            throw std::invalid_argument("NumericColumnView requires row_stride >= 1");
+        }
+        if ((col.f64 == nullptr) == (col.f32 == nullptr)) {
+            throw std::invalid_argument(
+                "NumericColumnView must provide exactly one of f64 or f32 pointer");
+        }
+    }
+}
+
 void extract_numeric_column(const NumericColumnView& col, std::size_t n_rows,
-                            std::vector<double>& out) {
-    if (col.row_stride == 0) {
-        throw std::invalid_argument("NumericColumnView requires row_stride >= 1");
-    }
-    if ((col.f64 == nullptr) == (col.f32 == nullptr)) {
-        throw std::invalid_argument(
-            "NumericColumnView must provide exactly one of f64 or f32 pointer");
-    }
+                            std::vector<double>& out) noexcept {
     if (col.f64 != nullptr) {
-        for (std::size_t i = 0; i < n_rows; ++i) {
-            out[i] = col.f64[i * col.row_stride];
+        if (col.row_stride == 1U) {
+            std::copy_n(col.f64, n_rows, out.data());
+        } else {
+            const double* src = col.f64;
+            const std::size_t stride = col.row_stride;
+            for (std::size_t i = 0; i < n_rows; ++i) {
+                out[i] = src[i * stride];
+            }
         }
     } else {
+        const float* src = col.f32;
+        const std::size_t stride = col.row_stride;
         for (std::size_t i = 0; i < n_rows; ++i) {
-            out[i] = static_cast<double>(col.f32[i * col.row_stride]);
+            out[i] = static_cast<double>(src[i * stride]);
         }
     }
 }
@@ -135,31 +151,65 @@ Dataset Dataset::fit_mixed(std::size_t n_rows, std::vector<FeatureKind> kinds,
     if (cat_cols.size() != ds.n_cat_features_) {
         throw std::invalid_argument("cat_cols count does not match categorical features in kinds");
     }
+    validate_numeric_views(num_cols);
     validate_categorical_views(n_rows, cat_cols);
 
     ds.quantizers_.resize(ds.n_num_features_);
     ds.binners_.resize(ds.n_num_features_);
     ds.cat_encoders_.resize(ds.n_cat_features_);
-    ds.codes_row_major_.resize(n_rows * ds.n_num_features_);
+    ds.codes_col_major_.resize(n_rows * ds.n_num_features_);
     ds.bins_col_major_.resize(n_rows * ds.n_features_);
 
-    std::vector<double> col_f64(n_rows);
-    std::vector<std::uint16_t> u_col(n_rows);
-    std::int16_t* codes_ptr = ds.codes_row_major_.data();
+    std::int16_t* codes_ptr = ds.codes_col_major_.data();
     std::uint8_t* bins_ptr = ds.bins_col_major_.data();
+    const int n_threads = resolve_num_threads(cfg.n_jobs);
 
-    for (std::size_t j = 0; j < ds.n_num_features_; ++j) {
-        extract_numeric_column(num_cols[j], n_rows, col_f64);
-        ds.quantizers_[j] = Q16Quantizer::fit(col_f64);
-        const Q16Quantizer& q = ds.quantizers_[j];
-        for (std::size_t i = 0; i < n_rows; ++i) {
-            const std::uint16_t u = q.encode_u16(col_f64[i]);
-            u_col[i] = u;
-            codes_ptr[i * ds.n_num_features_ + j] = Q16Quantizer::to_signed_code(u);
+    const bool par_num =
+        (n_threads > 1) && (ds.n_num_features_ >= 2U) && (n_rows * ds.n_num_features_ >= 50000U);
+    if (par_num) {
+#ifdef _OPENMP
+#pragma omp parallel num_threads(n_threads)
+#endif
+        {
+            std::vector<double> col_f64(n_rows);
+            std::vector<std::uint16_t> u_col(n_rows);
+#ifdef _OPENMP
+#pragma omp for schedule(dynamic, 1)
+#endif
+            for (std::ptrdiff_t j_signed = 0;
+                 j_signed < static_cast<std::ptrdiff_t>(ds.n_num_features_); ++j_signed) {
+                const auto j = static_cast<std::size_t>(j_signed);
+                extract_numeric_column(num_cols[j], n_rows, col_f64);
+                ds.quantizers_[j] = Q16Quantizer::fit(col_f64);
+                const Q16Quantizer& q = ds.quantizers_[j];
+                std::int16_t* dst_code_col = codes_ptr + j * n_rows;
+                for (std::size_t i = 0; i < n_rows; ++i) {
+                    const std::uint16_t u = q.encode_u16(col_f64[i]);
+                    u_col[i] = u;
+                    dst_code_col[i] = Q16Quantizer::to_signed_code(u);
+                }
+                ds.binners_[j] = AxisBinner::fit(u_col, cfg.max_bin);
+                const std::size_t f = ds.num_feature_indices_[j];
+                ds.binners_[j].transform(u_col, bins_ptr + f * n_rows);
+            }
         }
-        ds.binners_[j] = AxisBinner::fit(u_col, cfg.max_bin);
-        const std::size_t f = ds.num_feature_indices_[j];
-        ds.binners_[j].transform(u_col, bins_ptr + f * n_rows);
+    } else if (ds.n_num_features_ > 0U) {
+        std::vector<double> col_f64(n_rows);
+        std::vector<std::uint16_t> u_col(n_rows);
+        for (std::size_t j = 0; j < ds.n_num_features_; ++j) {
+            extract_numeric_column(num_cols[j], n_rows, col_f64);
+            ds.quantizers_[j] = Q16Quantizer::fit(col_f64);
+            const Q16Quantizer& q = ds.quantizers_[j];
+            std::int16_t* dst_code_col = codes_ptr + j * n_rows;
+            for (std::size_t i = 0; i < n_rows; ++i) {
+                const std::uint16_t u = q.encode_u16(col_f64[i]);
+                u_col[i] = u;
+                dst_code_col[i] = Q16Quantizer::to_signed_code(u);
+            }
+            ds.binners_[j] = AxisBinner::fit(u_col, cfg.max_bin);
+            const std::size_t f = ds.num_feature_indices_[j];
+            ds.binners_[j].transform(u_col, bins_ptr + f * n_rows);
+        }
     }
 
     for (std::size_t c = 0; c < ds.n_cat_features_; ++c) {
@@ -176,26 +226,27 @@ Dataset Dataset::fit_mixed(std::size_t n_rows, std::vector<FeatureKind> kinds,
 }
 
 TransformedData Dataset::transform_numeric(const double* data, std::size_t n_rows,
-                                           std::size_t n_cols, bool col_major) const {
+                                           std::size_t n_cols, bool col_major, int n_jobs) const {
     if (n_cat_features_ != 0 || n_cols != n_num_features_) {
         throw std::invalid_argument("Dataset::transform_numeric feature count/kind mismatch");
     }
     auto views = make_numeric_views(data, n_rows, n_cols, col_major);
-    return transform_mixed(n_rows, views, {});
+    return transform_mixed(n_rows, views, {}, n_jobs);
 }
 
 TransformedData Dataset::transform_numeric(const float* data, std::size_t n_rows,
-                                           std::size_t n_cols, bool col_major) const {
+                                           std::size_t n_cols, bool col_major, int n_jobs) const {
     if (n_cat_features_ != 0 || n_cols != n_num_features_) {
         throw std::invalid_argument("Dataset::transform_numeric feature count/kind mismatch");
     }
     auto views = make_numeric_views(data, n_rows, n_cols, col_major);
-    return transform_mixed(n_rows, views, {});
+    return transform_mixed(n_rows, views, {}, n_jobs);
 }
 
 TransformedData Dataset::transform_mixed(std::size_t n_rows,
                                          const std::vector<NumericColumnView>& num_cols,
-                                         const std::vector<CategoricalColumnView>& cat_cols) const {
+                                         const std::vector<CategoricalColumnView>& cat_cols,
+                                         int n_jobs) const {
     if (n_rows == 0) {
         throw std::invalid_argument("Dataset::transform requires at least 1 row");
     }
@@ -205,30 +256,62 @@ TransformedData Dataset::transform_mixed(std::size_t n_rows,
     if (cat_cols.size() != n_cat_features_) {
         throw std::invalid_argument("Dataset::transform categorical feature count mismatch");
     }
+    validate_numeric_views(num_cols);
     validate_categorical_views(n_rows, cat_cols);
 
     TransformedData out;
     out.n_rows = n_rows;
     out.n_num_features = n_num_features_;
     out.n_features = n_features_;
-    out.codes_row_major.resize(n_rows * n_num_features_);
+    out.codes_col_major.resize(n_rows * n_num_features_);
     out.bins_col_major.resize(n_rows * n_features_);
 
-    std::vector<double> col_f64(n_rows);
-    std::vector<std::uint16_t> u_col(n_rows);
-    std::int16_t* codes_ptr = out.codes_row_major.data();
+    std::int16_t* codes_ptr = out.codes_col_major.data();
     std::uint8_t* bins_ptr = out.bins_col_major.data();
+    const int n_threads = resolve_num_threads(n_jobs);
 
-    for (std::size_t j = 0; j < n_num_features_; ++j) {
-        extract_numeric_column(num_cols[j], n_rows, col_f64);
-        const Q16Quantizer& q = quantizers_[j];
-        for (std::size_t i = 0; i < n_rows; ++i) {
-            const std::uint16_t u = q.encode_u16(col_f64[i]);
-            u_col[i] = u;
-            codes_ptr[i * n_num_features_ + j] = Q16Quantizer::to_signed_code(u);
+    const bool par_num =
+        (n_threads > 1) && (n_num_features_ >= 2U) && (n_rows * n_num_features_ >= 50000U);
+    if (par_num) {
+#ifdef _OPENMP
+#pragma omp parallel num_threads(n_threads)
+#endif
+        {
+            std::vector<double> col_f64(n_rows);
+            std::vector<std::uint16_t> u_col(n_rows);
+#ifdef _OPENMP
+#pragma omp for schedule(dynamic, 1)
+#endif
+            for (std::ptrdiff_t j_signed = 0;
+                 j_signed < static_cast<std::ptrdiff_t>(n_num_features_); ++j_signed) {
+                const auto j = static_cast<std::size_t>(j_signed);
+                extract_numeric_column(num_cols[j], n_rows, col_f64);
+                const Q16Quantizer& q = quantizers_[j];
+                std::int16_t* dst_code_col = codes_ptr + j * n_rows;
+                for (std::size_t i = 0; i < n_rows; ++i) {
+                    const std::uint16_t u = q.encode_u16(col_f64[i]);
+                    u_col[i] = u;
+                    dst_code_col[i] = Q16Quantizer::to_signed_code(u);
+                }
+                const std::size_t f = num_feature_indices_[j];
+                binners_[j].transform(u_col, bins_ptr + f * n_rows);
+            }
         }
-        const std::size_t f = num_feature_indices_[j];
-        binners_[j].transform(u_col, bins_ptr + f * n_rows);
+    } else if (n_num_features_ > 0U) {
+        std::vector<double> col_f64(n_rows);
+        std::vector<std::uint16_t> u_col(n_rows);
+        for (std::size_t j = 0; j < n_num_features_; ++j) {
+            extract_numeric_column(num_cols[j], n_rows, col_f64);
+            const Q16Quantizer& q = quantizers_[j];
+            std::int16_t* dst_code_col = codes_ptr + j * n_rows;
+            for (std::size_t i = 0; i < n_rows; ++i) {
+                const std::uint16_t u = q.encode_u16(col_f64[i]);
+                u_col[i] = u;
+                dst_code_col[i] = Q16Quantizer::to_signed_code(u);
+            }
+            const std::size_t f = num_feature_indices_[j];
+            binners_[j].transform(u_col, bins_ptr + f * n_rows);
+        }
     }
 
     for (std::size_t c = 0; c < n_cat_features_; ++c) {

@@ -144,9 +144,11 @@ class Dataset:
         min_data_per_group: int = 100,
         max_categories: int = 253,
         feature_names: Sequence[str] | None = None,
+        n_jobs: int = 1,
     ) -> None:
         is_df = _is_pandas_dataframe(X)
         self._fitted_on_dataframe = is_df
+        self._n_jobs = int(n_jobs)
 
         if is_df:
             n_rows, n_features = X.shape
@@ -164,12 +166,12 @@ class Dataset:
             if not cat_idx:
                 arr = X.to_numpy()
                 if arr.dtype == np.float64 and (n_rows <= 1 or arr.strides[0] > 0) and (n_features <= 1 or arr.strides[1] > 0):
-                    self._inner = _core.fit_numeric_f64(arr, max_bin, resolved_names)
+                    self._inner = _core.fit_numeric_f64(arr, max_bin, resolved_names, self._n_jobs)
                 elif arr.dtype == np.float32 and (n_rows <= 1 or arr.strides[0] > 0) and (n_features <= 1 or arr.strides[1] > 0):
-                    self._inner = _core.fit_numeric_f32(arr, max_bin, resolved_names)
+                    self._inner = _core.fit_numeric_f32(arr, max_bin, resolved_names, self._n_jobs)
                 else:
                     arr_f64 = np.ascontiguousarray(arr, dtype=np.float64)
-                    self._inner = _core.fit_numeric_f64(arr_f64, max_bin, resolved_names)
+                    self._inner = _core.fit_numeric_f64(arr_f64, max_bin, resolved_names, self._n_jobs)
                 return
 
             cat_set = set(cat_idx)
@@ -195,6 +197,7 @@ class Dataset:
                 max_bin,
                 min_data_per_group,
                 max_categories,
+                self._n_jobs,
             )
             return
 
@@ -213,12 +216,12 @@ class Dataset:
         cat_idx = _resolve_categorical_indices(n_features, resolved_names, categorical_feature, [])
         if not cat_idx:
             if arr.dtype == np.float64 and (n_rows <= 1 or arr.strides[0] > 0) and (n_features <= 1 or arr.strides[1] > 0):
-                self._inner = _core.fit_numeric_f64(arr, max_bin, resolved_names)
+                self._inner = _core.fit_numeric_f64(arr, max_bin, resolved_names, self._n_jobs)
             elif arr.dtype == np.float32 and (n_rows <= 1 or arr.strides[0] > 0) and (n_features <= 1 or arr.strides[1] > 0):
-                self._inner = _core.fit_numeric_f32(arr, max_bin, resolved_names)
+                self._inner = _core.fit_numeric_f32(arr, max_bin, resolved_names, self._n_jobs)
             else:
                 arr_f64 = np.ascontiguousarray(arr, dtype=np.float64)
-                self._inner = _core.fit_numeric_f64(arr_f64, max_bin, resolved_names)
+                self._inner = _core.fit_numeric_f64(arr_f64, max_bin, resolved_names, self._n_jobs)
             return
 
         cat_set = set(cat_idx)
@@ -244,6 +247,7 @@ class Dataset:
             max_bin,
             min_data_per_group,
             max_categories,
+            self._n_jobs,
         )
 
     @property
@@ -314,11 +318,11 @@ class Dataset:
             if self.n_cat_features == 0:
                 arr = X.to_numpy()
                 if arr.dtype == np.float64 and (n_rows <= 1 or arr.strides[0] > 0) and (n_features <= 1 or arr.strides[1] > 0):
-                    return TransformedData(self._inner.transform_numeric_f64(arr))
+                    return TransformedData(self._inner.transform_numeric_f64(arr, self._n_jobs))
                 if arr.dtype == np.float32 and (n_rows <= 1 or arr.strides[0] > 0) and (n_features <= 1 or arr.strides[1] > 0):
-                    return TransformedData(self._inner.transform_numeric_f32(arr))
+                    return TransformedData(self._inner.transform_numeric_f32(arr, self._n_jobs))
                 return TransformedData(
-                    self._inner.transform_numeric_f64(np.ascontiguousarray(arr, dtype=np.float64))
+                    self._inner.transform_numeric_f64(np.ascontiguousarray(arr, dtype=np.float64), self._n_jobs)
                 )
 
             is_cat = self.is_categorical
@@ -334,7 +338,7 @@ class Dataset:
                 else:
                     num_cols.append(_prepare_numeric_1d(col, is_pandas=True))
             return TransformedData(
-                self._inner.transform_mixed(n_rows, num_cols, cat_vocabs, cat_indices)
+                self._inner.transform_mixed(n_rows, num_cols, cat_vocabs, cat_indices, self._n_jobs)
             )
 
         arr = np.asarray(X)
@@ -345,11 +349,11 @@ class Dataset:
             raise ValueError(f"Expected {self.n_features} features, got {n_features}")
         if self.n_cat_features == 0:
             if arr.dtype == np.float64 and (n_rows <= 1 or arr.strides[0] > 0) and (n_features <= 1 or arr.strides[1] > 0):
-                return TransformedData(self._inner.transform_numeric_f64(arr))
+                return TransformedData(self._inner.transform_numeric_f64(arr, self._n_jobs))
             if arr.dtype == np.float32 and (n_rows <= 1 or arr.strides[0] > 0) and (n_features <= 1 or arr.strides[1] > 0):
-                return TransformedData(self._inner.transform_numeric_f32(arr))
+                return TransformedData(self._inner.transform_numeric_f32(arr, self._n_jobs))
             return TransformedData(
-                self._inner.transform_numeric_f64(np.ascontiguousarray(arr, dtype=np.float64))
+                self._inner.transform_numeric_f64(np.ascontiguousarray(arr, dtype=np.float64), self._n_jobs)
             )
 
         is_cat = self.is_categorical
@@ -365,5 +369,5 @@ class Dataset:
             else:
                 num_cols.append(_prepare_numeric_1d(col, is_pandas=False))
         return TransformedData(
-            self._inner.transform_mixed(n_rows, num_cols, cat_vocabs, cat_indices)
+            self._inner.transform_mixed(n_rows, num_cols, cat_vocabs, cat_indices, self._n_jobs)
         )

@@ -422,7 +422,7 @@ void Evaluator::predict_proba_from_raw(const double* raw, std::size_t n_rows, do
 }
 
 void Evaluator::add_tree_predictions_from_codes(const Tree& tree,
-                                                const std::int16_t* codes_row_major,
+                                                const std::int16_t* codes_col_major,
                                                 std::size_t n_rows, std::size_t n_num_features,
                                                 const std::vector<std::size_t>& feature_to_num_idx,
                                                 double* scores, const std::uint8_t* bins_col_major,
@@ -432,11 +432,9 @@ void Evaluator::add_tree_predictions_from_codes(const Tree& tree,
     // With a row subset only rows row_subset[0, n_subset) are scored (n_rows stays the stride).
     const std::size_t n_iter = (row_subset != nullptr) ? n_subset : n_rows;
     const bool use_omp = (n_threads > 1) && (n_iter >= 4096U);
+    const bool has_codes = (n_num_features > 0U && codes_col_major != nullptr);
 
     auto score_row = [&](std::size_t i) noexcept {
-        const std::int16_t* row = (n_num_features > 0U && codes_row_major != nullptr)
-                                      ? (codes_row_major + i * n_num_features)
-                                      : nullptr;
         std::uint32_t nid = 0U;
         for (;;) {
             const Node& node = tree.nodes[nid];
@@ -446,11 +444,12 @@ void Evaluator::add_tree_predictions_from_codes(const Tree& tree,
             }
             bool go_left = false;
             if (node.kind == NodeKind::Axis) {
-                if (row == nullptr) {
+                if (!has_codes) {
                     break;
                 }
                 const std::size_t num_idx = feature_to_num_idx[node.feature];
-                const std::uint16_t u = Q16Quantizer::to_unsigned_code(row[num_idx]);
+                const std::uint16_t u =
+                    Q16Quantizer::to_unsigned_code(codes_col_major[num_idx * n_rows + i]);
                 go_left = (u == kQ16NanCode) ? node.nan_go_left : (u < node.threshold_u16);
             } else if (node.kind == NodeKind::Categorical) {
                 if (bins_col_major == nullptr) {
@@ -460,16 +459,20 @@ void Evaluator::add_tree_predictions_from_codes(const Tree& tree,
                     bins_col_major[static_cast<std::size_t>(node.feature) * n_rows + i];
                 go_left = cat_bitset_test(tree.cat_bitsets[node.cat_bitset_offset], code);
             } else {
-                if (row == nullptr) {
+                if (!has_codes) {
                     break;
                 }
                 const std::uint8_t k = node.oblique_k;
                 if (k <= 3U) {
-                    const std::int16_t c0 = row[feature_to_num_idx[node.oblique_features[0]]];
-                    const std::int16_t c1 = row[feature_to_num_idx[node.oblique_features[1]]];
-                    const std::int16_t c2 = (k == 3U)
-                                                ? row[feature_to_num_idx[node.oblique_features[2]]]
-                                                : static_cast<std::int16_t>(0);
+                    const std::int16_t c0 =
+                        codes_col_major[feature_to_num_idx[node.oblique_features[0]] * n_rows + i];
+                    const std::int16_t c1 =
+                        codes_col_major[feature_to_num_idx[node.oblique_features[1]] * n_rows + i];
+                    const std::int16_t c2 =
+                        (k == 3U) ? codes_col_major[feature_to_num_idx[node.oblique_features[2]] *
+                                                        n_rows +
+                                                    i]
+                                  : static_cast<std::int16_t>(0);
                     if (c0 == kQ16SignedNanCode || c1 == kQ16SignedNanCode ||
                         (k == 3U && c2 == kQ16SignedNanCode)) {
                         go_left = node.nan_go_left;
@@ -485,7 +488,8 @@ void Evaluator::add_tree_predictions_from_codes(const Tree& tree,
                     std::int64_t acc = 0;
                     bool missing = false;
                     for (std::uint8_t q = 0; q < k; ++q) {
-                        const std::int16_t c = row[feature_to_num_idx[ov.features[q]]];
+                        const std::int16_t c =
+                            codes_col_major[feature_to_num_idx[ov.features[q]] * n_rows + i];
                         if (c == kQ16SignedNanCode) {
                             missing = true;
                             break;

@@ -1,6 +1,7 @@
 #include "data/axis_binner.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstddef>
 #include <stdexcept>
@@ -116,8 +117,34 @@ std::uint8_t AxisBinner::bin(std::uint16_t u) const noexcept {
 }
 
 void AxisBinner::transform(std::span<const std::uint16_t> codes, std::uint8_t* out) const noexcept {
-    for (std::size_t i = 0; i < codes.size(); ++i) {
-        out[i] = bin(codes[i]);
+    const std::size_t n = codes.size();
+    if (n < 4096U) {
+        for (std::size_t i = 0; i < n; ++i) {
+            out[i] = bin(codes[i]);
+        }
+        return;
+    }
+
+    // Build an exact 64K lookup table in L1 so transform avoids binary search per row.
+    std::array<std::uint8_t, 65536> lut;
+    std::size_t cur = 0U;
+    for (std::size_t b = 0; b < edges.size(); ++b) {
+        const std::size_t next_u = std::min<std::size_t>(edges[b], kQ16NanCode);
+        if (next_u > cur) {
+            std::fill(lut.begin() + static_cast<std::ptrdiff_t>(cur),
+                      lut.begin() + static_cast<std::ptrdiff_t>(next_u),
+                      static_cast<std::uint8_t>(b));
+            cur = next_u;
+        }
+    }
+    const std::uint8_t last_bin = static_cast<std::uint8_t>(edges.size());
+    std::fill(lut.begin() + static_cast<std::ptrdiff_t>(cur),
+              lut.begin() + static_cast<std::ptrdiff_t>(kQ16NanCode), last_bin);
+    lut[kQ16NanCode] = nan_bin();
+
+    const std::uint16_t* src = codes.data();
+    for (std::size_t i = 0; i < n; ++i) {
+        out[i] = lut[src[i]];
     }
 }
 

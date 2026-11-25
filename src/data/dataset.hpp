@@ -21,6 +21,7 @@ struct DataConfig {
     int max_bin = 255;
     int min_data_per_group = kDefaultMinDataPerGroup;
     int max_categories = kDefaultMaxCategories;
+    int n_jobs = 1;
 };
 
 struct NumericColumnView {
@@ -38,12 +39,12 @@ struct TransformedData {
     std::size_t n_rows = 0;
     std::size_t n_num_features = 0;
     std::size_t n_features = 0;
-    AlignedBuffer<std::int16_t> codes_row_major;
+    AlignedBuffer<std::int16_t> codes_col_major;
     AlignedBuffer<std::uint8_t> bins_col_major;
 };
 
 /**
- * @brief Training dataset holding row-major Q16r signed codes (numeric features) and
+ * @brief Training dataset holding column-major Q16r signed codes (numeric features) and
  *        column-major uint8 bin indices (all features), plus fitted quantizers/binners/encoders.
  */
 class Dataset {
@@ -63,14 +64,15 @@ public:
                              const DataConfig& cfg = {});
 
     TransformedData transform_numeric(const double* data, std::size_t n_rows, std::size_t n_cols,
-                                      bool col_major) const;
+                                      bool col_major, int n_jobs = 1) const;
 
     TransformedData transform_numeric(const float* data, std::size_t n_rows, std::size_t n_cols,
-                                      bool col_major) const;
+                                      bool col_major, int n_jobs = 1) const;
 
     TransformedData transform_mixed(std::size_t n_rows,
                                     const std::vector<NumericColumnView>& num_cols,
-                                    const std::vector<CategoricalColumnView>& cat_cols) const;
+                                    const std::vector<CategoricalColumnView>& cat_cols,
+                                    int n_jobs = 1) const;
 
     std::size_t n_rows() const noexcept { return n_rows_; }
 
@@ -104,7 +106,7 @@ public:
 
     std::uint16_t num_bins_for_feature(std::size_t feature_idx) const;
 
-    const AlignedBuffer<std::int16_t>& codes_row_major() const noexcept { return codes_row_major_; }
+    const AlignedBuffer<std::int16_t>& codes_col_major() const noexcept { return codes_col_major_; }
 
     const AlignedBuffer<std::uint8_t>& bins_col_major() const noexcept { return bins_col_major_; }
 
@@ -122,7 +124,7 @@ private:
     std::vector<Q16Quantizer> quantizers_;
     std::vector<AxisBinner> binners_;
     std::vector<CatEncoder> cat_encoders_;
-    AlignedBuffer<std::int16_t> codes_row_major_;
+    AlignedBuffer<std::int16_t> codes_col_major_;
     AlignedBuffer<std::uint8_t> bins_col_major_;
 };
 

@@ -31,28 +31,28 @@ TEST(DatasetTest, NumericRowMajorAndColMajorAlignmentAndConsistency) {
     EXPECT_EQ(ds_rm.n_cat_features(), 0U);
 
     // 64-byte alignment check
-    EXPECT_EQ(reinterpret_cast<std::uintptr_t>(ds_rm.codes_row_major().data()) % 64U, 0U);
+    EXPECT_EQ(reinterpret_cast<std::uintptr_t>(ds_rm.codes_col_major().data()) % 64U, 0U);
     EXPECT_EQ(reinterpret_cast<std::uintptr_t>(ds_rm.bins_col_major().data()) % 64U, 0U);
 
     // Exact match between row-major and col-major inputs
-    EXPECT_EQ(ds_rm.codes_row_major().size(), 12U);
+    EXPECT_EQ(ds_rm.codes_col_major().size(), 12U);
     EXPECT_EQ(ds_rm.bins_col_major().size(), 12U);
     for (std::size_t i = 0; i < 12; ++i) {
-        EXPECT_EQ(ds_rm.codes_row_major()[i], ds_cm.codes_row_major()[i]);
+        EXPECT_EQ(ds_rm.codes_col_major()[i], ds_cm.codes_col_major()[i]);
         EXPECT_EQ(ds_rm.bins_col_major()[i], ds_cm.bins_col_major()[i]);
     }
 
-    // Constant feature flag & NaN code/bin check
+    // Constant feature flag & NaN code/bin check (row 1, col 2 in col-major)
     EXPECT_FALSE(ds_rm.quantizer(0).is_constant);
     EXPECT_TRUE(ds_rm.quantizer(1).is_constant);
     EXPECT_FALSE(ds_rm.quantizer(2).is_constant);
-    EXPECT_EQ(ds_rm.codes_row_major()[1 * 3 + 2], miter::kQ16SignedNanCode);
+    EXPECT_EQ(ds_rm.codes_col_major()[2 * 4 + 1], miter::kQ16SignedNanCode);
     EXPECT_EQ(ds_rm.bins_col_major()[2 * 4 + 1], ds_rm.binner(2).nan_bin());
 
     // Transform on training data gives identical codes and bins
     const auto tx = ds_rm.transform_numeric(row_major.data(), 4, 3, /*col_major=*/false);
     for (std::size_t i = 0; i < 12; ++i) {
-        EXPECT_EQ(tx.codes_row_major[i], ds_rm.codes_row_major()[i]);
+        EXPECT_EQ(tx.codes_col_major[i], ds_rm.codes_col_major()[i]);
         EXPECT_EQ(tx.bins_col_major[i], ds_rm.bins_col_major()[i]);
     }
 }
@@ -67,7 +67,7 @@ TEST(DatasetTest, Float32InputSupport) {
     const auto ds_f32 = miter::Dataset::fit_numeric(f32_rm.data(), 3, 2, false);
     const auto ds_f64 = miter::Dataset::fit_numeric(f64_rm.data(), 3, 2, false);
     for (std::size_t i = 0; i < 6; ++i) {
-        EXPECT_EQ(ds_f32.codes_row_major()[i], ds_f64.codes_row_major()[i]);
+        EXPECT_EQ(ds_f32.codes_col_major()[i], ds_f64.codes_col_major()[i]);
         EXPECT_EQ(ds_f32.bins_col_major()[i], ds_f64.bins_col_major()[i]);
     }
 }
@@ -103,8 +103,8 @@ TEST(DatasetTest, MixedNumericAndCategorical) {
     EXPECT_EQ(ds.n_cat_features(), 1U);
     EXPECT_EQ(ds.feature_names(), names);
 
-    // codes_row_major only contains numeric columns (4 x 2)
-    EXPECT_EQ(ds.codes_row_major().size(), 8U);
+    // codes_col_major only contains numeric columns (4 x 2)
+    EXPECT_EQ(ds.codes_col_major().size(), 8U);
     // bins_col_major contains all features (4 x 3)
     EXPECT_EQ(ds.bins_col_major().size(), 12U);
 
@@ -136,6 +136,42 @@ TEST(DatasetTest, ValidationErrors) {
     const auto ds = miter::Dataset::fit_numeric(x.data(), 1, 2, false);
     EXPECT_THROW(ds.transform_numeric(x.data(), 1, 3, false), std::invalid_argument);
     EXPECT_THROW(ds.transform_numeric(x.data(), 0, 2, false), std::invalid_argument);
+}
+
+TEST(DatasetTest, MultiThreadFitAndTransformBitIdenticalToSingleThread) {
+    const std::size_t n_rows = 12000;
+    const std::size_t n_cols = 8;
+    std::vector<double> data(n_rows * n_cols);
+    for (std::size_t i = 0; i < n_rows; ++i) {
+        for (std::size_t j = 0; j < n_cols; ++j) {
+            data[i * n_cols + j] = static_cast<double>((i * 17U + j * 31U) % 997U) * 0.1;
+        }
+    }
+    data[7] = std::numeric_limits<double>::quiet_NaN();
+
+    miter::DataConfig c1;
+    c1.n_jobs = 1;
+    miter::DataConfig c4;
+    c4.n_jobs = 4;
+
+    const auto ds1 = miter::Dataset::fit_numeric(data.data(), n_rows, n_cols, false, c1);
+    const auto ds4 = miter::Dataset::fit_numeric(data.data(), n_rows, n_cols, false, c4);
+    EXPECT_EQ(ds1.codes_col_major().size(), ds4.codes_col_major().size());
+    for (std::size_t i = 0; i < ds1.codes_col_major().size(); ++i) {
+        EXPECT_EQ(ds1.codes_col_major()[i], ds4.codes_col_major()[i]);
+    }
+    for (std::size_t i = 0; i < ds1.bins_col_major().size(); ++i) {
+        EXPECT_EQ(ds1.bins_col_major()[i], ds4.bins_col_major()[i]);
+    }
+
+    const auto tx1 = ds1.transform_numeric(data.data(), n_rows, n_cols, false, 1);
+    const auto tx4 = ds4.transform_numeric(data.data(), n_rows, n_cols, false, 4);
+    for (std::size_t i = 0; i < tx1.codes_col_major.size(); ++i) {
+        EXPECT_EQ(tx1.codes_col_major[i], tx4.codes_col_major[i]);
+    }
+    for (std::size_t i = 0; i < tx1.bins_col_major.size(); ++i) {
+        EXPECT_EQ(tx1.bins_col_major[i], tx4.bins_col_major[i]);
+    }
 }
 
 } // namespace
