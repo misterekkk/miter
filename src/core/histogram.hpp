@@ -67,7 +67,7 @@ void build_axis_histograms(const Dataset& ds, const FeatureHistLayout& layout,
                            const std::uint32_t* leaf_rows, std::size_t n_leaf,
                            bool is_contiguous_root, const float* g, const float* h,
                            float* g_ordered, float* h_ordered, HistBin* hist_out, int n_jobs = 1,
-                           HistBin* wave_hist_buf = nullptr) noexcept;
+                           HistBin* wave_hist_buf = nullptr, bool gh_preordered = false) noexcept;
 
 void subtract_histograms(HistBin* dst_large, const HistBin* parent, const HistBin* small,
                          std::size_t total_bins) noexcept;

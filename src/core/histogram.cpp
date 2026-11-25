@@ -130,7 +130,7 @@ void build_axis_histograms(const Dataset& ds, const FeatureHistLayout& layout,
                            const std::uint32_t* leaf_rows, std::size_t n_leaf,
                            bool is_contiguous_root, const float* g, const float* h,
                            float* g_ordered, float* h_ordered, HistBin* hist_out, int n_jobs,
-                           HistBin* wave_hist_buf) noexcept {
+                           HistBin* wave_hist_buf, bool gh_preordered) noexcept {
     if (layout.total_bins == 0U) {
         return;
     }
@@ -144,15 +144,20 @@ void build_axis_histograms(const Dataset& ds, const FeatureHistLayout& layout,
     const std::uint8_t* bins_base = ds.bins_col_major().data();
     const std::size_t n_active = layout.active_features.size();
 
-    if (!is_contiguous_root) {
+    if (!is_contiguous_root && !gh_preordered) {
         if (n_threads > 1 && n_leaf >= 16384U) {
+            const std::size_t n_chunks = (n_leaf + kDetChunkRows - 1U) / kDetChunkRows;
 #ifdef _OPENMP
-#pragma omp parallel for schedule(static) num_threads(n_threads)
+#pragma omp parallel for schedule(dynamic, 1) num_threads(n_threads)
 #endif
-            for (std::ptrdiff_t t = 0; t < static_cast<std::ptrdiff_t>(n_leaf); ++t) {
-                const std::uint32_t r = leaf_rows[static_cast<std::size_t>(t)];
-                g_ordered[t] = g[r];
-                h_ordered[t] = h[r];
+            for (std::ptrdiff_t c = 0; c < static_cast<std::ptrdiff_t>(n_chunks); ++c) {
+                const std::size_t t0 = static_cast<std::size_t>(c) * kDetChunkRows;
+                const std::size_t t1 = std::min(t0 + kDetChunkRows, n_leaf);
+                for (std::size_t t = t0; t < t1; ++t) {
+                    const std::uint32_t r = leaf_rows[t];
+                    g_ordered[t] = g[r];
+                    h_ordered[t] = h[r];
+                }
             }
         } else {
             for (std::size_t t = 0; t < n_leaf; ++t) {

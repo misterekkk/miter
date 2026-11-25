@@ -14,8 +14,7 @@ namespace miter {
 namespace {
 
 constexpr std::int32_t kMissingProjSentinel = std::numeric_limits<std::int32_t>::min();
-constexpr std::size_t kObliqueCandTile = 16U;
-constexpr std::size_t kObliqueRowTile = 64U;
+constexpr std::uint8_t kMissingBinSentinel = static_cast<std::uint8_t>(kObliqueBins);
 
 void scan_oblique_hist(const HistBin* hist, double parent_g, double parent_h, std::int32_t parent_c,
                        double g_nan, double h_nan, std::int32_t c_nan, double lam, double min_h,
@@ -119,12 +118,44 @@ void scan_oblique_hist(const HistBin* hist, double parent_g, double parent_h, st
     }
 }
 
-void pass1_chunk(const std::int16_t* codes, std::size_t p_num, const std::uint32_t* leaf_rows,
+void gather_block_features(const std::int16_t* codes, std::size_t n_rows,
+                           std::size_t leaf_code_offset, const std::uint32_t* leaf_rows,
+                           bool is_contiguous_leaf, std::size_t mb0, std::size_t len,
+                           std::size_t n_used, const std::uint32_t* used_num_feats,
+                           std::int16_t* feat_tile, const std::int16_t** col_ptrs) noexcept {
+    if (is_contiguous_leaf) {
+        const std::size_t base_off = leaf_code_offset + mb0;
+        for (std::size_t u = 0; u < n_used; ++u) {
+            col_ptrs[u] = codes + static_cast<std::size_t>(used_num_feats[u]) * n_rows + base_off;
+        }
+        return;
+    }
+    const std::uint32_t* lr = leaf_rows + mb0;
+    for (std::size_t u = 0; u < n_used; ++u) {
+        const std::int16_t* src = codes + static_cast<std::size_t>(used_num_feats[u]) * n_rows;
+        std::int16_t* dst = feat_tile + u * kObliqueMicroBlock;
+        col_ptrs[u] = dst;
+        std::size_t i = 0U;
+        for (; i + 4U <= len; i += 4U) {
+            dst[i + 0U] = src[lr[i + 0U]];
+            dst[i + 1U] = src[lr[i + 1U]];
+            dst[i + 2U] = src[lr[i + 2U]];
+            dst[i + 3U] = src[lr[i + 3U]];
+        }
+        for (; i < len; ++i) {
+            dst[i] = src[lr[i]];
+        }
+    }
+}
+
+void pass1_chunk(const std::int16_t* codes, std::size_t n_rows, std::size_t leaf_code_offset,
+                 const std::uint32_t* leaf_rows, std::size_t n_leaf, bool is_contiguous_leaf,
                  std::size_t row_start, std::size_t row_end, const float* g_seq, const float* h_seq,
-                 std::size_t m, const ObliqueCandMeta* metas, bool any_has_nan, bool store_proj,
-                 std::int32_t* proj_buf, std::int32_t* out_pmin, std::int32_t* out_pmax,
-                 std::int32_t* out_valid, double* out_gnan, double* out_hnan,
-                 std::int32_t* out_cnan) noexcept {
+                 std::size_t m, const ObliqueCandMeta* metas, std::size_t n_used,
+                 const std::uint32_t* used_num_feats, bool any_has_nan, bool store_proj,
+                 std::int32_t* proj_buf, std::int16_t* feat_tile, const std::int16_t** col_ptrs,
+                 std::int32_t* out_pmin, std::int32_t* out_pmax, std::int32_t* out_valid,
+                 double* out_gnan, double* out_hnan, std::int32_t* out_cnan) noexcept {
     for (std::size_t j = 0; j < m; ++j) {
         out_pmin[j] = std::numeric_limits<std::int32_t>::max();
         out_pmax[j] = std::numeric_limits<std::int32_t>::min();
@@ -134,148 +165,264 @@ void pass1_chunk(const std::int16_t* codes, std::size_t p_num, const std::uint32
         out_cnan[j] = 0;
     }
 
-    if (!any_has_nan) {
-        for (std::size_t t = row_start; t < row_end; ++t) {
-            const std::int16_t* row = codes + static_cast<std::size_t>(leaf_rows[t]) * p_num;
-            std::int32_t* out_row = store_proj ? (proj_buf + t * m) : nullptr;
-            for (std::size_t j = 0; j < m; ++j) {
-                const ObliqueCandMeta& cm = metas[j];
-                if (cm.k < 2U) {
-                    continue;
-                }
-                const std::int32_t p32 = static_cast<std::int32_t>(cm.w[0]) * row[cm.fn[0]] +
-                                         static_cast<std::int32_t>(cm.w[1]) * row[cm.fn[1]] +
-                                         static_cast<std::int32_t>(cm.w[2]) * row[cm.fn[2]];
-                if (store_proj) {
-                    out_row[j] = p32;
-                }
-                if (p32 < out_pmin[j]) {
-                    out_pmin[j] = p32;
-                }
-                if (p32 > out_pmax[j]) {
-                    out_pmax[j] = p32;
-                }
-                out_valid[j] += 1;
-            }
-        }
-        return;
-    }
+    for (std::size_t mb0 = row_start; mb0 < row_end; mb0 += kObliqueMicroBlock) {
+        const std::size_t len = std::min(kObliqueMicroBlock, row_end - mb0);
+        gather_block_features(codes, n_rows, leaf_code_offset, leaf_rows, is_contiguous_leaf, mb0,
+                              len, n_used, used_num_feats, feat_tile, col_ptrs);
 
-    for (std::size_t t = row_start; t < row_end; ++t) {
-        const std::int16_t* row = codes + static_cast<std::size_t>(leaf_rows[t]) * p_num;
-        const double gt = static_cast<double>(g_seq[t]);
-        const double ht = static_cast<double>(h_seq[t]);
-        std::int32_t* out_row = store_proj ? (proj_buf + t * m) : nullptr;
         for (std::size_t j = 0; j < m; ++j) {
             const ObliqueCandMeta& cm = metas[j];
             if (cm.k < 2U) {
                 continue;
             }
-            const std::int16_t c0 = row[cm.fn[0]];
-            const std::int16_t c1 = row[cm.fn[1]];
-            const std::int16_t c2 = row[cm.fn[2]];
-            if (cm.has_nan != 0U &&
-                (c0 == kQ16SignedNanCode || c1 == kQ16SignedNanCode || c2 == kQ16SignedNanCode)) {
-                if (store_proj) {
-                    out_row[j] = kMissingProjSentinel;
+            const std::int16_t* c0 = col_ptrs[cm.uf[0]];
+            const std::int16_t* c1 = col_ptrs[cm.uf[1]];
+            const std::int32_t w0 = cm.w[0];
+            const std::int32_t w1 = cm.w[1];
+            std::int32_t lmin = out_pmin[j];
+            std::int32_t lmax = out_pmax[j];
+
+            if (!any_has_nan || cm.has_nan == 0U) {
+                if (cm.k == 2U) {
+                    if (store_proj) {
+                        std::int32_t* p_dst = proj_buf + j * n_leaf + mb0;
+                        for (std::size_t i = 0; i < len; ++i) {
+                            const std::int32_t p32 = w0 * c0[i] + w1 * c1[i];
+                            p_dst[i] = p32;
+                            lmin = (p32 < lmin) ? p32 : lmin;
+                            lmax = (p32 > lmax) ? p32 : lmax;
+                        }
+                    } else {
+                        for (std::size_t i = 0; i < len; ++i) {
+                            const std::int32_t p32 = w0 * c0[i] + w1 * c1[i];
+                            lmin = (p32 < lmin) ? p32 : lmin;
+                            lmax = (p32 > lmax) ? p32 : lmax;
+                        }
+                    }
+                } else {
+                    const std::int16_t* c2 = col_ptrs[cm.uf[2]];
+                    const std::int32_t w2 = cm.w[2];
+                    if (store_proj) {
+                        std::int32_t* p_dst = proj_buf + j * n_leaf + mb0;
+                        for (std::size_t i = 0; i < len; ++i) {
+                            const std::int32_t p32 = w0 * c0[i] + w1 * c1[i] + w2 * c2[i];
+                            p_dst[i] = p32;
+                            lmin = (p32 < lmin) ? p32 : lmin;
+                            lmax = (p32 > lmax) ? p32 : lmax;
+                        }
+                    } else {
+                        for (std::size_t i = 0; i < len; ++i) {
+                            const std::int32_t p32 = w0 * c0[i] + w1 * c1[i] + w2 * c2[i];
+                            lmin = (p32 < lmin) ? p32 : lmin;
+                            lmax = (p32 > lmax) ? p32 : lmax;
+                        }
+                    }
                 }
-                out_gnan[j] += gt;
-                out_hnan[j] += ht;
-                out_cnan[j] += 1;
+                out_pmin[j] = lmin;
+                out_pmax[j] = lmax;
+                out_valid[j] += static_cast<std::int32_t>(len);
             } else {
-                const std::int32_t p32 = static_cast<std::int32_t>(cm.w[0]) * c0 +
-                                         static_cast<std::int32_t>(cm.w[1]) * c1 +
-                                         static_cast<std::int32_t>(cm.w[2]) * c2;
-                if (store_proj) {
-                    out_row[j] = p32;
+                const std::int16_t* c2 = col_ptrs[cm.uf[2]];
+                const std::int32_t w2 = cm.w[2];
+                const float* gm = g_seq + mb0;
+                const float* hm = h_seq + mb0;
+                double gn = out_gnan[j];
+                double hn = out_hnan[j];
+                std::int32_t cn = out_cnan[j];
+                std::int32_t vc = out_valid[j];
+                std::int32_t* p_dst = store_proj ? (proj_buf + j * n_leaf + mb0) : nullptr;
+                for (std::size_t i = 0; i < len; ++i) {
+                    const std::int16_t x0 = c0[i];
+                    const std::int16_t x1 = c1[i];
+                    const std::int16_t x2 = c2[i];
+                    if (x0 == kQ16SignedNanCode || x1 == kQ16SignedNanCode ||
+                        x2 == kQ16SignedNanCode) {
+                        if (store_proj) {
+                            p_dst[i] = kMissingProjSentinel;
+                        }
+                        gn += static_cast<double>(gm[i]);
+                        hn += static_cast<double>(hm[i]);
+                        ++cn;
+                    } else {
+                        const std::int32_t p32 = w0 * x0 + w1 * x1 + w2 * x2;
+                        if (store_proj) {
+                            p_dst[i] = p32;
+                        }
+                        lmin = (p32 < lmin) ? p32 : lmin;
+                        lmax = (p32 > lmax) ? p32 : lmax;
+                        ++vc;
+                    }
                 }
-                if (p32 < out_pmin[j]) {
-                    out_pmin[j] = p32;
-                }
-                if (p32 > out_pmax[j]) {
-                    out_pmax[j] = p32;
-                }
-                out_valid[j] += 1;
+                out_pmin[j] = lmin;
+                out_pmax[j] = lmax;
+                out_valid[j] = vc;
+                out_gnan[j] = gn;
+                out_hnan[j] = hn;
+                out_cnan[j] = cn;
             }
         }
     }
 }
 
-void pass2_chunk(const std::int16_t* codes, std::size_t p_num, const std::uint32_t* leaf_rows,
+void accumulate_bins_no_nan(HistBin* hist, const std::uint8_t* bins, const float* gm,
+                            const float* hm, std::size_t len) noexcept {
+    std::size_t i = 0U;
+    for (; i + 4U <= len; i += 4U) {
+        const std::uint8_t b0 = bins[i + 0U];
+        const std::uint8_t b1 = bins[i + 1U];
+        const std::uint8_t b2 = bins[i + 2U];
+        const std::uint8_t b3 = bins[i + 3U];
+        hist[b0].g += static_cast<double>(gm[i + 0U]);
+        hist[b0].h += static_cast<double>(hm[i + 0U]);
+        hist[b0].c += 1;
+        hist[b1].g += static_cast<double>(gm[i + 1U]);
+        hist[b1].h += static_cast<double>(hm[i + 1U]);
+        hist[b1].c += 1;
+        hist[b2].g += static_cast<double>(gm[i + 2U]);
+        hist[b2].h += static_cast<double>(hm[i + 2U]);
+        hist[b2].c += 1;
+        hist[b3].g += static_cast<double>(gm[i + 3U]);
+        hist[b3].h += static_cast<double>(hm[i + 3U]);
+        hist[b3].c += 1;
+    }
+    for (; i < len; ++i) {
+        const std::uint8_t b = bins[i];
+        hist[b].g += static_cast<double>(gm[i]);
+        hist[b].h += static_cast<double>(hm[i]);
+        hist[b].c += 1;
+    }
+}
+
+void accumulate_bins_with_nan(HistBin* hist, const std::uint8_t* bins, const float* gm,
+                              const float* hm, std::size_t len) noexcept {
+    for (std::size_t i = 0; i < len; ++i) {
+        const std::uint8_t b = bins[i];
+        if (b != kMissingBinSentinel) {
+            hist[b].g += static_cast<double>(gm[i]);
+            hist[b].h += static_cast<double>(hm[i]);
+            hist[b].c += 1;
+        }
+    }
+}
+
+void pass2_chunk(const std::int16_t* codes, std::size_t n_rows, std::size_t leaf_code_offset,
+                 const std::uint32_t* leaf_rows, std::size_t n_leaf, bool is_contiguous_leaf,
                  std::size_t row_start, std::size_t row_end, const float* g_seq, const float* h_seq,
-                 std::size_t m, const ObliqueCandMeta* metas, bool store_proj,
-                 const std::int32_t* proj_buf, std::size_t n_active,
+                 const ObliqueCandMeta* metas, std::size_t n_used,
+                 const std::uint32_t* used_num_feats, bool store_proj, const std::int32_t* proj_buf,
+                 std::int16_t* feat_tile, const std::int16_t** col_ptrs, std::size_t n_active,
                  const std::uint32_t* active_cands, const std::int32_t* cand_pmin,
                  const FastDiv64* active_divs, HistBin* hists_out) noexcept {
+    std::uint8_t bins[kObliqueMicroBlock];
     if (store_proj) {
-        for (std::size_t t0 = row_start; t0 < row_end; t0 += kObliqueRowTile) {
-            const std::size_t t1 = std::min(t0 + kObliqueRowTile, row_end);
-            for (std::size_t a0 = 0; a0 < n_active; a0 += kObliqueCandTile) {
-                const std::size_t a1 = std::min(a0 + kObliqueCandTile, n_active);
-                for (std::size_t t = t0; t < t1; ++t) {
-                    const double gt = static_cast<double>(g_seq[t]);
-                    const double ht = static_cast<double>(h_seq[t]);
-                    const std::int32_t* p_row = proj_buf + t * m;
-                    for (std::size_t a = a0; a < a1; ++a) {
-                        const std::uint32_t j = active_cands[a];
-                        const std::int32_t p32 = p_row[j];
-                        if (p32 == kMissingProjSentinel) {
-                            continue;
-                        }
-                        const auto num = static_cast<std::uint64_t>(static_cast<std::int64_t>(p32) -
-                                                                    cand_pmin[j]) *
-                                         static_cast<std::uint64_t>(kObliqueBins);
-                        const std::size_t b = static_cast<std::size_t>(active_divs[a].div(num));
-                        HistBin& hb = hists_out[a * kObliqueBins + b];
-                        hb.g += gt;
-                        hb.h += ht;
-                        hb.c += 1;
+        for (std::size_t a = 0; a < n_active; ++a) {
+            const std::uint32_t j = active_cands[a];
+            const ObliqueCandMeta& cm = metas[j];
+            const std::int64_t pmin = cand_pmin[j];
+            const FastDiv64 div = active_divs[a];
+            const std::int32_t* p_col = proj_buf + j * n_leaf;
+            HistBin* hist = hists_out + a * static_cast<std::size_t>(kObliqueBins);
+
+            for (std::size_t mb0 = row_start; mb0 < row_end; mb0 += kObliqueMicroBlock) {
+                const std::size_t len = std::min(kObliqueMicroBlock, row_end - mb0);
+                const std::int32_t* pm = p_col + mb0;
+                const float* gm = g_seq + mb0;
+                const float* hm = h_seq + mb0;
+                if (cm.has_nan == 0U) {
+                    for (std::size_t i = 0; i < len; ++i) {
+                        const auto num =
+                            static_cast<std::uint64_t>(static_cast<std::int64_t>(pm[i]) - pmin) *
+                            static_cast<std::uint64_t>(kObliqueBins);
+                        bins[i] = static_cast<std::uint8_t>(div.div(num));
                     }
+                    accumulate_bins_no_nan(hist, bins, gm, hm, len);
+                } else {
+                    for (std::size_t i = 0; i < len; ++i) {
+                        const std::int32_t p32 = pm[i];
+                        if (p32 == kMissingProjSentinel) {
+                            bins[i] = kMissingBinSentinel;
+                        } else {
+                            const auto num =
+                                static_cast<std::uint64_t>(static_cast<std::int64_t>(p32) - pmin) *
+                                static_cast<std::uint64_t>(kObliqueBins);
+                            bins[i] = static_cast<std::uint8_t>(div.div(num));
+                        }
+                    }
+                    accumulate_bins_with_nan(hist, bins, gm, hm, len);
                 }
             }
         }
         return;
     }
 
-    for (std::size_t t0 = row_start; t0 < row_end; t0 += kObliqueRowTile) {
-        const std::size_t t1 = std::min(t0 + kObliqueRowTile, row_end);
-        for (std::size_t a0 = 0; a0 < n_active; a0 += kObliqueCandTile) {
-            const std::size_t a1 = std::min(a0 + kObliqueCandTile, n_active);
-            for (std::size_t t = t0; t < t1; ++t) {
-                const std::int16_t* row = codes + static_cast<std::size_t>(leaf_rows[t]) * p_num;
-                const double gt = static_cast<double>(g_seq[t]);
-                const double ht = static_cast<double>(h_seq[t]);
-                for (std::size_t a = a0; a < a1; ++a) {
-                    const std::uint32_t j = active_cands[a];
-                    const ObliqueCandMeta& cm = metas[j];
-                    const std::int16_t c0 = row[cm.fn[0]];
-                    const std::int16_t c1 = row[cm.fn[1]];
-                    const std::int16_t c2 = row[cm.fn[2]];
-                    if (cm.has_nan != 0U && (c0 == kQ16SignedNanCode || c1 == kQ16SignedNanCode ||
-                                             c2 == kQ16SignedNanCode)) {
-                        continue;
+    std::int32_t p_tmp[kObliqueMicroBlock];
+    for (std::size_t mb0 = row_start; mb0 < row_end; mb0 += kObliqueMicroBlock) {
+        const std::size_t len = std::min(kObliqueMicroBlock, row_end - mb0);
+        gather_block_features(codes, n_rows, leaf_code_offset, leaf_rows, is_contiguous_leaf, mb0,
+                              len, n_used, used_num_feats, feat_tile, col_ptrs);
+        const float* gm = g_seq + mb0;
+        const float* hm = h_seq + mb0;
+
+        for (std::size_t a = 0; a < n_active; ++a) {
+            const std::uint32_t j = active_cands[a];
+            const ObliqueCandMeta& cm = metas[j];
+            const std::int64_t pmin = cand_pmin[j];
+            const FastDiv64 div = active_divs[a];
+            HistBin* hist = hists_out + a * static_cast<std::size_t>(kObliqueBins);
+
+            const std::int16_t* c0 = col_ptrs[cm.uf[0]];
+            const std::int16_t* c1 = col_ptrs[cm.uf[1]];
+            const std::int32_t w0 = cm.w[0];
+            const std::int32_t w1 = cm.w[1];
+
+            if (cm.has_nan == 0U) {
+                if (cm.k == 2U) {
+                    for (std::size_t i = 0; i < len; ++i) {
+                        p_tmp[i] = w0 * c0[i] + w1 * c1[i];
                     }
-                    const std::int32_t p32 = static_cast<std::int32_t>(cm.w[0]) * c0 +
-                                             static_cast<std::int32_t>(cm.w[1]) * c1 +
-                                             static_cast<std::int32_t>(cm.w[2]) * c2;
-                    const auto num =
-                        static_cast<std::uint64_t>(static_cast<std::int64_t>(p32) - cand_pmin[j]) *
-                        static_cast<std::uint64_t>(kObliqueBins);
-                    const std::size_t b = static_cast<std::size_t>(active_divs[a].div(num));
-                    HistBin& hb = hists_out[a * kObliqueBins + b];
-                    hb.g += gt;
-                    hb.h += ht;
-                    hb.c += 1;
+                } else {
+                    const std::int16_t* c2 = col_ptrs[cm.uf[2]];
+                    const std::int32_t w2 = cm.w[2];
+                    for (std::size_t i = 0; i < len; ++i) {
+                        p_tmp[i] = w0 * c0[i] + w1 * c1[i] + w2 * c2[i];
+                    }
                 }
+                for (std::size_t i = 0; i < len; ++i) {
+                    const auto num =
+                        static_cast<std::uint64_t>(static_cast<std::int64_t>(p_tmp[i]) - pmin) *
+                        static_cast<std::uint64_t>(kObliqueBins);
+                    bins[i] = static_cast<std::uint8_t>(div.div(num));
+                }
+                accumulate_bins_no_nan(hist, bins, gm, hm, len);
+            } else {
+                const std::int16_t* c2 = col_ptrs[cm.uf[2]];
+                const std::int32_t w2 = cm.w[2];
+                for (std::size_t i = 0; i < len; ++i) {
+                    const std::int16_t x0 = c0[i];
+                    const std::int16_t x1 = c1[i];
+                    const std::int16_t x2 = c2[i];
+                    if (x0 == kQ16SignedNanCode || x1 == kQ16SignedNanCode ||
+                        x2 == kQ16SignedNanCode) {
+                        bins[i] = kMissingBinSentinel;
+                    } else {
+                        const std::int32_t p32 = w0 * x0 + w1 * x1 + w2 * x2;
+                        const auto num =
+                            static_cast<std::uint64_t>(static_cast<std::int64_t>(p32) - pmin) *
+                            static_cast<std::uint64_t>(kObliqueBins);
+                        bins[i] = static_cast<std::uint8_t>(div.div(num));
+                    }
+                }
+                accumulate_bins_with_nan(hist, bins, gm, hm, len);
             }
         }
     }
 }
 
 ObliqueSplitCandidate eval_oblique_i64_candidates(
-    const std::int16_t* codes, std::size_t p_num, const std::uint32_t* leaf_rows,
-    std::size_t n_leaf, const float* g_seq, const float* h_seq, double parent_g, double parent_h,
-    std::int32_t parent_c, const Params& params, std::size_t m, ObliqueScratch& scratch) noexcept {
+    const std::int16_t* codes, std::size_t n_rows, std::size_t leaf_code_offset,
+    bool is_contiguous_leaf, const std::uint32_t* leaf_rows, std::size_t n_leaf, const float* g_seq,
+    const float* h_seq, double parent_g, double parent_h, std::int32_t parent_c,
+    const Params& params, std::size_t m, ObliqueScratch& scratch) noexcept {
     const double lam = params.lambda_l2;
     const double min_h = params.min_sum_hessian_in_leaf;
     const std::int32_t min_c = params.min_data_in_leaf;
@@ -303,11 +450,11 @@ ObliqueSplitCandidate eval_oblique_i64_candidates(
         std::int32_t c_valid = 0;
 
         for (std::size_t t = 0; t < n_leaf; ++t) {
-            const std::int16_t* row = codes + static_cast<std::size_t>(leaf_rows[t]) * p_num;
+            const std::size_t r = is_contiguous_leaf ? (leaf_code_offset + t) : leaf_rows[t];
             std::int64_t acc = 0;
             bool missing = false;
             for (std::uint8_t q = 0; q < k; ++q) {
-                const std::int16_t c = row[fn[q]];
+                const std::int16_t c = codes[static_cast<std::size_t>(fn[q]) * n_rows + r];
                 if (c == kQ16SignedNanCode) {
                     missing = true;
                     break;
@@ -336,11 +483,11 @@ ObliqueSplitCandidate eval_oblique_i64_candidates(
         const std::int64_t range = pmax - pmin + 1;
 
         for (std::size_t t = 0; t < n_leaf; ++t) {
-            const std::int16_t* row = codes + static_cast<std::size_t>(leaf_rows[t]) * p_num;
+            const std::size_t r = is_contiguous_leaf ? (leaf_code_offset + t) : leaf_rows[t];
             std::int64_t acc = 0;
             bool missing = false;
             for (std::uint8_t q = 0; q < k; ++q) {
-                const std::int16_t c = row[fn[q]];
+                const std::int16_t c = codes[static_cast<std::size_t>(fn[q]) * n_rows + r];
                 if (c == kQ16SignedNanCode) {
                     missing = true;
                     break;
@@ -457,12 +604,16 @@ void ObliqueScratch::prepare(const Dataset& ds, const Params& params) {
     max_m = static_cast<std::size_t>(params.m_mult) * m0;
     cur_m = max_m;
     max_chunks = (ds.n_rows() + kDetChunkRows - 1U) / kDetChunkRows;
+    max_used_feats = std::max<std::size_t>(1U, std::min(ds.n_num_features(), 3U * max_m));
+    max_threads = static_cast<std::size_t>(std::max(resolve_num_threads(params.n_jobs), 1));
 
     const std::size_t needed_proj = std::min(ds.n_rows() * max_m, kObliqueScratchLimitInts);
     proj_buf.resize(needed_proj);
     hists.resize(max_m * static_cast<std::size_t>(kObliqueBins));
     const std::size_t wave_slots = (max_chunks > 1U) ? std::min(max_chunks, kWaveChunks) : 0U;
     wave_hists.resize(wave_slots * max_m * static_cast<std::size_t>(kObliqueBins));
+    thread_feat_buf.resize(max_threads * max_used_feats * kObliqueMicroBlock);
+    thread_col_ptrs.resize(max_threads * max_used_feats);
 
     cand_meta.resize(max_m);
     cand_k.resize(max_m);
@@ -470,6 +621,8 @@ void ObliqueScratch::prepare(const Dataset& ds, const Params& params) {
     cand_feat.resize(max_m * kObliqueMaxK);
     cand_w.resize(max_m * kObliqueMaxK);
     cand_has_nan.resize(max_m);
+    used_num_feats.resize(max_used_feats);
+    num_to_used.assign(ds.n_num_features(), -1);
 
     cand_pmin.resize(max_m);
     cand_pmax.resize(max_m);
@@ -511,9 +664,11 @@ void ObliqueScratch::restrict_pool(const std::vector<std::uint8_t>& selected,
     cur_m = std::min(max_m, static_cast<std::size_t>(params.m_mult) * m0);
 }
 
-ObliqueSplitCandidate find_best_oblique_split(const Dataset& ds, const std::uint32_t* leaf_rows,
-                                              std::size_t n_leaf, const float* g_seq,
-                                              const float* h_seq, double parent_g, double parent_h,
+ObliqueSplitCandidate find_best_oblique_split(const Dataset& ds, const std::int16_t* codes_base,
+                                              std::size_t leaf_code_offset, bool is_contiguous_leaf,
+                                              const std::uint32_t* leaf_rows, std::size_t n_leaf,
+                                              const float* g_seq, const float* h_seq,
+                                              double parent_g, double parent_h,
                                               std::int32_t parent_c, std::size_t tree_index,
                                               std::uint32_t node_id, const Params& params,
                                               ObliqueScratch& scratch) noexcept {
@@ -525,8 +680,8 @@ ObliqueSplitCandidate find_best_oblique_split(const Dataset& ds, const std::uint
     }
 
     const std::size_t m = scratch.cur_m;
-    const std::size_t p_num = ds.n_num_features();
-    const std::int16_t* codes = ds.codes_row_major().data();
+    const std::size_t n_rows = ds.n_rows();
+    const std::int16_t* codes = (codes_base != nullptr) ? codes_base : ds.codes_col_major().data();
 
     // Draw all m candidates deterministically from counter-based RNG.
     std::uint32_t picked[kObliqueMaxK] = {};
@@ -534,6 +689,7 @@ ObliqueSplitCandidate find_best_oblique_split(const Dataset& ds, const std::uint
     std::int16_t wq[kObliqueMaxK] = {};
     bool all_k_le3 = true;
     bool any_has_nan = false;
+    std::size_t n_used = 0U;
 
     for (std::size_t j = 0; j < m; ++j) {
         CounterRng rng(params.random_state, static_cast<std::uint64_t>(tree_index),
@@ -585,24 +741,211 @@ ObliqueSplitCandidate find_best_oblique_split(const Dataset& ds, const std::uint
             cm.w[0] = wq[0];
             cm.w[1] = wq[1];
             cm.w[2] = (k == 3) ? wq[2] : static_cast<std::int16_t>(0);
+            for (int q = 0; q < k; ++q) {
+                const std::uint32_t nf = cm.fn[q];
+                std::int32_t u = scratch.num_to_used[nf];
+                if (u < 0) {
+                    u = static_cast<std::int32_t>(n_used);
+                    scratch.num_to_used[nf] = u;
+                    scratch.used_num_feats[n_used++] = nf;
+                }
+                cm.uf[q] = static_cast<std::uint16_t>(u);
+            }
+            if (k == 2) {
+                cm.uf[2] = cm.uf[0];
+            }
         }
     }
 
+    for (std::size_t u = 0; u < n_used; ++u) {
+        scratch.num_to_used[scratch.used_num_feats[u]] = -1;
+    }
+
     if (!all_k_le3) {
-        return eval_oblique_i64_candidates(codes, p_num, leaf_rows, n_leaf, g_seq, h_seq, parent_g,
-                                           parent_h, parent_c, params, m, scratch);
+        return eval_oblique_i64_candidates(codes, n_rows, leaf_code_offset, is_contiguous_leaf,
+                                           leaf_rows, n_leaf, g_seq, h_seq, parent_g, parent_h,
+                                           parent_c, params, m, scratch);
     }
 
     const bool store_proj = (n_leaf * m <= scratch.proj_buf.size());
     std::int32_t* proj_buf = scratch.proj_buf.data();
     const std::size_t n_chunks = (n_leaf + kDetChunkRows - 1U) / kDetChunkRows;
     const ObliqueCandMeta* metas = scratch.cand_meta.data();
+    const std::uint32_t* used_feats = scratch.used_num_feats.data();
+    const int n_threads =
+        std::min(resolve_num_threads(params.n_jobs), static_cast<int>(scratch.max_threads));
 
     std::size_t n_active = 0U;
 
     if (n_chunks == 1U) {
-        pass1_chunk(codes, p_num, leaf_rows, 0U, n_leaf, g_seq, h_seq, m, metas, any_has_nan,
-                    store_proj, proj_buf, scratch.cand_pmin.data(), scratch.cand_pmax.data(),
+        if (store_proj && is_contiguous_leaf && (n_threads > 1) && (m >= 2U) &&
+            (n_leaf * m >= 32768U)) {
+            std::memset(static_cast<void*>(scratch.hists.data()), 0,
+                        m * static_cast<std::size_t>(kObliqueBins) * sizeof(HistBin));
+            std::fill(scratch.active_cands.begin(), scratch.active_cands.begin() + m, 0U);
+            const double lam = params.lambda_l2;
+            const double min_h = params.min_sum_hessian_in_leaf;
+            const std::int32_t min_c = params.min_data_in_leaf;
+            const double min_gain = params.min_gain_to_split;
+            const double parent_score = (parent_g * parent_g) / (parent_h + lam);
+
+#ifdef _OPENMP
+#pragma omp parallel for schedule(dynamic, 1) num_threads(n_threads)
+#endif
+            for (std::ptrdiff_t j_signed = 0; j_signed < static_cast<std::ptrdiff_t>(m);
+                 ++j_signed) {
+                const auto j = static_cast<std::size_t>(j_signed);
+                const ObliqueCandMeta& cm = metas[j];
+                if (cm.k < 2U) {
+                    continue;
+                }
+                const std::int16_t* c0 =
+                    codes + static_cast<std::size_t>(cm.fn[0]) * n_rows + leaf_code_offset;
+                const std::int16_t* c1 =
+                    codes + static_cast<std::size_t>(cm.fn[1]) * n_rows + leaf_code_offset;
+                const std::int32_t w0 = cm.w[0];
+                const std::int32_t w1 = cm.w[1];
+                std::int32_t* p_col = proj_buf + j * n_leaf;
+
+                std::int32_t pmin = std::numeric_limits<std::int32_t>::max();
+                std::int32_t pmax = std::numeric_limits<std::int32_t>::min();
+                std::int32_t vcnt = 0;
+                double gnan = 0.0;
+                double hnan = 0.0;
+                std::int32_t cnan = 0;
+
+                if (!any_has_nan || cm.has_nan == 0U) {
+                    if (cm.k == 2U) {
+                        for (std::size_t t = 0; t < n_leaf; ++t) {
+                            const std::int32_t p32 = w0 * c0[t] + w1 * c1[t];
+                            p_col[t] = p32;
+                            pmin = (p32 < pmin) ? p32 : pmin;
+                            pmax = (p32 > pmax) ? p32 : pmax;
+                        }
+                    } else {
+                        const std::int16_t* c2 =
+                            codes + static_cast<std::size_t>(cm.fn[2]) * n_rows + leaf_code_offset;
+                        const std::int32_t w2 = cm.w[2];
+                        for (std::size_t t = 0; t < n_leaf; ++t) {
+                            const std::int32_t p32 = w0 * c0[t] + w1 * c1[t] + w2 * c2[t];
+                            p_col[t] = p32;
+                            pmin = (p32 < pmin) ? p32 : pmin;
+                            pmax = (p32 > pmax) ? p32 : pmax;
+                        }
+                    }
+                    vcnt = static_cast<std::int32_t>(n_leaf);
+                } else {
+                    const std::int16_t* c2 =
+                        codes + static_cast<std::size_t>(cm.fn[2]) * n_rows + leaf_code_offset;
+                    const std::int32_t w2 = cm.w[2];
+                    for (std::size_t t = 0; t < n_leaf; ++t) {
+                        const std::int16_t x0 = c0[t];
+                        const std::int16_t x1 = c1[t];
+                        const std::int16_t x2 = c2[t];
+                        if (x0 == kQ16SignedNanCode || x1 == kQ16SignedNanCode ||
+                            x2 == kQ16SignedNanCode) {
+                            p_col[t] = kMissingProjSentinel;
+                            gnan += static_cast<double>(g_seq[t]);
+                            hnan += static_cast<double>(h_seq[t]);
+                            ++cnan;
+                        } else {
+                            const std::int32_t p32 = w0 * x0 + w1 * x1 + w2 * x2;
+                            p_col[t] = p32;
+                            pmin = (p32 < pmin) ? p32 : pmin;
+                            pmax = (p32 > pmax) ? p32 : pmax;
+                            ++vcnt;
+                        }
+                    }
+                }
+
+                if (vcnt < 1 || (pmin >= pmax && !(pmin == pmax && cnan > 0))) {
+                    continue;
+                }
+
+                const std::int64_t range =
+                    static_cast<std::int64_t>(pmax) - static_cast<std::int64_t>(pmin) + 1;
+                FastDiv64 div;
+                div.prepare(static_cast<std::uint64_t>(range));
+                HistBin* hist = scratch.hists.data() + j * static_cast<std::size_t>(kObliqueBins);
+                std::uint8_t bins[kObliqueMicroBlock];
+                const std::int64_t pmin64 = pmin;
+
+                for (std::size_t mb0 = 0; mb0 < n_leaf; mb0 += kObliqueMicroBlock) {
+                    const std::size_t len = std::min(kObliqueMicroBlock, n_leaf - mb0);
+                    const std::int32_t* pm = p_col + mb0;
+                    const float* gm = g_seq + mb0;
+                    const float* hm = h_seq + mb0;
+                    if (cm.has_nan == 0U) {
+                        for (std::size_t i = 0; i < len; ++i) {
+                            const auto num = static_cast<std::uint64_t>(
+                                                 static_cast<std::int64_t>(pm[i]) - pmin64) *
+                                             static_cast<std::uint64_t>(kObliqueBins);
+                            bins[i] = static_cast<std::uint8_t>(div.div(num));
+                        }
+                        accumulate_bins_no_nan(hist, bins, gm, hm, len);
+                    } else {
+                        for (std::size_t i = 0; i < len; ++i) {
+                            const std::int32_t p32 = pm[i];
+                            if (p32 == kMissingProjSentinel) {
+                                bins[i] = kMissingBinSentinel;
+                            } else {
+                                const auto num = static_cast<std::uint64_t>(
+                                                     static_cast<std::int64_t>(p32) - pmin64) *
+                                                 static_cast<std::uint64_t>(kObliqueBins);
+                                bins[i] = static_cast<std::uint8_t>(div.div(num));
+                            }
+                        }
+                        accumulate_bins_with_nan(hist, bins, gm, hm, len);
+                    }
+                }
+
+                scratch.cand_pmin[j] = pmin;
+                scratch.cand_g_nan[j] = gnan;
+                scratch.cand_h_nan[j] = hnan;
+                scratch.cand_c_nan[j] = cnan;
+                scratch.active_ranges[j] = range;
+                scratch.active_cands[j] = 1U;
+            }
+
+            for (std::size_t j = 0; j < m; ++j) {
+                if (scratch.active_cands[j] == 0U) {
+                    continue;
+                }
+                const HistBin* hist =
+                    scratch.hists.data() + j * static_cast<std::size_t>(kObliqueBins);
+                double cand_best_gain = best.gain;
+                std::int64_t cand_thr = 0;
+                bool cand_nan_left = true;
+                bool found = false;
+                scan_oblique_hist(
+                    hist, parent_g, parent_h, parent_c, scratch.cand_g_nan[j],
+                    scratch.cand_h_nan[j], scratch.cand_c_nan[j], lam, min_h, min_c, min_gain,
+                    parent_score, static_cast<std::int64_t>(scratch.cand_pmin[j]),
+                    scratch.active_ranges[j], cand_best_gain, cand_thr, cand_nan_left, found);
+                if (found) {
+                    best.gain = cand_best_gain;
+                    const std::uint8_t k = scratch.cand_k[j];
+                    best.k = k;
+                    const std::uint32_t* fg = scratch.cand_feat.data() + j * kObliqueMaxK;
+                    const std::uint32_t* fn = scratch.cand_num_idx.data() + j * kObliqueMaxK;
+                    const std::int16_t* w = scratch.cand_w.data() + j * kObliqueMaxK;
+                    for (std::uint8_t q = 0; q < k; ++q) {
+                        best.features[q] = fg[q];
+                        best.num_indices[q] = fn[q];
+                        best.weights[q] = w[q];
+                    }
+                    best.threshold = cand_thr;
+                    best.nan_go_left = cand_nan_left;
+                    best.valid = true;
+                }
+            }
+            return best;
+        }
+
+        pass1_chunk(codes, n_rows, leaf_code_offset, leaf_rows, n_leaf, is_contiguous_leaf, 0U,
+                    n_leaf, g_seq, h_seq, m, metas, n_used, used_feats, any_has_nan, store_proj,
+                    proj_buf, scratch.thread_feat_buf.data(), scratch.thread_col_ptrs.data(),
+                    scratch.cand_pmin.data(), scratch.cand_pmax.data(),
                     scratch.cand_valid_cnt.data(), scratch.cand_g_nan.data(),
                     scratch.cand_h_nan.data(), scratch.cand_c_nan.data());
 
@@ -625,11 +968,12 @@ ObliqueSplitCandidate find_best_oblique_split(const Dataset& ds, const std::uint
         HistBin* hists = scratch.hists.data();
         std::memset(static_cast<void*>(hists), 0,
                     n_active * static_cast<std::size_t>(kObliqueBins) * sizeof(HistBin));
-        pass2_chunk(codes, p_num, leaf_rows, 0U, n_leaf, g_seq, h_seq, m, metas, store_proj,
-                    proj_buf, n_active, scratch.active_cands.data(), scratch.cand_pmin.data(),
+        pass2_chunk(codes, n_rows, leaf_code_offset, leaf_rows, n_leaf, is_contiguous_leaf, 0U,
+                    n_leaf, g_seq, h_seq, metas, n_used, used_feats, store_proj, proj_buf,
+                    scratch.thread_feat_buf.data(), scratch.thread_col_ptrs.data(), n_active,
+                    scratch.active_cands.data(), scratch.cand_pmin.data(),
                     scratch.active_divs.data(), hists);
     } else {
-        const int n_threads = resolve_num_threads(params.n_jobs);
         const bool use_omp = (n_threads > 1) && (n_leaf * m >= 50000U);
 
         // Pass 1 across deterministic fixed row chunks.
@@ -641,20 +985,33 @@ ObliqueSplitCandidate find_best_oblique_split(const Dataset& ds, const std::uint
                 const auto cu = static_cast<std::size_t>(c);
                 const std::size_t r0 = cu * kDetChunkRows;
                 const std::size_t r1 = std::min(r0 + kDetChunkRows, n_leaf);
+#ifdef _OPENMP
+                const auto tid = static_cast<std::size_t>(omp_get_thread_num());
+#else
+                const std::size_t tid = 0U;
+#endif
+                std::int16_t* feat_tile = scratch.thread_feat_buf.data() +
+                                          tid * scratch.max_used_feats * kObliqueMicroBlock;
+                const std::int16_t** col_ptrs =
+                    scratch.thread_col_ptrs.data() + tid * scratch.max_used_feats;
                 pass1_chunk(
-                    codes, p_num, leaf_rows, r0, r1, g_seq, h_seq, m, metas, any_has_nan,
-                    store_proj, proj_buf, scratch.chunk_pmin.data() + cu * m,
+                    codes, n_rows, leaf_code_offset, leaf_rows, n_leaf, is_contiguous_leaf, r0, r1,
+                    g_seq, h_seq, m, metas, n_used, used_feats, any_has_nan, store_proj, proj_buf,
+                    feat_tile, col_ptrs, scratch.chunk_pmin.data() + cu * m,
                     scratch.chunk_pmax.data() + cu * m, scratch.chunk_valid_cnt.data() + cu * m,
                     scratch.chunk_g_nan.data() + cu * m, scratch.chunk_h_nan.data() + cu * m,
                     scratch.chunk_c_nan.data() + cu * m);
             }
         } else {
+            std::int16_t* feat_tile = scratch.thread_feat_buf.data();
+            const std::int16_t** col_ptrs = scratch.thread_col_ptrs.data();
             for (std::size_t c = 0; c < n_chunks; ++c) {
                 const std::size_t r0 = c * kDetChunkRows;
                 const std::size_t r1 = std::min(r0 + kDetChunkRows, n_leaf);
-                pass1_chunk(codes, p_num, leaf_rows, r0, r1, g_seq, h_seq, m, metas, any_has_nan,
-                            store_proj, proj_buf, scratch.chunk_pmin.data() + c * m,
-                            scratch.chunk_pmax.data() + c * m,
+                pass1_chunk(codes, n_rows, leaf_code_offset, leaf_rows, n_leaf, is_contiguous_leaf,
+                            r0, r1, g_seq, h_seq, m, metas, n_used, used_feats, any_has_nan,
+                            store_proj, proj_buf, feat_tile, col_ptrs,
+                            scratch.chunk_pmin.data() + c * m, scratch.chunk_pmax.data() + c * m,
                             scratch.chunk_valid_cnt.data() + c * m,
                             scratch.chunk_g_nan.data() + c * m, scratch.chunk_h_nan.data() + c * m,
                             scratch.chunk_c_nan.data() + c * m);
@@ -713,6 +1070,16 @@ ObliqueSplitCandidate find_best_oblique_split(const Dataset& ds, const std::uint
 #pragma omp parallel num_threads(n_threads)
 #endif
             {
+#ifdef _OPENMP
+                const auto tid = static_cast<std::size_t>(omp_get_thread_num());
+#else
+                const std::size_t tid = 0U;
+#endif
+                std::int16_t* feat_tile = scratch.thread_feat_buf.data() +
+                                          tid * scratch.max_used_feats * kObliqueMicroBlock;
+                const std::int16_t** col_ptrs =
+                    scratch.thread_col_ptrs.data() + tid * scratch.max_used_feats;
+
                 for (std::size_t w_base = 0; w_base < n_chunks; w_base += kWaveChunks) {
                     const std::size_t w_len = std::min(kWaveChunks, n_chunks - w_base);
 #ifdef _OPENMP
@@ -725,9 +1092,11 @@ ObliqueSplitCandidate find_best_oblique_split(const Dataset& ds, const std::uint
                         const std::size_t r1 = std::min(r0 + kDetChunkRows, n_leaf);
                         HistBin* wh = wave_buf + wu * active_bins;
                         std::memset(static_cast<void*>(wh), 0, active_bins * sizeof(HistBin));
-                        pass2_chunk(codes, p_num, leaf_rows, r0, r1, g_seq, h_seq, m, metas,
-                                    store_proj, proj_buf, n_active, scratch.active_cands.data(),
-                                    scratch.cand_pmin.data(), scratch.active_divs.data(), wh);
+                        pass2_chunk(codes, n_rows, leaf_code_offset, leaf_rows, n_leaf,
+                                    is_contiguous_leaf, r0, r1, g_seq, h_seq, metas, n_used,
+                                    used_feats, store_proj, proj_buf, feat_tile, col_ptrs, n_active,
+                                    scratch.active_cands.data(), scratch.cand_pmin.data(),
+                                    scratch.active_divs.data(), wh);
                     }
 
                     if (n_active >= 4U) {
@@ -764,6 +1133,8 @@ ObliqueSplitCandidate find_best_oblique_split(const Dataset& ds, const std::uint
                 }
             }
         } else {
+            std::int16_t* feat_tile = scratch.thread_feat_buf.data();
+            const std::int16_t** col_ptrs = scratch.thread_col_ptrs.data();
             for (std::size_t w_base = 0; w_base < n_chunks; w_base += kWaveChunks) {
                 const std::size_t w_len = std::min(kWaveChunks, n_chunks - w_base);
                 for (std::size_t w = 0; w < w_len; ++w) {
@@ -771,9 +1142,11 @@ ObliqueSplitCandidate find_best_oblique_split(const Dataset& ds, const std::uint
                     const std::size_t r0 = c * kDetChunkRows;
                     const std::size_t r1 = std::min(r0 + kDetChunkRows, n_leaf);
                     std::memset(static_cast<void*>(wave_buf), 0, active_bins * sizeof(HistBin));
-                    pass2_chunk(codes, p_num, leaf_rows, r0, r1, g_seq, h_seq, m, metas, store_proj,
-                                proj_buf, n_active, scratch.active_cands.data(),
-                                scratch.cand_pmin.data(), scratch.active_divs.data(), wave_buf);
+                    pass2_chunk(codes, n_rows, leaf_code_offset, leaf_rows, n_leaf,
+                                is_contiguous_leaf, r0, r1, g_seq, h_seq, metas, n_used, used_feats,
+                                store_proj, proj_buf, feat_tile, col_ptrs, n_active,
+                                scratch.active_cands.data(), scratch.cand_pmin.data(),
+                                scratch.active_divs.data(), wave_buf);
                     for (std::size_t k = 0; k < active_bins; ++k) {
                         hists[k].g += wave_buf[k].g;
                         hists[k].h += wave_buf[k].h;

@@ -31,11 +31,22 @@ struct TreeWorkspace {
     std::vector<float> g_ordered;
     std::vector<float> h_ordered;
 
+    // Leaf-contiguous working buffers for large datasets (bagging_fraction == 1.0): eliminates
+    // scattered row_indices gathers across tree depth while preserving exact row ordering.
+    AlignedBuffer<float> work_g;
+    AlignedBuffer<float> work_h;
+    AlignedBuffer<float> work_f32_tmp_l;
+    AlignedBuffer<float> work_f32_tmp_r;
+    AlignedBuffer<std::int16_t> work_codes;
+    AlignedBuffer<std::int16_t> work_col_tmp;
+    std::size_t work_code_threads = 1;
+
     // feature_fraction: full active lists (the layout's lists are narrowed per tree).
     std::vector<std::uint32_t> base_active_features;
     std::vector<std::uint32_t> base_active_num_features;
     std::vector<std::uint32_t> base_active_cat_features;
     std::vector<std::uint8_t> feature_selected;
+    std::vector<std::uint32_t> feature_perm;
     // bagging_fraction: rows outside the bag of the current tree, and feature -> numeric index.
     std::vector<std::uint32_t> oob_rows;
     std::vector<std::size_t> feature_to_num_idx;

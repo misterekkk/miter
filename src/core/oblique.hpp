@@ -17,7 +17,8 @@ namespace miter {
 inline constexpr int kObliqueBins = 64;
 inline constexpr int kObliqueWeightScale = 16384; // 2^14
 inline constexpr int kObliqueMaxK = 8;
-inline constexpr std::size_t kObliqueScratchLimitInts = 2'000'000U; // ~8 MB
+inline constexpr std::size_t kObliqueScratchLimitInts = 8'000'000U; // ~32 MB
+inline constexpr std::size_t kObliqueMicroBlock = 256U;
 
 std::int16_t round_half_away_i16(double v) noexcept;
 bool quantize_oblique_weights(const double* w, int k, std::int16_t* wq) noexcept;
@@ -48,6 +49,7 @@ struct ObliqueSplitCandidate {
 struct ObliqueCandMeta {
     std::uint32_t fn[3] = {};
     std::int16_t w[3] = {};
+    std::uint16_t uf[3] = {};
     std::uint8_t k = 0;
     std::uint8_t has_nan = 0;
 };
@@ -63,10 +65,14 @@ struct ObliqueScratch {
     std::vector<std::uint32_t> all_eligible_features;
     std::vector<std::uint32_t> all_eligible_num_indices;
     std::size_t max_chunks = 0;
+    std::size_t max_used_feats = 0;
+    std::size_t max_threads = 1;
 
     AlignedBuffer<std::int32_t> proj_buf;
     AlignedBuffer<HistBin> hists;
     AlignedBuffer<HistBin> wave_hists;
+    AlignedBuffer<std::int16_t> thread_feat_buf;
+    std::vector<const std::int16_t*> thread_col_ptrs;
 
     std::vector<ObliqueCandMeta> cand_meta;
     std::vector<std::uint8_t> cand_k;
@@ -74,6 +80,8 @@ struct ObliqueScratch {
     std::vector<std::uint32_t> cand_feat;
     std::vector<std::int16_t> cand_w;
     std::vector<std::uint8_t> cand_has_nan;
+    std::vector<std::uint32_t> used_num_feats;
+    std::vector<std::int32_t> num_to_used;
 
     std::vector<std::int32_t> cand_pmin;
     std::vector<std::int32_t> cand_pmax;
@@ -101,9 +109,11 @@ struct ObliqueScratch {
     void restrict_pool(const std::vector<std::uint8_t>& selected, const Params& params);
 };
 
-ObliqueSplitCandidate find_best_oblique_split(const Dataset& ds, const std::uint32_t* leaf_rows,
-                                              std::size_t n_leaf, const float* g_seq,
-                                              const float* h_seq, double parent_g, double parent_h,
+ObliqueSplitCandidate find_best_oblique_split(const Dataset& ds, const std::int16_t* codes_base,
+                                              std::size_t leaf_code_offset, bool is_contiguous_leaf,
+                                              const std::uint32_t* leaf_rows, std::size_t n_leaf,
+                                              const float* g_seq, const float* h_seq,
+                                              double parent_g, double parent_h,
                                               std::int32_t parent_c, std::size_t tree_index,
                                               std::uint32_t node_id, const Params& params,
                                               ObliqueScratch& scratch) noexcept;
