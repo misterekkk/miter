@@ -33,10 +33,9 @@ os.environ.setdefault("NUMBA_NUM_THREADS", "1")
 HISTREE_SRC = Path("/Users/kacperpiotrowski/Studia/Projekt/histree/src")
 sys.path.insert(0, str(HISTREE_SRC))
 
+import check_m3_parity_brazil_pol as c  # noqa: E402
 import numpy as np  # noqa: E402
 from sklearn.model_selection import train_test_split  # noqa: E402
-
-import check_m3_parity_brazil_pol as c  # noqa: E402
 
 RAW = c.RAW
 NAME = "Brazilian_houses"
@@ -128,10 +127,11 @@ def stats(a, b):
 def agg() -> None:
     import platform
     import subprocess
+
+    import miter
     import numba
     import scipy
     import sklearn
-    import miter
     d0 = json.loads((RAW / "m3_parity_Brazilian_houses_histree.json").read_text())["rows"]
     d1 = json.loads((RAW / "m3_parity_Brazilian_houses_miter.json").read_text())["rows"]
     data = {"orig": d0, "miter": d1}
