@@ -85,6 +85,7 @@ add_library(miter STATIC
     src/data/quantizer.cpp
     src/model/evaluator.cpp
     src/model/json_io.cpp
+    src/model/lignum_export.cpp
 )
 
 set_target_properties(miter PROPERTIES
