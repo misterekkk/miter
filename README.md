@@ -14,7 +14,7 @@ git -C extern/lignum checkout -b miter-integration
 If `lignum_patches/` contains patches, apply them inside `extern/lignum/`:
 
 ```bash
-git -C extern/lignum am ../../lignum_patches/*.patch
+git -C extern/lignum am "$PWD"/lignum_patches/*.patch
 ```
 
 ## Build & Test (C++)

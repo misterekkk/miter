@@ -29,7 +29,7 @@ jobs:
           git clone --branch v0.4.3 https://github.com/misterekkk/lignum extern/lignum
           git -C extern/lignum checkout -b miter-integration
           if compgen -G "lignum_patches/*.patch" > /dev/null; then
-            git -C extern/lignum -c user.name="CI" -c user.email="ci@example.invalid" am ../../lignum_patches/*.patch
+            git -C extern/lignum -c user.name="CI" -c user.email="ci@example.invalid" am "$PWD"/lignum_patches/*.patch
           fi
 
       - name: Configure
@@ -53,7 +53,7 @@ jobs:
           git clone --branch v0.4.3 https://github.com/misterekkk/lignum extern/lignum
           git -C extern/lignum checkout -b miter-integration
           if compgen -G "lignum_patches/*.patch" > /dev/null; then
-            git -C extern/lignum -c user.name="CI" -c user.email="ci@example.invalid" am ../../lignum_patches/*.patch
+            git -C extern/lignum -c user.name="CI" -c user.email="ci@example.invalid" am "$PWD"/lignum_patches/*.patch
           fi
 
       - name: Configure
@@ -93,7 +93,7 @@ jobs:
           git clone --branch v0.4.3 https://github.com/misterekkk/lignum extern/lignum
           git -C extern/lignum checkout -b miter-integration
           if compgen -G "lignum_patches/*.patch" > /dev/null; then
-            git -C extern/lignum -c user.name="CI" -c user.email="ci@example.invalid" am ../../lignum_patches/*.patch
+            git -C extern/lignum -c user.name="CI" -c user.email="ci@example.invalid" am "$PWD"/lignum_patches/*.patch
           fi
 
       - name: Install package
@@ -118,7 +118,7 @@ jobs:
           git clone --branch v0.4.3 https://github.com/misterekkk/lignum extern/lignum
           git -C extern/lignum checkout -b miter-integration
           if compgen -G "lignum_patches/*.patch" > /dev/null; then
-            git -C extern/lignum -c user.name="CI" -c user.email="ci@example.invalid" am ../../lignum_patches/*.patch
+            git -C extern/lignum -c user.name="CI" -c user.email="ci@example.invalid" am "$PWD"/lignum_patches/*.patch
           fi
 
       - name: Install package with sanitizers
@@ -156,7 +156,7 @@ jobs:
           git clone --branch v0.4.3 https://github.com/misterekkk/lignum extern/lignum
           git -C extern/lignum checkout -b miter-integration
           if compgen -G "lignum_patches/*.patch" > /dev/null; then
-            git -C extern/lignum -c user.name="CI" -c user.email="ci@example.invalid" am ../../lignum_patches/*.patch
+            git -C extern/lignum -c user.name="CI" -c user.email="ci@example.invalid" am "$PWD"/lignum_patches/*.patch
           fi
 
       - name: Install lint tools
@@ -207,7 +207,7 @@ jobs:
           git clone --branch v0.4.3 https://github.com/misterekkk/lignum extern/lignum
           git -C extern/lignum checkout -b miter-integration
           if compgen -G "lignum_patches/*.patch" > /dev/null; then
-            git -C extern/lignum -c user.name="CI" -c user.email="ci@example.invalid" am ../../lignum_patches/*.patch
+            git -C extern/lignum -c user.name="CI" -c user.email="ci@example.invalid" am "$PWD"/lignum_patches/*.patch
           fi
 
       - name: Build wheel
