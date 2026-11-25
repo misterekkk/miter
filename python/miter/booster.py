@@ -269,6 +269,7 @@ class _BaseMiterEstimator:
             params,
         )
         self._model = result.model
+        self._lignum_cache: dict[int, _core.LignumPredictor | None] = {}
         self.best_iteration_ = result.model.best_iteration
         self.n_features_in_ = result.model.n_features
         self.feature_names_in_ = np.array(result.model.feature_names, dtype=object)
@@ -279,9 +280,29 @@ class _BaseMiterEstimator:
         self._train_scores_ = result.final_train_scores()
         return result
 
+    def _lignum(self, n_iter: int) -> _core.LignumPredictor | None:
+        """The lignum model for `n_iter` trees (0 = best iteration), built once per fitted model.
+
+        None when lignum cannot hold the model (oblique splits with k_proj > 3): miter's own
+        evaluator predicts it then, with the same results.
+        """
+        model = self._check_fitted()
+        cache: dict[int, _core.LignumPredictor | None] | None = getattr(self, "_lignum_cache", None)
+        if cache is None:
+            cache = {}
+            self._lignum_cache = cache
+        if n_iter not in cache:
+            try:
+                cache[n_iter] = _core.LignumPredictor(model, n_iter)
+            except ValueError:
+                cache[n_iter] = None
+        return cache[n_iter]
+
     def _predict_raw(self, X: Any, num_iteration: int | None = None) -> NDArray[np.float64]:
+        """Raw scores through lignum (M6); bitwise equal to miter's own evaluator."""
         model = self._check_fitted()
         n_iter = 0 if num_iteration is None else int(num_iteration)
+        predictor = self._lignum(n_iter)
         fitted_on_df = getattr(self, "_fitted_on_dataframe", False)
         if any(model.is_categorical):
             n_rows, num_cols, cat_vocabs, cat_indices = _extract_mixed_predict_inputs(
@@ -289,23 +310,27 @@ class _BaseMiterEstimator:
                 model,
                 fitted_on_dataframe=fitted_on_df,
             )
-            return _core.predict_raw_mixed(
-                model,
-                n_rows,
-                num_cols,
-                cat_vocabs,
-                cat_indices,
-                n_iter,
-            )
+            if predictor is None:
+                return _core.predict_raw_mixed(model, n_rows, num_cols, cat_vocabs, cat_indices, n_iter)
+            return predictor.predict_raw_mixed(n_rows, num_cols, cat_vocabs, cat_indices)
         arr = _to_numeric_matrix_view(
             X,
             expected_features=model.n_features,
             fitted_on_dataframe=fitted_on_df,
             expected_feature_names=model.feature_names,
         )
+        if predictor is None:
+            if arr.dtype == np.float32:
+                return _core.predict_raw_f32(model, cast(NDArray[np.float32], arr), n_iter)
+            return _core.predict_raw_f64(model, cast(NDArray[np.float64], arr), n_iter)
         if arr.dtype == np.float32:
-            return _core.predict_raw_f32(model, cast(NDArray[np.float32], arr), n_iter)
-        return _core.predict_raw_f64(model, cast(NDArray[np.float64], arr), n_iter)
+            return predictor.predict_raw_f32(cast(NDArray[np.float32], arr))
+        return predictor.predict_raw_f64(cast(NDArray[np.float64], arr))
+
+    def __getstate__(self) -> dict[str, Any]:
+        state = self.__dict__.copy()
+        state.pop("_lignum_cache", None)  # rebuilt on the next prediction
+        return state
 
     def save_model(self, path: str) -> None:
         model = self._check_fitted()
@@ -338,6 +363,7 @@ class _BaseMiterEstimator:
             random_state=p.random_state,
         )
         est._model = model
+        est._lignum_cache = {}
         est._fitted_on_dataframe = False
         est.best_iteration_ = model.best_iteration
         est.n_features_in_ = model.n_features
@@ -464,32 +490,9 @@ class MiterClassifier(_BaseMiterEstimator):
         return self
 
     def predict_proba(self, X: Any, num_iteration: int | None = None) -> NDArray[np.float64]:
-        model = self._check_fitted()
-        n_iter = 0 if num_iteration is None else int(num_iteration)
-        fitted_on_df = getattr(self, "_fitted_on_dataframe", False)
-        if any(model.is_categorical):
-            n_rows, num_cols, cat_vocabs, cat_indices = _extract_mixed_predict_inputs(
-                X,
-                model,
-                fitted_on_dataframe=fitted_on_df,
-            )
-            return _core.predict_proba_mixed(
-                model,
-                n_rows,
-                num_cols,
-                cat_vocabs,
-                cat_indices,
-                n_iter,
-            )
-        arr = _to_numeric_matrix_view(
-            X,
-            expected_features=model.n_features,
-            fitted_on_dataframe=fitted_on_df,
-            expected_feature_names=model.feature_names,
-        )
-        if arr.dtype == np.float32:
-            return _core.predict_proba_f32(model, cast(NDArray[np.float32], arr), n_iter)
-        return _core.predict_proba_f64(model, cast(NDArray[np.float64], arr), n_iter)
+        # Raw scores through lignum, then miter's sigmoid (bitwise equal to miter's evaluator).
+        raw = self._predict_raw(X, num_iteration=num_iteration)
+        return _core.proba_from_raw(np.ascontiguousarray(raw, dtype=np.float64))
 
     def predict(self, X: Any, num_iteration: int | None = None) -> NDArray[Any]:
         proba = self.predict_proba(X, num_iteration=num_iteration)

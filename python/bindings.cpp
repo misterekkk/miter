@@ -22,6 +22,7 @@
 #include "data/dataset.hpp"
 #include "model/evaluator.hpp"
 #include "model/json_io.hpp"
+#include "model/lignum_bridge.hpp"
 
 namespace nb = nanobind;
 
@@ -383,6 +384,56 @@ nb::ndarray<nb::numpy, double, nb::ndim<2>> predict_proba_mixed_py(
     return vec_to_ndarray_2d(std::move(proba), n_rows, 2U);
 }
 
+// Prediction through lignum (M6): the lignum model is built once from a miter model; raw scores
+// equal miter's Evaluator bit for bit (miter/tests: test_lignum_export.cpp,
+// test_lignum_predict.py).
+struct LignumPredictor {
+    miter::Model model; // metadata (feature kinds, categories) for the inputs
+    lignum::Model lm;
+    int n_jobs = 1;
+};
+
+template <typename FloatT>
+nb::ndarray<nb::numpy, double, nb::ndim<1>>
+lignum_predict_raw_py(const LignumPredictor& lp,
+                      const nb::ndarray<const FloatT, nb::ndim<2>, nb::device::cpu>& arr) {
+    const std::size_t n_rows = arr.shape(0);
+    if (arr.shape(1) != lp.model.n_features) {
+        throw std::invalid_argument("Feature count mismatch in predict");
+    }
+    auto views = views_from_2d(arr);
+    std::vector<double> out(n_rows);
+    {
+        nb::gil_scoped_release release;
+        miter::lignum_predict_raw(lp.lm, lp.model, n_rows, views, {}, out.data(), lp.n_jobs);
+    }
+    return vec_to_ndarray_1d(std::move(out));
+}
+
+nb::ndarray<nb::numpy, double, nb::ndim<1>> lignum_predict_raw_mixed_py(
+    const LignumPredictor& lp, std::size_t n_rows, const nb::list& num_cols,
+    std::vector<std::vector<std::string>> cat_vocabs,
+    const std::vector<nb::ndarray<const std::int32_t, nb::ndim<1>, nb::c_contig, nb::device::cpu>>&
+        cat_indices) {
+    auto num_views = extract_num_col_views(num_cols, n_rows);
+    auto cat_views = extract_cat_col_views(std::move(cat_vocabs), cat_indices, n_rows);
+    std::vector<double> out(n_rows);
+    {
+        nb::gil_scoped_release release;
+        miter::lignum_predict_raw(lp.lm, lp.model, n_rows, num_views, cat_views, out.data(),
+                                  lp.n_jobs);
+    }
+    return vec_to_ndarray_1d(std::move(out));
+}
+
+nb::ndarray<nb::numpy, double, nb::ndim<2>> proba_from_raw_py(
+    const nb::ndarray<const double, nb::ndim<1>, nb::c_contig, nb::device::cpu>& raw) {
+    const std::size_t n_rows = raw.shape(0);
+    std::vector<double> proba(n_rows * 2U);
+    miter::Evaluator::predict_proba_from_raw(raw.data(), n_rows, proba.data());
+    return vec_to_ndarray_2d(std::move(proba), n_rows, 2U);
+}
+
 } // namespace
 
 NB_MODULE(_core, m) {
@@ -574,6 +625,25 @@ NB_MODULE(_core, m) {
           nb::arg("y_valid") = nb::none(), nb::arg("valid_sample_weight") = nb::none(),
           nb::arg("params"));
 
+    nb::class_<LignumPredictor>(m, "LignumPredictor")
+        .def(
+            "__init__",
+            [](LignumPredictor* self, const miter::Model& model, std::size_t num_iteration) {
+                new (self) LignumPredictor{model, miter::to_lignum(model, num_iteration, true),
+                                           model.params.n_jobs};
+            },
+            nb::arg("model"), nb::arg("num_iteration") = 0)
+        .def_prop_ro("binned", [](const LignumPredictor& lp) { return lp.lm.binned != nullptr; })
+        .def_prop_ro("n_oblique", [](const LignumPredictor& lp) { return lp.lm.n_oblique; })
+        .def(
+            "save", [](const LignumPredictor& lp, const std::string& path) { lp.lm.save(path); },
+            nb::arg("path"))
+        .def("predict_raw_f64", &lignum_predict_raw_py<double>, nb::arg("arr").noconvert())
+        .def("predict_raw_f32", &lignum_predict_raw_py<float>, nb::arg("arr").noconvert())
+        .def("predict_raw_mixed", &lignum_predict_raw_mixed_py, nb::arg("n_rows"),
+             nb::arg("num_cols"), nb::arg("cat_vocabs"), nb::arg("cat_indices"));
+    m.def("proba_from_raw", &proba_from_raw_py, nb::arg("raw"),
+          "Class probabilities [1 - p, p] from raw scores (miter's sigmoid).");
     m.def("predict_raw_f64", &predict_raw_py<double>, nb::arg("model"), nb::arg("arr").noconvert(),
           nb::arg("num_iteration") = 0);
     m.def("predict_raw_f32", &predict_raw_py<float>, nb::arg("model"), nb::arg("arr").noconvert(),

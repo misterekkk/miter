@@ -156,7 +156,7 @@ if(SKBUILD)
 
     nanobind_add_module(_core STABLE_ABI python/bindings.cpp)
     target_include_directories(_core PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
-    target_link_libraries(_core PRIVATE miter)
+    target_link_libraries(_core PRIVATE miter lignum)
     if(MSVC)
         target_compile_options(_core PRIVATE /fp:precise /W4)
     else()
