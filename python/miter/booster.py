@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import warnings
 from collections.abc import Sequence
 from typing import Any, cast
 
@@ -9,12 +10,115 @@ import numpy as np
 from numpy.typing import NDArray
 
 from miter import _core
+
+try:  # scikit-learn is optional: with it the estimators are real sklearn estimators
+    from sklearn.base import BaseEstimator as _SklearnBase
+    from sklearn.base import ClassifierMixin as _ClassifierMixin
+    from sklearn.base import RegressorMixin as _RegressorMixin
+
+    _HAS_SKLEARN = True
+except ImportError:  # pragma: no cover - exercised only without scikit-learn
+    _HAS_SKLEARN = False
+
+    class _SklearnBase:  # type: ignore[no-redef]
+        pass
+
+    class _ClassifierMixin:  # type: ignore[no-redef]
+        pass
+
+    class _RegressorMixin:  # type: ignore[no-redef]
+        pass
+
+try:
+    from sklearn.exceptions import DataConversionWarning as _DataConversionWarning
+    from sklearn.exceptions import NotFittedError
+except ImportError:  # pragma: no cover
+
+    class NotFittedError(ValueError, AttributeError):  # type: ignore[no-redef]
+        """Raised when predicting with an estimator that has not been fitted."""
+
+    class _DataConversionWarning(UserWarning):  # type: ignore[no-redef]
+        pass
+
+
 from miter.data import (
     Dataset,
     _factorize_categorical_values,
     _is_pandas_dataframe,
     _prepare_numeric_1d,
 )
+
+
+def _check_input_X(X: Any, *, name: str) -> tuple[int, int]:
+    """sklearn-style checks shared by fit and predict; returns (n_rows, n_features).
+
+    The input itself is not converted here (DataFrames keep their columns and categoricals).
+    """
+    if X is None:
+        raise ValueError(f"{name} requires X to be passed, but X is None")
+    module = type(X).__module__
+    if module.startswith("scipy.sparse") or hasattr(X, "tocsr"):
+        raise TypeError(
+            f"Sparse input is not supported by {name}; convert it with X.toarray() first"
+        )
+    if _is_pandas_dataframe(X):
+        if any(str(dt).startswith("complex") for dt in X.dtypes):
+            raise ValueError("Complex data not supported")
+        shape = tuple(X.shape)
+    else:
+        arr = np.asarray(X)
+        if np.iscomplexobj(arr):
+            raise ValueError("Complex data not supported")
+        if arr.ndim != 2:
+            raise ValueError(
+                f"Expected 2D array, got {arr.ndim}D array instead. Reshape your data either "
+                "using array.reshape(-1, 1) if your data has a single feature or "
+                "array.reshape(1, -1) if it contains a single sample."
+            )
+        shape = tuple(arr.shape)
+    if shape[0] == 0:
+        raise ValueError(f"Found array with 0 sample(s) (shape={shape}) while a minimum of 1 is required.")
+    if shape[1] == 0:
+        raise ValueError(f"Found array with 0 feature(s) (shape={shape}) while a minimum of 1 is required.")
+    return int(shape[0]), int(shape[1])
+
+
+def _check_target(y: Any, n_rows: int, *, name: str) -> NDArray[Any]:
+    if y is None:
+        raise ValueError(f"{name} requires y to be passed, but the target y is None")
+    arr = np.asarray(y)
+    if arr.ndim == 2 and arr.shape[1] == 1:
+        warnings.warn(
+            "A column-vector y was passed when a 1d array was expected. Please change the shape "
+            "of y to (n_samples,), for example using ravel().",
+            _DataConversionWarning,
+            stacklevel=4,
+        )
+        arr = arr.ravel()
+    elif arr.ndim != 1:
+        raise ValueError(f"y should be a 1d array, got an array of shape {arr.shape} instead.")
+    if arr.shape[0] != n_rows:
+        raise ValueError(f"X has {n_rows} rows but y has {arr.shape[0]} values")
+    if np.iscomplexobj(arr):
+        raise ValueError("Complex data not supported")
+    return arr
+
+
+def _check_sample_weight(sample_weight: Any, n_rows: int) -> NDArray[np.float64] | None:
+    if sample_weight is None:
+        return None
+    sw = np.asarray(sample_weight, dtype=np.float64)
+    if sw.ndim == 0:
+        sw = np.full(n_rows, float(sw))
+    if sw.ndim != 1:
+        raise ValueError("Sample weights must be 1D array or scalar")
+    if sw.shape != (n_rows,):
+        raise ValueError(f"sample_weight.shape == {sw.shape}, expected {(n_rows,)}!")
+    if not np.all(np.isfinite(sw)) or np.any(sw < 0):
+        raise ValueError("sample_weight must be finite and non-negative")
+    if not np.any(sw > 0):
+        raise ValueError("Sample weights must contain at least one non-zero weight")
+    return np.ascontiguousarray(sw)
 
 
 def _extract_mixed_predict_inputs(
@@ -36,7 +140,9 @@ def _extract_mixed_predict_inputs(
     if is_df:
         n_rows, n_features = X.shape
         if n_features != expected_features:
-            raise ValueError(f"Expected {expected_features} features, got {n_features}")
+            raise ValueError(
+                f"X has {n_features} features, but the model is expecting {expected_features} features as input."
+            )
         if fitted_on_dataframe:
             cols = [str(c) for c in X.columns]
             if cols != expected_feature_names:
@@ -61,7 +167,9 @@ def _extract_mixed_predict_inputs(
         raise ValueError(f"Expected 2D array, got shape {arr.shape}")
     n_rows, n_features = arr.shape
     if n_features != expected_features:
-        raise ValueError(f"Expected {expected_features} features, got {n_features}")
+        raise ValueError(
+                f"X has {n_features} features, but the model is expecting {expected_features} features as input."
+            )
     num_cols = []
     cat_vocabs = []
     cat_indices = []
@@ -86,7 +194,9 @@ def _to_numeric_matrix_view(
     if _is_pandas_dataframe(X):
         n_rows, n_features = X.shape
         if n_features != expected_features:
-            raise ValueError(f"Expected {expected_features} features, got {n_features}")
+            raise ValueError(
+                f"X has {n_features} features, but the model is expecting {expected_features} features as input."
+            )
         if fitted_on_dataframe:
             cols = [str(c) for c in X.columns]
             if cols != expected_feature_names:
@@ -100,7 +210,9 @@ def _to_numeric_matrix_view(
             raise ValueError(f"Expected 2D array, got shape {arr.shape}")
         n_rows, n_features = arr.shape
         if n_features != expected_features:
-            raise ValueError(f"Expected {expected_features} features, got {n_features}")
+            raise ValueError(
+                f"X has {n_features} features, but the model is expecting {expected_features} features as input."
+            )
 
     if arr.dtype == np.float64 and (n_rows <= 1 or arr.strides[0] > 0) and (n_features <= 1 or arr.strides[1] > 0):
         return arr
@@ -109,7 +221,7 @@ def _to_numeric_matrix_view(
     return np.ascontiguousarray(arr, dtype=np.float64)
 
 
-class _BaseMiterEstimator:
+class _BaseMiterEstimator(_SklearnBase):
     """Shared training, prediction, parameter, and JSON I/O logic."""
 
     _objective: _core.Objective
@@ -215,7 +327,10 @@ class _BaseMiterEstimator:
     def _check_fitted(self) -> _core.Model:
         model = getattr(self, "_model", None)
         if model is None:
-            raise RuntimeError("This estimator instance is not fitted yet. Call 'fit' first.")
+            raise NotFittedError(
+                f"This {type(self).__name__} instance is not fitted yet. Call 'fit' with "
+                "appropriate arguments before using this estimator."
+            )
         return model
 
     def _encode_targets(self, y: Any, *, is_fit: bool) -> NDArray[np.float64]:
@@ -234,6 +349,10 @@ class _BaseMiterEstimator:
         categorical_feature: str | Sequence[int | str] | None = "auto",
     ) -> _core.TrainResult:
         params = self._build_params()
+        name = type(self).__name__
+        n_rows, _ = _check_input_X(X, name=name)
+        y = _check_target(y, n_rows, name=name)
+        sw_arr = _check_sample_weight(sample_weight, n_rows)
         self._fitted_on_dataframe = _is_pandas_dataframe(X)
         ds = Dataset(
             X,
@@ -243,11 +362,6 @@ class _BaseMiterEstimator:
             max_categories=self.max_categories,
         )
         y_arr = self._encode_targets(y, is_fit=True)
-        sw_arr = (
-            None
-            if sample_weight is None
-            else np.ascontiguousarray(np.asarray(sample_weight), dtype=np.float64)
-        )
 
         valid_ds_inner = None
         y_val_arr = None
@@ -255,6 +369,8 @@ class _BaseMiterEstimator:
             if len(eval_set) != 1:
                 raise ValueError("eval_set supports a single (X_val, y_val) pair in v1.0")
             X_val, y_val = eval_set[0]
+            n_val, _ = _check_input_X(X_val, name=name)
+            y_val = _check_target(y_val, n_val, name=name)
             valid_ds_inner = ds.transform(X_val)._inner
             y_val_arr = self._encode_targets(y_val, is_fit=False)
 
@@ -301,6 +417,12 @@ class _BaseMiterEstimator:
     def _predict_raw(self, X: Any, num_iteration: int | None = None) -> NDArray[np.float64]:
         """Raw scores through lignum (M6); bitwise equal to miter's own evaluator."""
         model = self._check_fitted()
+        _, n_features = _check_input_X(X, name=type(self).__name__)
+        if n_features != model.n_features:
+            raise ValueError(
+                f"X has {n_features} features, but {type(self).__name__} is expecting "
+                f"{model.n_features} features as input."
+            )
         n_iter = 0 if num_iteration is None else int(num_iteration)
         predictor = self._lignum(n_iter)
         fitted_on_df = getattr(self, "_fitted_on_dataframe", False)
@@ -328,9 +450,34 @@ class _BaseMiterEstimator:
         return predictor.predict_raw_f64(cast(NDArray[np.float64], arr))
 
     def __getstate__(self) -> dict[str, Any]:
-        state = self.__dict__.copy()
+        base = getattr(super(), "__getstate__", None)
+        state = dict(base()) if _HAS_SKLEARN and base is not None else self.__dict__.copy()
         state.pop("_lignum_cache", None)  # rebuilt on the next prediction
+        model = state.pop("_model", None)
+        if model is not None:
+            # The fitted model travels as miter's JSON, which round-trips bit for bit.
+            state["_model_json"] = _core.model_to_json(model)
         return state
+
+    def __setstate__(self, state: dict[str, Any]) -> None:
+        state = dict(state)
+        model_json = state.pop("_model_json", None)
+        base = getattr(super(), "__setstate__", None)
+        if _HAS_SKLEARN and base is not None:
+            base(state)
+        else:
+            self.__dict__.update(state)
+        if model_json is not None:
+            self._model = _core.model_from_json(model_json)
+        self._lignum_cache = {}
+
+    def __sklearn_tags__(self) -> Any:
+        tags = super().__sklearn_tags__()  # type: ignore[misc]
+        tags.input_tags.allow_nan = True
+        return tags
+
+    def _more_tags(self) -> dict[str, Any]:  # scikit-learn < 1.6
+        return {"allow_nan": True}
 
     def save_model(self, path: str) -> None:
         model = self._check_fitted()
@@ -372,48 +519,27 @@ class _BaseMiterEstimator:
         est.feature_importances_gain_ = model.feature_importances_gain()
         return est
 
-    def get_params(self, deep: bool = True) -> dict[str, Any]:
-        del deep
-        return {
-            "n_estimators": self.n_estimators,
-            "learning_rate": self.learning_rate,
-            "num_leaves": self.num_leaves,
-            "max_depth": self.max_depth,
-            "min_data_in_leaf": self.min_data_in_leaf,
-            "min_sum_hessian_in_leaf": self.min_sum_hessian_in_leaf,
-            "lambda_l2": self.lambda_l2,
-            "min_gain_to_split": self.min_gain_to_split,
-            "max_bin": self.max_bin,
-            "max_cat_to_onehot": self.max_cat_to_onehot,
-            "min_data_per_group": self.min_data_per_group,
-            "max_categories": self.max_categories,
-            "cat_smooth": self.cat_smooth,
-            "cat_l2": self.cat_l2,
-            "max_cat_threshold": self.max_cat_threshold,
-            "m_mult": self.m_mult,
-            "k_proj": self.k_proj,
-            "preset": self.preset,
-            "feature_fraction": self.feature_fraction,
-            "bagging_fraction": self.bagging_fraction,
-            "extra_trees": self.extra_trees,
-            "robust": self.robust,
-            "cat_mode": self.cat_mode,
-            "early_stopping_rounds": self.early_stopping_rounds,
-            "time_limit": self.time_limit,
-            "n_jobs": self.n_jobs,
-            "random_state": self.random_state,
-        }
+if not _HAS_SKLEARN:  # pragma: no cover - minimal parameter API without scikit-learn
+    import inspect
 
-    def set_params(self, **params: Any) -> _BaseMiterEstimator:
-        valid = self.get_params()
+    _PARAM_NAMES = [n for n in inspect.signature(_BaseMiterEstimator.__init__).parameters if n != "self"]
+
+    def _get_params(self: _BaseMiterEstimator, deep: bool = True) -> dict[str, Any]:
+        del deep
+        return {n: getattr(self, n) for n in _PARAM_NAMES}
+
+    def _set_params(self: _BaseMiterEstimator, **params: Any) -> _BaseMiterEstimator:
         for key, value in params.items():
-            if key not in valid:
+            if key not in _PARAM_NAMES:
                 raise ValueError(f"Invalid parameter {key!r} for {type(self).__name__}")
             setattr(self, key, value)
         return self
 
+    _BaseMiterEstimator.get_params = _get_params  # type: ignore[attr-defined]
+    _BaseMiterEstimator.set_params = _set_params  # type: ignore[attr-defined]
 
-class MiterRegressor(_BaseMiterEstimator):
+
+class MiterRegressor(_RegressorMixin, _BaseMiterEstimator):
     """Gradient-boosted decision tree regressor (L2 loss)."""
 
     _objective = _core.Objective.Regression
@@ -448,8 +574,16 @@ class MiterRegressor(_BaseMiterEstimator):
         return est
 
 
-class MiterClassifier(_BaseMiterEstimator):
+class MiterClassifier(_ClassifierMixin, _BaseMiterEstimator):
     """Gradient-boosted decision tree binary classifier (log-loss)."""
+
+    def __sklearn_tags__(self) -> Any:
+        tags = super().__sklearn_tags__()
+        tags.classifier_tags.multi_class = False
+        return tags
+
+    def _more_tags(self) -> dict[str, Any]:  # scikit-learn < 1.6
+        return {"allow_nan": True, "binary_only": True}
 
     _objective = _core.Objective.Binary
 
@@ -458,10 +592,15 @@ class MiterClassifier(_BaseMiterEstimator):
         if arr.ndim != 1:
             arr = arr.ravel()
         if is_fit:
+            if arr.dtype.kind == "f" and np.isnan(arr).any():
+                raise ValueError("Input y contains NaN.")
+            if arr.dtype.kind == "f" and not np.array_equal(arr, np.round(arr)):
+                raise ValueError("Unknown label type: continuous. Binary class labels are expected.")
             classes = np.unique(arr)
             if len(classes) != 2:
                 raise ValueError(
-                    f"MiterClassifier v1.0 supports binary classification only; got {len(classes)} classes"
+                    "Only binary classification is supported. MiterClassifier v1.0 supports binary "
+                    f"classification only; got {len(classes)} classes (multiclass is planned for v1.1)"
                 )
             self.classes_ = classes
         if np.array_equal(self.classes_, np.array([0, 1])) or np.array_equal(
