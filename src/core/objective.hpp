@@ -32,13 +32,13 @@ void compute_gradients(Objective obj, std::span<const double> scores, std::span<
 void compute_multiclass_gradients(const double* scores_class_major, std::size_t n,
                                   std::uint32_t n_classes, std::span<const double> y,
                                   std::span<const double> sample_weight, float* g_class_major,
-                                  float* h_class_major, int n_jobs = 1) noexcept;
+                                  float* h_class_major, int n_jobs = 1);
 
 double compute_loss(Objective obj, std::span<const double> scores, std::span<const double> y,
                     std::span<const double> sample_weight, int n_jobs = 1) noexcept;
 
 double compute_multiclass_loss(const double* scores_class_major, std::size_t n,
                                std::uint32_t n_classes, std::span<const double> y,
-                               std::span<const double> sample_weight, int n_jobs = 1) noexcept;
+                               std::span<const double> sample_weight, int n_jobs = 1);
 
 } // namespace miter

@@ -420,7 +420,7 @@ double compute_loss(Objective obj, std::span<const double> scores, std::span<con
 void compute_multiclass_gradients(const double* scores_class_major, std::size_t n,
                                   std::uint32_t n_classes, std::span<const double> y,
                                   std::span<const double> sample_weight, float* g_class_major,
-                                  float* h_class_major, int n_jobs) noexcept {
+                                  float* h_class_major, int n_jobs) {
     const auto K = static_cast<std::size_t>(n_classes);
     const bool has_w = !sample_weight.empty();
     const int n_threads = resolve_num_threads(n_jobs);
@@ -473,7 +473,7 @@ void compute_multiclass_gradients(const double* scores_class_major, std::size_t 
 
 double compute_multiclass_loss(const double* scores_class_major, std::size_t n,
                                std::uint32_t n_classes, std::span<const double> y,
-                               std::span<const double> sample_weight, int n_jobs) noexcept {
+                               std::span<const double> sample_weight, int n_jobs) {
     const auto K = static_cast<std::size_t>(n_classes);
     const bool has_w = !sample_weight.empty();
     const std::size_t n_chunks =
