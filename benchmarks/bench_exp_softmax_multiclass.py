@@ -32,7 +32,7 @@ from sklearn.preprocessing import LabelEncoder
 HERE = Path(__file__).resolve().parent
 RAW_DIR = HERE / "results" / "raw" / "exp_softmax_multiclass"
 SUMMARY_PATH = HERE / "results" / "exp_softmax_multiclass_summary.md"
-OPENML_CACHE = HERE / "results" / "raw" / "openml_cache_pandas2"
+OPENML_CACHE = HERE / "results" / "raw" / "openml_cache_pandas3"
 openml.config.set_root_cache_directory(str(OPENML_CACHE))
 
 # 8 TabArena multiclass tasks (`tid`) + 4 OpenML CC18 multiclass datasets (`did`)

@@ -28,7 +28,7 @@ from sklearn.model_selection import KFold, StratifiedKFold, train_test_split
 HERE = Path(__file__).resolve().parent
 RAW_DIR = HERE / "results" / "raw" / "exp_cat_ctr"
 SUMMARY_PATH = HERE / "results" / "exp_cat_ctr_summary.md"
-OPENML_CACHE = HERE / "results" / "raw" / "openml_cache_pandas2"
+OPENML_CACHE = HERE / "results" / "raw" / "openml_cache_pandas3"
 openml.config.set_root_cache_directory(str(OPENML_CACHE))
 
 # (kind, name, id_kind, openml_id)
