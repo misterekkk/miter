@@ -35,17 +35,19 @@ done
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
-PY="${ROOT_DIR}/.venv_tabarena/bin/python"
+PY_BENCH="${ROOT_DIR}/.venv/bin/python"
+PY_TABARENA="${ROOT_DIR}/.venv_tabarena/bin/python"
 LOG_DIR="${ROOT_DIR}/benchmarks/results/raw/logs"
 mkdir -p "${LOG_DIR}"
 
 run_sharded() {
-  local script_path="$1"
-  local tag="$2"
+  local py_bin="$1"
+  local script_path="$2"
+  local tag="$3"
   local pids=()
   echo "=== Starting ${tag} (${SHARDS} shards, nice -n 10) ==="
   for ((s = 0; s < SHARDS; s++)); do
-    nice -n 10 "${PY}" "${script_path}" run --shard "${s}" --nshards "${SHARDS}" \
+    nice -n 10 "${py_bin}" "${script_path}" run --shard "${s}" --nshards "${SHARDS}" \
       > "${LOG_DIR}/${tag}_shard${s}.log" 2>&1 &
     pids+=("$!")
   done
@@ -53,24 +55,24 @@ run_sharded() {
     wait "${pid}"
   done
   echo "=== Summarizing ${tag} ==="
-  "${PY}" "${script_path}" summarize
+  "${py_bin}" "${script_path}" summarize
 }
 
 case "${STAGE}" in
   cat|all)
-    run_sharded "${ROOT_DIR}/benchmarks/bench_exp_cat_ctr.py" "exp_cat_ctr"
+    run_sharded "${PY_BENCH}" "${ROOT_DIR}/benchmarks/bench_exp_cat_ctr.py" "exp_cat_ctr"
     ;;
 esac
 
 case "${STAGE}" in
   softmax|all)
-    run_sharded "${ROOT_DIR}/benchmarks/bench_exp_softmax_multiclass.py" "exp_softmax_multiclass"
+    run_sharded "${PY_BENCH}" "${ROOT_DIR}/benchmarks/bench_exp_softmax_multiclass.py" "exp_softmax_multiclass"
     ;;
 esac
 
 case "${STAGE}" in
   tabarena|all)
-    run_sharded "${ROOT_DIR}/benchmarks/tabarena/run_tabarena_v11_51.py" "tabarena_v11_51"
+    run_sharded "${PY_TABARENA}" "${ROOT_DIR}/benchmarks/tabarena/run_tabarena_v11_51.py" "tabarena_v11_51"
     ;;
 esac
 

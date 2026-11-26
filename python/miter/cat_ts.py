@@ -137,7 +137,6 @@ def _ordered_encode_buckets(
     n_buckets: int,
     Y: NDArray[np.float64],
     w: NDArray[np.float64],
-    loo_priors: NDArray[np.float64],
     priors: NDArray[np.float64],
     smooth: float,
     perms: list[NDArray[np.intp]],
@@ -177,7 +176,7 @@ def _ordered_encode_buckets(
         pref_w[orig_pos] = pref_w_sorted
         pref_wy[orig_pos] = pref_wy_sorted
 
-        ctr_acc += (pref_wy + smooth * loo_priors) / (pref_w[:, None] + smooth)
+        ctr_acc += (pref_wy + smooth * priors[None, :]) / (pref_w[:, None] + smooth)
 
     ctr_acc /= float(n_perms)
 
@@ -295,9 +294,6 @@ class CatObliqueTSEncoder:
         self.prior_ = float(priors[0])
         self.priors_ = [float(p) for p in priors]
 
-        loo_denom = np.maximum(total_w - w, 1e-12)
-        loo_priors = (total_wy[None, :] - w[:, None] * Y) / loo_denom[:, None]
-
         # Build CV fold IDs (used when mode=="oof", and for greedy pair OOF scoring).
         k = min(self.n_folds, n_rows)
         oof_rng = np.random.default_rng(
@@ -360,7 +356,7 @@ class CatObliqueTSEncoder:
 
             if self.mode == "ordered":
                 train_mat, full_lut = _ordered_encode_buckets(
-                    fc.buckets, fc.n_buckets, Y, w, loo_priors, priors, self.smooth, perms
+                    fc.buckets, fc.n_buckets, Y, w, priors, self.smooth, perms
                 )
                 if need_oof_mse:
                     oof_for_score, _ = _oof_encode_buckets(
@@ -470,7 +466,7 @@ class CatObliqueTSEncoder:
                 fb = fact_cols[ib]
                 if self.mode == "ordered":
                     p_mat, p_lut = _ordered_encode_buckets(
-                        pair_buckets, n_pair_buckets, Y, w, loo_priors, priors, self.smooth, perms
+                        pair_buckets, n_pair_buckets, Y, w, priors, self.smooth, perms
                     )
                 else:
                     p_mat, p_lut = _oof_encode_buckets(

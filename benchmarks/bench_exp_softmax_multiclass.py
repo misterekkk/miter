@@ -84,7 +84,12 @@ def load_dataset(id_kind: str, oid: int) -> tuple[pd.DataFrame, np.ndarray, list
     X = X_df.copy()
     cat_cols: list[str] = []
     for col, is_cat in zip(X.columns, cat_ind, strict=True):
-        if is_cat or str(X[col].dtype) in ("category", "object", "string"):
+        if (
+            is_cat
+            or isinstance(X[col].dtype, pd.CategoricalDtype)
+            or pd.api.types.is_string_dtype(X[col])
+            or pd.api.types.is_object_dtype(X[col])
+        ):
             X[col] = X[col].astype("category")
             cat_cols.append(str(col))
         else:

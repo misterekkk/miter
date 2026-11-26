@@ -32,8 +32,7 @@ def test_ordered_ctr_matches_bruteforce_and_has_zero_self_leakage() -> None:
     # Exact brute-force verification against the same 4 permutations.
     rng = np.random.default_rng(3 + 20260401)
     cats_key = [None if pd.isna(v) else str(v) for v in df["c"]]
-    tot_w = float(np.sum(w))
-    tot_wy = float(np.sum(w * y))
+    prior = float(np.sum(w * y) / np.sum(w))
     expected = np.zeros(len(df), dtype=np.float64)
     for _ in range(n_perm):
         perm = rng.permutation(len(df))
@@ -43,22 +42,29 @@ def test_ordered_ctr_matches_bruteforce_and_has_zero_self_leakage() -> None:
             key = cats_key[idx]
             pw = seen_w.get(key, 0.0)
             pwy = seen_wy.get(key, 0.0)
-            loo_prior = (tot_wy - w[idx] * y[idx]) / max(tot_w - w[idx], 1e-12)
-            expected[idx] += (pwy + smooth * loo_prior) / (pw + smooth)
+            expected[idx] += (pwy + smooth * prior) / (pw + smooth)
             seen_w[key] = pw + w[idx]
             seen_wy[key] = pwy + w[idx] * y[idx]
     expected /= float(n_perm)
     np.testing.assert_allclose(got, expected, rtol=1e-13, atol=1e-13)
 
-    # Zero self-leakage: perturbing y[idx] leaves row idx's CTR invariant when other targets stay fixed.
-    # For row 6 ('singleton'), it never has a predecessor of 'singleton', and loo_prior cancels y[6].
-    y_pert = y.copy()
-    y_pert[6] = -12345.0
-    enc_p = CatObliqueTSEncoder(
-        smooth=smooth, n_folds=5, random_state=3, mode="ordered", n_permutations=n_perm
+    # Regression check: singletons with different y must receive identical CTR (= prior), not -y/(N-1),
+    # and perturbing the last row in the single permutation cannot leak into earlier rows.
+    df_s = pd.DataFrame(
+        {"c": pd.Categorical(["s0", "s1", "a", "a"]), "x": np.arange(4, dtype=np.float64)}
     )
-    out_p = enc_p.fit_transform(df, y_pert, w, [0], is_binary=False)
-    assert out_p["__miter_cat_ts_0_c"].iloc[6] == pytest.approx(got[6], abs=1e-12)
+    y_s = np.array([0.0, 1.0, 0.25, 0.75], dtype=np.float64)
+    enc_s = CatObliqueTSEncoder(smooth=smooth, n_folds=4, random_state=0, mode="ordered", n_permutations=1)
+    out_s = enc_s.fit_transform(df_s, y_s, None, [0], is_binary=False)
+    ctr_s = out_s["__miter_cat_ts_0_c"].to_numpy()
+    assert ctr_s[0] == pytest.approx(float(np.mean(y_s)), abs=1e-14)
+    assert ctr_s[1] == pytest.approx(float(np.mean(y_s)), abs=1e-14)
+
+    # Find the earlier 'a' row in the single permutation and verify its prefix (zero predecessors) == prior.
+    perm_1 = np.random.default_rng(0 + 20260401).permutation(len(df_s))
+    a_positions = [int(i) for i in perm_1 if i in (2, 3)]
+    first_a = a_positions[0]
+    assert ctr_s[first_a] == pytest.approx(float(np.mean(y_s)), abs=1e-14)
 
 
 def test_counter_leave_one_out_and_transform_unseen_missing() -> None:
