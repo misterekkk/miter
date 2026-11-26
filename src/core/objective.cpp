@@ -52,6 +52,92 @@ void validate_targets_and_weights(Objective obj, std::span<const double> y,
     }
 }
 
+std::uint32_t infer_and_validate_multiclass_targets(std::span<const double> y,
+                                                    std::span<const double> sample_weight,
+                                                    std::uint32_t expected_classes) {
+    validate_targets_and_weights(Objective::Multiclass, y, sample_weight);
+    double max_label = 0.0;
+    for (const double yi : y) {
+        if (yi < 0.0 || std::floor(yi) != yi) {
+            throw std::invalid_argument(
+                "Multiclass objective requires integer class labels in [0, n_classes - 1]");
+        }
+        if (expected_classes > 0U && yi >= static_cast<double>(expected_classes)) {
+            throw std::invalid_argument(
+                "Validation label out of range [0, n_classes - 1] for multiclass");
+        }
+        if (yi > max_label) {
+            max_label = yi;
+        }
+    }
+    if (expected_classes > 0U) {
+        return expected_classes;
+    }
+    if (max_label < 1.0 || max_label >= 4096.0) {
+        throw std::invalid_argument("Multiclass objective requires 2..4096 integer classes");
+    }
+    return static_cast<std::uint32_t>(max_label) + 1U;
+}
+
+std::vector<double> compute_multiclass_init_scores(std::span<const double> y,
+                                                   std::span<const double> sample_weight,
+                                                   std::uint32_t n_classes, int n_jobs) {
+    const std::size_t n = y.size();
+    const auto K = static_cast<std::size_t>(n_classes);
+    const bool has_w = !sample_weight.empty();
+    const std::size_t n_chunks =
+        std::max<std::size_t>(1U, (n + kDetChunkRows - 1U) / kDetChunkRows);
+    std::vector<double> chunk_w(n_chunks * K, 0.0);
+    const int n_threads = resolve_num_threads(n_jobs);
+    const bool use_omp = (n_threads > 1) && (n_chunks > 1U) && (n >= 32768U);
+
+    auto count_chunk = [&](std::size_t cu) noexcept {
+        const std::size_t i0 = cu * kDetChunkRows;
+        const std::size_t i1 = std::min(i0 + kDetChunkRows, n);
+        double* dst = chunk_w.data() + cu * K;
+        for (std::size_t i = i0; i < i1; ++i) {
+            const auto cls = static_cast<std::size_t>(y[i]);
+            dst[cls] += has_w ? sample_weight[i] : 1.0;
+        }
+    };
+
+    if (use_omp) {
+#ifdef _OPENMP
+#pragma omp parallel for schedule(static) num_threads(n_threads)
+#endif
+        for (std::ptrdiff_t c = 0; c < static_cast<std::ptrdiff_t>(n_chunks); ++c) {
+            count_chunk(static_cast<std::size_t>(c));
+        }
+    } else {
+        for (std::size_t c = 0; c < n_chunks; ++c) {
+            count_chunk(c);
+        }
+    }
+
+    std::vector<double> class_w(K, 0.0);
+    double total_w = 0.0;
+    for (std::size_t c = 0; c < n_chunks; ++c) {
+        const double* src = chunk_w.data() + c * K;
+        for (std::size_t k = 0; k < K; ++k) {
+            class_w[k] += src[k];
+            total_w += src[k];
+        }
+    }
+
+    std::vector<double> init_scores(K, 0.0);
+    double mean_log = 0.0;
+    for (std::size_t k = 0; k < K; ++k) {
+        const double p_k = std::clamp(class_w[k] / total_w, 1e-15, 1.0);
+        init_scores[k] = std::log(p_k);
+        mean_log += init_scores[k];
+    }
+    mean_log /= static_cast<double>(K);
+    for (std::size_t k = 0; k < K; ++k) {
+        init_scores[k] -= mean_log;
+    }
+    return init_scores;
+}
+
 double compute_init_score(Objective obj, std::span<const double> y,
                           std::span<const double> sample_weight, int n_jobs) {
     const std::size_t n = y.size();
@@ -327,6 +413,118 @@ double compute_loss(Objective obj, std::span<const double> scores, std::span<con
             total_loss += stack_loss[wc];
             total_w += stack_w[wc];
         }
+    }
+    return total_loss / total_w;
+}
+
+void compute_multiclass_gradients(const double* scores_class_major, std::size_t n,
+                                  std::uint32_t n_classes, std::span<const double> y,
+                                  std::span<const double> sample_weight, float* g_class_major,
+                                  float* h_class_major, int n_jobs) noexcept {
+    const auto K = static_cast<std::size_t>(n_classes);
+    const bool has_w = !sample_weight.empty();
+    const int n_threads = resolve_num_threads(n_jobs);
+    const bool use_omp = (n_threads > 1) && (n >= 16384U);
+
+    auto process_row = [&](std::size_t i, double* probs_buf) noexcept {
+        double max_z = scores_class_major[i];
+        for (std::size_t k = 1U; k < K; ++k) {
+            max_z = std::max(max_z, scores_class_major[k * n + i]);
+        }
+        double sum_exp = 0.0;
+        for (std::size_t k = 0U; k < K; ++k) {
+            const double e = std::exp(scores_class_major[k * n + i] - max_z);
+            probs_buf[k] = e;
+            sum_exp += e;
+        }
+        const double inv_sum = 1.0 / sum_exp;
+        const auto yi = static_cast<std::size_t>(y[i]);
+        const double w = has_w ? sample_weight[i] : 1.0;
+        for (std::size_t k = 0U; k < K; ++k) {
+            const double p = probs_buf[k] * inv_sum;
+            const double target = (k == yi) ? 1.0 : 0.0;
+            g_class_major[k * n + i] = static_cast<float>(w * (p - target));
+            h_class_major[k * n + i] = static_cast<float>(w * std::max(2.0 * p * (1.0 - p), 1e-16));
+        }
+    };
+
+    if (use_omp) {
+#ifdef _OPENMP
+#pragma omp parallel num_threads(n_threads)
+        {
+            double stack_probs[64];
+            std::vector<double> heap_probs((K > 64U) ? K : 0U);
+            double* probs_buf = (K <= 64U) ? stack_probs : heap_probs.data();
+#pragma omp for schedule(static)
+            for (std::ptrdiff_t i = 0; i < static_cast<std::ptrdiff_t>(n); ++i) {
+                process_row(static_cast<std::size_t>(i), probs_buf);
+            }
+        }
+#endif
+    } else {
+        double stack_probs[64];
+        std::vector<double> heap_probs((K > 64U) ? K : 0U);
+        double* probs_buf = (K <= 64U) ? stack_probs : heap_probs.data();
+        for (std::size_t i = 0; i < n; ++i) {
+            process_row(i, probs_buf);
+        }
+    }
+}
+
+double compute_multiclass_loss(const double* scores_class_major, std::size_t n,
+                               std::uint32_t n_classes, std::span<const double> y,
+                               std::span<const double> sample_weight, int n_jobs) noexcept {
+    const auto K = static_cast<std::size_t>(n_classes);
+    const bool has_w = !sample_weight.empty();
+    const std::size_t n_chunks =
+        std::max<std::size_t>(1U, (n + kDetChunkRows - 1U) / kDetChunkRows);
+    std::vector<double> chunk_loss(n_chunks, 0.0);
+    std::vector<double> chunk_w(n_chunks, 0.0);
+    const int n_threads = resolve_num_threads(n_jobs);
+    const bool use_omp = (n_threads > 1) && (n_chunks > 1U) && (n >= 32768U);
+
+    auto loss_chunk = [&](std::size_t cu) noexcept {
+        const std::size_t i0 = cu * kDetChunkRows;
+        const std::size_t i1 = std::min(i0 + kDetChunkRows, n);
+        double tl = 0.0;
+        double tw = 0.0;
+        for (std::size_t i = i0; i < i1; ++i) {
+            double max_z = scores_class_major[i];
+            for (std::size_t k = 1U; k < K; ++k) {
+                max_z = std::max(max_z, scores_class_major[k * n + i]);
+            }
+            double sum_exp = 0.0;
+            for (std::size_t k = 0U; k < K; ++k) {
+                sum_exp += std::exp(scores_class_major[k * n + i] - max_z);
+            }
+            const auto yi = static_cast<std::size_t>(y[i]);
+            const double l_i = max_z + std::log(sum_exp) - scores_class_major[yi * n + i];
+            const double w = has_w ? sample_weight[i] : 1.0;
+            tl += w * l_i;
+            tw += w;
+        }
+        chunk_loss[cu] = tl;
+        chunk_w[cu] = tw;
+    };
+
+    if (use_omp) {
+#ifdef _OPENMP
+#pragma omp parallel for schedule(static) num_threads(n_threads)
+#endif
+        for (std::ptrdiff_t c = 0; c < static_cast<std::ptrdiff_t>(n_chunks); ++c) {
+            loss_chunk(static_cast<std::size_t>(c));
+        }
+    } else {
+        for (std::size_t c = 0; c < n_chunks; ++c) {
+            loss_chunk(c);
+        }
+    }
+
+    double total_loss = 0.0;
+    double total_w = 0.0;
+    for (std::size_t c = 0; c < n_chunks; ++c) {
+        total_loss += chunk_loss[c];
+        total_w += chunk_w[c];
     }
     return total_loss / total_w;
 }

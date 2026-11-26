@@ -11,6 +11,7 @@ add_executable(miter_tests
     test_determinism.cpp
     test_options.cpp
     test_symmetric_tree.cpp
+    test_multiclass.cpp
     test_lignum_export.cpp
 )
 

@@ -31,6 +31,9 @@ public:
 
     static void predict_proba_from_raw(const double* raw, std::size_t n_rows, double* proba_2col);
 
+    static void predict_proba_softmax(const double* raw, std::size_t n_rows,
+                                      std::uint32_t n_classes, double* proba_out);
+
     static void add_tree_predictions_from_codes(
         const Tree& tree, const std::int16_t* codes_col_major, std::size_t n_rows,
         std::size_t n_num_features, const std::vector<std::size_t>& feature_to_num_idx,

@@ -61,6 +61,20 @@ nb::ndarray<nb::numpy, T, nb::ndim<2>> vec_to_ndarray_2d(std::vector<T> vec, std
     return nb::ndarray<nb::numpy, T, nb::ndim<2>>(heap_vec->data(), 2, shape, owner, strides);
 }
 
+template <typename T>
+nb::ndarray<nb::numpy, T> vec_to_ndarray_outputs(std::vector<T> vec, std::size_t rows,
+                                                 std::uint32_t n_outputs) {
+    auto* heap_vec = new std::vector<T>(std::move(vec));
+    nb::capsule owner(heap_vec, [](void* p) noexcept { delete static_cast<std::vector<T>*>(p); });
+    if (n_outputs <= 1U) {
+        const std::size_t shape[1] = {rows};
+        return nb::ndarray<nb::numpy, T>(heap_vec->data(), 1, shape, owner);
+    }
+    const std::size_t shape[2] = {rows, static_cast<std::size_t>(n_outputs)};
+    const std::int64_t strides[2] = {static_cast<std::int64_t>(n_outputs), 1};
+    return nb::ndarray<nb::numpy, T>(heap_vec->data(), 2, shape, owner, strides);
+}
+
 template <typename FloatT>
 std::vector<miter::NumericColumnView>
 views_from_2d(const nb::ndarray<const FloatT, nb::ndim<2>, nb::device::cpu>& arr) {
@@ -315,8 +329,14 @@ miter::TrainResult fit_axis_booster_py(const miter::Dataset& ds, miter::Objectiv
                           std::move(valid_sample_weight), ax);
 }
 
+inline std::uint32_t model_output_width(const miter::Model& model) noexcept {
+    return (model.objective == miter::Objective::Multiclass && model.n_classes > 1U)
+               ? model.n_classes
+               : 1U;
+}
+
 template <typename FloatT>
-nb::ndarray<nb::numpy, double, nb::ndim<1>>
+nb::ndarray<nb::numpy, double>
 predict_raw_py(const miter::Model& model,
                const nb::ndarray<const FloatT, nb::ndim<2>, nb::device::cpu>& arr,
                std::size_t num_iteration) {
@@ -325,14 +345,15 @@ predict_raw_py(const miter::Model& model,
     if (n_cols != model.n_features) {
         throw std::invalid_argument("Feature count mismatch in predict");
     }
+    const std::uint32_t k_out = model_output_width(model);
     auto views = views_from_2d(arr);
-    std::vector<double> out(n_rows);
+    std::vector<double> out(n_rows * static_cast<std::size_t>(k_out));
     {
         nb::gil_scoped_release release;
         miter::Evaluator::predict_raw_views(model, n_rows, views, out.data(), num_iteration,
                                             model.params.n_jobs);
     }
-    return vec_to_ndarray_1d(std::move(out));
+    return vec_to_ndarray_outputs(std::move(out), n_rows, k_out);
 }
 
 template <typename FloatT>
@@ -345,19 +366,25 @@ predict_proba_py(const miter::Model& model,
     if (n_cols != model.n_features) {
         throw std::invalid_argument("Feature count mismatch in predict_proba");
     }
+    const std::uint32_t k_out = model_output_width(model);
+    const std::size_t proba_cols = (k_out > 1U) ? static_cast<std::size_t>(k_out) : 2U;
     auto views = views_from_2d(arr);
-    std::vector<double> raw(n_rows);
-    std::vector<double> proba(n_rows * 2U);
+    std::vector<double> raw(n_rows * static_cast<std::size_t>(k_out));
+    std::vector<double> proba(n_rows * proba_cols);
     {
         nb::gil_scoped_release release;
         miter::Evaluator::predict_raw_views(model, n_rows, views, raw.data(), num_iteration,
                                             model.params.n_jobs);
-        miter::Evaluator::predict_proba_from_raw(raw.data(), n_rows, proba.data());
+        if (k_out > 1U) {
+            miter::Evaluator::predict_proba_softmax(raw.data(), n_rows, k_out, proba.data());
+        } else {
+            miter::Evaluator::predict_proba_from_raw(raw.data(), n_rows, proba.data());
+        }
     }
-    return vec_to_ndarray_2d(std::move(proba), n_rows, 2U);
+    return vec_to_ndarray_2d(std::move(proba), n_rows, proba_cols);
 }
 
-nb::ndarray<nb::numpy, double, nb::ndim<1>> predict_raw_mixed_py(
+nb::ndarray<nb::numpy, double> predict_raw_mixed_py(
     const miter::Model& model, std::size_t n_rows, const nb::list& num_cols,
     std::vector<std::vector<std::string>> cat_vocabs,
     const std::vector<nb::ndarray<const std::int32_t, nb::ndim<1>, nb::c_contig, nb::device::cpu>>&
@@ -365,13 +392,14 @@ nb::ndarray<nb::numpy, double, nb::ndim<1>> predict_raw_mixed_py(
     std::size_t num_iteration) {
     auto num_views = extract_num_col_views(num_cols, n_rows);
     auto cat_views = extract_cat_col_views(std::move(cat_vocabs), cat_indices, n_rows);
-    std::vector<double> out(n_rows);
+    const std::uint32_t k_out = model_output_width(model);
+    std::vector<double> out(n_rows * static_cast<std::size_t>(k_out));
     {
         nb::gil_scoped_release release;
         miter::Evaluator::predict_raw_mixed(model, n_rows, num_views, cat_views, out.data(),
                                             num_iteration, model.params.n_jobs);
     }
-    return vec_to_ndarray_1d(std::move(out));
+    return vec_to_ndarray_outputs(std::move(out), n_rows, k_out);
 }
 
 nb::ndarray<nb::numpy, double, nb::ndim<2>> predict_proba_mixed_py(
@@ -382,15 +410,21 @@ nb::ndarray<nb::numpy, double, nb::ndim<2>> predict_proba_mixed_py(
     std::size_t num_iteration) {
     auto num_views = extract_num_col_views(num_cols, n_rows);
     auto cat_views = extract_cat_col_views(std::move(cat_vocabs), cat_indices, n_rows);
-    std::vector<double> raw(n_rows);
-    std::vector<double> proba(n_rows * 2U);
+    const std::uint32_t k_out = model_output_width(model);
+    const std::size_t proba_cols = (k_out > 1U) ? static_cast<std::size_t>(k_out) : 2U;
+    std::vector<double> raw(n_rows * static_cast<std::size_t>(k_out));
+    std::vector<double> proba(n_rows * proba_cols);
     {
         nb::gil_scoped_release release;
         miter::Evaluator::predict_raw_mixed(model, n_rows, num_views, cat_views, raw.data(),
                                             num_iteration, model.params.n_jobs);
-        miter::Evaluator::predict_proba_from_raw(raw.data(), n_rows, proba.data());
+        if (k_out > 1U) {
+            miter::Evaluator::predict_proba_softmax(raw.data(), n_rows, k_out, proba.data());
+        } else {
+            miter::Evaluator::predict_proba_from_raw(raw.data(), n_rows, proba.data());
+        }
     }
-    return vec_to_ndarray_2d(std::move(proba), n_rows, 2U);
+    return vec_to_ndarray_2d(std::move(proba), n_rows, proba_cols);
 }
 
 // Prediction through lignum (M6): the lignum model is built once from a miter model; raw scores
@@ -443,6 +477,16 @@ nb::ndarray<nb::numpy, double, nb::ndim<2>> proba_from_raw_py(
     return vec_to_ndarray_2d(std::move(proba), n_rows, 2U);
 }
 
+nb::ndarray<nb::numpy, double, nb::ndim<2>> proba_softmax_from_raw_py(
+    const nb::ndarray<const double, nb::ndim<2>, nb::c_contig, nb::device::cpu>& raw) {
+    const std::size_t n_rows = raw.shape(0);
+    const std::size_t k_classes = raw.shape(1);
+    std::vector<double> proba(n_rows * k_classes);
+    miter::Evaluator::predict_proba_softmax(raw.data(), n_rows,
+                                            static_cast<std::uint32_t>(k_classes), proba.data());
+    return vec_to_ndarray_2d(std::move(proba), n_rows, k_classes);
+}
+
 } // namespace
 
 NB_MODULE(_core, m) {
@@ -462,7 +506,8 @@ NB_MODULE(_core, m) {
 
     nb::enum_<miter::Objective>(m, "Objective")
         .value("Regression", miter::Objective::Regression)
-        .value("Binary", miter::Objective::Binary);
+        .value("Binary", miter::Objective::Binary)
+        .value("Multiclass", miter::Objective::Multiclass);
 
     nb::enum_<miter::GrowPolicy>(m, "GrowPolicy")
         .value("Leafwise", miter::GrowPolicy::Leafwise)
@@ -501,6 +546,9 @@ NB_MODULE(_core, m) {
         .def_ro("miter_version", &miter::Model::miter_version)
         .def_ro("objective", &miter::Model::objective)
         .def_ro("init_score", &miter::Model::init_score)
+        .def_ro("n_classes", &miter::Model::n_classes)
+        .def_prop_ro("init_scores",
+                     [](const miter::Model& model) { return vec_to_ndarray_1d(model.init_scores); })
         .def_ro("learning_rate", &miter::Model::learning_rate)
         .def_ro("n_features", &miter::Model::n_features)
         .def_ro("best_iteration", &miter::Model::best_iteration)
@@ -527,8 +575,12 @@ NB_MODULE(_core, m) {
         .def_ro("model", &miter::TrainResult::model)
         .def_ro("train_loss", &miter::TrainResult::train_loss)
         .def_ro("valid_loss", &miter::TrainResult::valid_loss)
-        .def("final_train_scores",
-             [](const miter::TrainResult& tr) { return vec_to_ndarray_1d(tr.final_train_scores); });
+        .def("final_train_scores", [](const miter::TrainResult& tr) {
+            const std::uint32_t k_out = model_output_width(tr.model);
+            const std::size_t n_rows =
+                tr.final_train_scores.size() / static_cast<std::size_t>(k_out);
+            return vec_to_ndarray_outputs(tr.final_train_scores, n_rows, k_out);
+        });
 
     nb::class_<miter::TransformedData>(m, "TransformedData")
         .def_ro("n_rows", &miter::TransformedData::n_rows)
@@ -668,6 +720,8 @@ NB_MODULE(_core, m) {
              nb::arg("num_cols"), nb::arg("cat_vocabs"), nb::arg("cat_indices"));
     m.def("proba_from_raw", &proba_from_raw_py, nb::arg("raw"),
           "Class probabilities [1 - p, p] from raw scores (miter's sigmoid).");
+    m.def("proba_softmax_from_raw", &proba_softmax_from_raw_py, nb::arg("raw").noconvert(),
+          "Multiclass probabilities from raw margin matrix (n_rows, n_classes) via softmax.");
     m.def("predict_raw_f64", &predict_raw_py<double>, nb::arg("model"), nb::arg("arr").noconvert(),
           nb::arg("num_iteration") = 0);
     m.def("predict_raw_f32", &predict_raw_py<float>, nb::arg("model"), nb::arg("arr").noconvert(),

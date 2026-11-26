@@ -59,6 +59,10 @@ double axis_raw_threshold(const QuantizerInfo& q, std::uint16_t t) {
 }
 
 RawForest export_raw_forest(const Model& model, std::size_t num_iteration) {
+    if (model.objective == Objective::Multiclass || model.n_classes > 1U) {
+        throw std::invalid_argument(
+            "export_raw_forest: multiclass models use miter Evaluator in v1.1");
+    }
     RawForest out;
     out.init_score = model.init_score;
     out.objective = model.objective;

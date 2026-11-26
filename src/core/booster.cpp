@@ -91,6 +91,156 @@ TrainResult fit_booster(const Dataset& ds, Objective objective, std::span<const 
                         std::span<const double> y_valid,
                         std::span<const double> valid_sample_weight, const Params& params) {
     validate_params(params);
+    if (objective == Objective::Multiclass) {
+        const std::uint32_t k_classes = infer_and_validate_multiclass_targets(y, sample_weight, 0U);
+        const auto K = static_cast<std::size_t>(k_classes);
+        const bool has_valid = (valid_ds != nullptr);
+        if (has_valid) {
+            if (valid_ds->n_features != ds.n_features() ||
+                valid_ds->n_num_features != ds.n_num_features()) {
+                throw std::invalid_argument("Validation dataset feature count mismatch");
+            }
+            if (y_valid.size() != valid_ds->n_rows) {
+                throw std::invalid_argument("Validation target y_valid length mismatch");
+            }
+            infer_and_validate_multiclass_targets(y_valid, valid_sample_weight, k_classes);
+        }
+
+        const std::size_t n = ds.n_rows();
+        const std::size_t p = ds.n_features();
+
+        Model model;
+        model.miter_version = std::string(version());
+        model.objective = Objective::Multiclass;
+        model.init_score = 0.0;
+        model.n_classes = k_classes;
+        model.init_scores =
+            compute_multiclass_init_scores(y, sample_weight, k_classes, params.n_jobs);
+        model.learning_rate = params.learning_rate;
+        model.n_features = p;
+        model.params = params;
+        model.feature_names = ds.feature_names();
+        model.feature_kinds.resize(p);
+        model.quantizers.resize(p);
+        model.cat_features.resize(p);
+        std::vector<std::size_t> feature_to_num_idx(p, 0U);
+
+        const auto& kinds = ds.feature_kinds();
+        for (std::size_t f = 0; f < p; ++f) {
+            model.feature_kinds[f] = (kinds[f] == FeatureKind::Categorical) ? 1U : 0U;
+        }
+        const auto& num_indices = ds.num_feature_indices();
+        for (std::size_t j = 0; j < num_indices.size(); ++j) {
+            const std::size_t f = num_indices[j];
+            const auto& q = ds.quantizer(j);
+            model.quantizers[f] = QuantizerInfo{q.lo, q.scale, q.is_constant};
+            feature_to_num_idx[f] = j;
+        }
+        for (const std::size_t f : ds.cat_feature_indices()) {
+            model.cat_features[f].categories = ds.cat_encoder(f).categories;
+        }
+
+        std::vector<double> scores(K * n);
+        std::vector<double> valid_scores(has_valid ? K * valid_ds->n_rows : 0U);
+        for (std::size_t k = 0; k < K; ++k) {
+            std::fill(scores.begin() + static_cast<std::ptrdiff_t>(k * n),
+                      scores.begin() + static_cast<std::ptrdiff_t>((k + 1U) * n),
+                      model.init_scores[k]);
+            if (has_valid) {
+                std::fill(valid_scores.begin() + static_cast<std::ptrdiff_t>(k * valid_ds->n_rows),
+                          valid_scores.begin() +
+                              static_cast<std::ptrdiff_t>((k + 1U) * valid_ds->n_rows),
+                          model.init_scores[k]);
+            }
+        }
+        std::vector<float> g(K * n);
+        std::vector<float> h(K * n);
+
+        TreeWorkspace ws;
+        ws.prepare(ds, params);
+
+        TrainResult result;
+        result.train_loss.reserve(static_cast<std::size_t>(params.n_estimators));
+        if (has_valid) {
+            result.valid_loss.reserve(static_cast<std::size_t>(params.n_estimators));
+        }
+
+        double best_val = std::numeric_limits<double>::infinity();
+        std::size_t best_iter = 0U;
+        int since_best = 0;
+        const auto start_clock = std::chrono::steady_clock::now();
+
+        for (int t = 0; t < params.n_estimators; ++t) {
+            if (params.time_limit > 0.0 && t > 0) {
+                const double elapsed =
+                    std::chrono::duration<double>(std::chrono::steady_clock::now() - start_clock)
+                        .count();
+                if (elapsed >= params.time_limit) {
+                    break;
+                }
+            }
+
+            compute_multiclass_gradients(scores.data(), n, k_classes, y, sample_weight, g.data(),
+                                         h.data(), params.n_jobs);
+            for (std::size_t k = 0; k < K; ++k) {
+                Tree tree =
+                    grow_tree(ds, g.data() + k * n, h.data() + k * n, params,
+                              static_cast<std::size_t>(t) * K + k, ws, scores.data() + k * n);
+                model.trees.push_back(std::move(tree));
+            }
+
+            result.train_loss.push_back(compute_multiclass_loss(scores.data(), n, k_classes, y,
+                                                                sample_weight, params.n_jobs));
+
+            if (has_valid) {
+                const std::int16_t* valid_codes =
+                    (valid_ds->n_num_features > 0U) ? valid_ds->codes_col_major.data() : nullptr;
+                const std::size_t tree_base = model.trees.size() - K;
+                for (std::size_t k = 0; k < K; ++k) {
+                    Evaluator::add_tree_predictions_from_codes(
+                        model.trees[tree_base + k], valid_codes, valid_ds->n_rows,
+                        valid_ds->n_num_features, feature_to_num_idx,
+                        valid_scores.data() + k * valid_ds->n_rows, valid_ds->bins_col_major.data(),
+                        params.n_jobs);
+                }
+                const double vloss =
+                    compute_multiclass_loss(valid_scores.data(), valid_ds->n_rows, k_classes,
+                                            y_valid, valid_sample_weight, params.n_jobs);
+                result.valid_loss.push_back(vloss);
+
+                if (vloss < best_val - 1e-12) {
+                    best_val = vloss;
+                    best_iter = model.trees.size() / K;
+                    since_best = 0;
+                } else {
+                    ++since_best;
+                    if (params.early_stopping_rounds > 0 &&
+                        since_best >= params.early_stopping_rounds) {
+                        break;
+                    }
+                }
+            }
+        }
+
+        if (has_valid && best_iter > 0U) {
+            model.best_iteration = best_iter;
+            model.trees.resize(best_iter * K);
+        } else {
+            model.best_iteration = model.trees.size() / K;
+        }
+
+        // Convert class-major scores [k * n + i] -> row-major [i * K + k] to match Evaluator.
+        std::vector<double> row_major_scores(K * n);
+        for (std::size_t i = 0; i < n; ++i) {
+            for (std::size_t k = 0; k < K; ++k) {
+                row_major_scores[i * K + k] = scores[k * n + i];
+            }
+        }
+        result.model = std::move(model);
+        result.final_train_scores = std::move(row_major_scores);
+        return result;
+    }
+
     if (y.size() != ds.n_rows()) {
         throw std::invalid_argument("Target array y length must match dataset n_rows");
     }

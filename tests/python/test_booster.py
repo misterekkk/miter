@@ -63,8 +63,11 @@ def test_classifier_binary_early_stopping_and_errors(tmp_path: Path) -> None:
     loaded = MiterClassifier.load_model(str(path))
     np.testing.assert_array_equal(loaded.predict_proba(X_va), proba)
 
-    with pytest.raises(ValueError, match="binary classification only"):
-        MiterClassifier(n_estimators=5).fit(X_tr, np.array([0, 1, 2] * 60))
+    with pytest.raises(ValueError, match="1 class"):
+        MiterClassifier(n_estimators=5).fit(X_tr, np.zeros(len(X_tr), dtype=np.int64))
+
+    clf3 = MiterClassifier(n_estimators=5).fit(X_tr, np.array([0, 1, 2] * 60))
+    assert clf3.predict_proba(X_va).shape == (60, 3)
 
 
 def test_pandas_feature_name_validation_and_sample_weight() -> None:

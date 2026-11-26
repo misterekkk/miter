@@ -1,6 +1,7 @@
 #include "model/evaluator.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <stdexcept>
@@ -102,7 +103,9 @@ double eval_tree_u16(const Tree& tree, const std::uint16_t* row_codes) noexcept 
 
 std::vector<std::uint64_t> Model::feature_importances_split() const {
     std::vector<std::uint64_t> counts(n_features, 0U);
-    const std::size_t n_trees = std::min(best_iteration, trees.size());
+    const std::size_t stride_k =
+        (objective == Objective::Multiclass && n_classes > 1U) ? n_classes : 1U;
+    const std::size_t n_trees = std::min(best_iteration * stride_k, trees.size());
     for (std::size_t t = 0; t < n_trees; ++t) {
         const auto& tree = trees[t];
         for (const Node& node : tree.nodes) {
@@ -134,7 +137,9 @@ std::vector<std::uint64_t> Model::feature_importances_split() const {
 
 std::vector<double> Model::feature_importances_gain() const {
     std::vector<double> gains(n_features, 0.0);
-    const std::size_t n_trees = std::min(best_iteration, trees.size());
+    const std::size_t stride_k =
+        (objective == Objective::Multiclass && n_classes > 1U) ? n_classes : 1U;
+    const std::size_t n_trees = std::min(best_iteration * stride_k, trees.size());
     for (std::size_t t = 0; t < n_trees; ++t) {
         const auto& tree = trees[t];
         for (const Node& node : tree.nodes) {
@@ -210,9 +215,16 @@ void Evaluator::predict_raw_views(const Model& model, std::size_t n_rows,
         }
     }
 
-    const std::size_t max_trees = (num_iteration == 0U)
-                                      ? std::min(model.best_iteration, model.trees.size())
-                                      : std::min(num_iteration, model.trees.size());
+    const std::size_t K = (model.objective == Objective::Multiclass && model.n_classes > 1U)
+                              ? static_cast<std::size_t>(model.n_classes)
+                              : 1U;
+    if (K > 1U && model.init_scores.size() != K) {
+        throw std::invalid_argument("Multiclass model init_scores size mismatch");
+    }
+    const std::size_t max_rounds_avail = model.trees.size() / K;
+    const std::size_t n_rounds = (num_iteration == 0U)
+                                     ? std::min(model.best_iteration, max_rounds_avail)
+                                     : std::min(num_iteration, max_rounds_avail);
 
     std::vector<Q16Quantizer> quantizers(p);
     for (std::size_t f = 0; f < p; ++f) {
@@ -243,13 +255,27 @@ void Evaluator::predict_raw_views(const Model& model, std::size_t n_rows,
             }
         }
 
-        for (std::size_t r = 0; r < blk; ++r) {
-            double score = model.init_score;
-            const std::uint16_t* row_codes = block_codes + r * p;
-            for (std::size_t t = 0; t < max_trees; ++t) {
-                score += eval_tree_u16(model.trees[t], row_codes);
+        if (K == 1U) {
+            for (std::size_t r = 0; r < blk; ++r) {
+                double score = model.init_score;
+                const std::uint16_t* row_codes = block_codes + r * p;
+                for (std::size_t t = 0; t < n_rounds; ++t) {
+                    score += eval_tree_u16(model.trees[t], row_codes);
+                }
+                out[base + r] = score;
             }
-            out[base + r] = score;
+        } else {
+            for (std::size_t r = 0; r < blk; ++r) {
+                const std::uint16_t* row_codes = block_codes + r * p;
+                double* dst = out + (base + r) * K;
+                for (std::size_t k = 0; k < K; ++k) {
+                    double score = model.init_scores[k];
+                    for (std::size_t t = 0; t < n_rounds; ++t) {
+                        score += eval_tree_u16(model.trees[t * K + k], row_codes);
+                    }
+                    dst[k] = score;
+                }
+            }
         }
     };
 
@@ -345,9 +371,16 @@ void Evaluator::predict_raw_mixed(const Model& model, std::size_t n_rows,
         }
     }
 
-    const std::size_t max_trees = (num_iteration == 0U)
-                                      ? std::min(model.best_iteration, model.trees.size())
-                                      : std::min(num_iteration, model.trees.size());
+    const std::size_t K = (model.objective == Objective::Multiclass && model.n_classes > 1U)
+                              ? static_cast<std::size_t>(model.n_classes)
+                              : 1U;
+    if (K > 1U && model.init_scores.size() != K) {
+        throw std::invalid_argument("Multiclass model init_scores size mismatch");
+    }
+    const std::size_t max_rounds_avail = model.trees.size() / K;
+    const std::size_t n_rounds = (num_iteration == 0U)
+                                     ? std::min(model.best_iteration, max_rounds_avail)
+                                     : std::min(num_iteration, max_rounds_avail);
 
     const std::size_t n_blocks = (n_rows + kEvalBlockRows - 1U) / kEvalBlockRows;
     const int n_threads = resolve_num_threads(n_jobs);
@@ -384,13 +417,27 @@ void Evaluator::predict_raw_mixed(const Model& model, std::size_t n_rows,
             }
         }
 
-        for (std::size_t r = 0; r < blk; ++r) {
-            double score = model.init_score;
-            const std::uint16_t* row_codes = block_codes + r * p;
-            for (std::size_t t = 0; t < max_trees; ++t) {
-                score += eval_tree_u16(model.trees[t], row_codes);
+        if (K == 1U) {
+            for (std::size_t r = 0; r < blk; ++r) {
+                double score = model.init_score;
+                const std::uint16_t* row_codes = block_codes + r * p;
+                for (std::size_t t = 0; t < n_rounds; ++t) {
+                    score += eval_tree_u16(model.trees[t], row_codes);
+                }
+                out[base + r] = score;
             }
-            out[base + r] = score;
+        } else {
+            for (std::size_t r = 0; r < blk; ++r) {
+                const std::uint16_t* row_codes = block_codes + r * p;
+                double* dst = out + (base + r) * K;
+                for (std::size_t k = 0; k < K; ++k) {
+                    double score = model.init_scores[k];
+                    for (std::size_t t = 0; t < n_rounds; ++t) {
+                        score += eval_tree_u16(model.trees[t * K + k], row_codes);
+                    }
+                    dst[k] = score;
+                }
+            }
         }
     };
 
@@ -418,6 +465,38 @@ void Evaluator::predict_proba_from_raw(const double* raw, std::size_t n_rows, do
         const double p1 = sigmoid(raw[i]);
         proba_2col[2U * i] = 1.0 - p1;
         proba_2col[2U * i + 1U] = p1;
+    }
+}
+
+void Evaluator::predict_proba_softmax(const double* raw, std::size_t n_rows,
+                                      std::uint32_t n_classes, double* proba_out) {
+    if (n_rows == 0U) {
+        return;
+    }
+    if (raw == nullptr || proba_out == nullptr) {
+        throw std::invalid_argument("Evaluator::predict_proba_softmax received null pointer");
+    }
+    if (n_classes < 2U) {
+        throw std::invalid_argument("predict_proba_softmax requires n_classes >= 2");
+    }
+    const auto K = static_cast<std::size_t>(n_classes);
+    for (std::size_t i = 0; i < n_rows; ++i) {
+        const double* src = raw + i * K;
+        double* dst = proba_out + i * K;
+        double max_z = src[0];
+        for (std::size_t k = 1U; k < K; ++k) {
+            max_z = std::max(max_z, src[k]);
+        }
+        double sum_exp = 0.0;
+        for (std::size_t k = 0U; k < K; ++k) {
+            const double e = std::exp(src[k] - max_z);
+            dst[k] = e;
+            sum_exp += e;
+        }
+        const double inv_sum = 1.0 / sum_exp;
+        for (std::size_t k = 0U; k < K; ++k) {
+            dst[k] *= inv_sum;
+        }
     }
 }
 

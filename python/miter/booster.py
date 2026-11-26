@@ -458,6 +458,8 @@ class _BaseMiterEstimator(_SklearnBase):
         evaluator predicts it then, with the same results.
         """
         model = self._check_fitted()
+        if model.objective == _core.Objective.Multiclass:
+            return None
         cache: dict[int, _core.LignumPredictor | None] | None = getattr(self, "_lignum_cache", None)
         if cache is None:
             cache = {}
@@ -640,15 +642,15 @@ class MiterRegressor(_RegressorMixin, _BaseMiterEstimator):
 
 
 class MiterClassifier(_ClassifierMixin, _BaseMiterEstimator):
-    """Gradient-boosted decision tree binary classifier (log-loss)."""
+    """Gradient-boosted decision tree classifier (binary log-loss and multiclass softmax)."""
 
     def __sklearn_tags__(self) -> Any:
         tags = super().__sklearn_tags__()
-        tags.classifier_tags.multi_class = False
+        tags.classifier_tags.multi_class = True
         return tags
 
     def _more_tags(self) -> dict[str, Any]:  # scikit-learn < 1.6
-        return {"allow_nan": True, "binary_only": True}
+        return {"allow_nan": True}
 
     _objective = _core.Objective.Binary
 
@@ -656,24 +658,36 @@ class MiterClassifier(_ClassifierMixin, _BaseMiterEstimator):
         arr = np.asarray(y)
         if arr.ndim != 1:
             arr = arr.ravel()
+        if arr.dtype.kind == "f" and np.isnan(arr).any():
+            raise ValueError("Input y contains NaN.")
+        if arr.dtype.kind == "O" and any(v is None or (isinstance(v, float) and np.isnan(v)) for v in arr):
+            raise ValueError("Input y contains NaN.")
+        if arr.dtype.kind == "f" and not np.array_equal(arr, np.round(arr)):
+            raise ValueError("Unknown label type: continuous. Discrete class labels are expected.")
         if is_fit:
-            if arr.dtype.kind == "f" and np.isnan(arr).any():
-                raise ValueError("Input y contains NaN.")
-            if arr.dtype.kind == "f" and not np.array_equal(arr, np.round(arr)):
-                raise ValueError("Unknown label type: continuous. Binary class labels are expected.")
             classes = np.unique(arr)
-            if len(classes) != 2:
+            if len(classes) < 2:
+                unit = "class" if len(classes) == 1 else "classes"
                 raise ValueError(
-                    "Only binary classification is supported. MiterClassifier v1.0 supports binary "
-                    f"classification only; got {len(classes)} classes (multiclass is planned for v1.1)"
+                    f"MiterClassifier requires at least 2 distinct classes; got {len(classes)} {unit}"
                 )
             self.classes_ = classes
-        if np.array_equal(self.classes_, np.array([0, 1])) or np.array_equal(
-            self.classes_, np.array([0.0, 1.0])
-        ):
-            return np.ascontiguousarray(arr, dtype=np.float64)
-        mapping = {self.classes_[0]: 0.0, self.classes_[1]: 1.0}
-        return np.array([mapping[v] for v in arr], dtype=np.float64)
+            self._objective = _core.Objective.Binary if len(classes) == 2 else _core.Objective.Multiclass
+        if len(self.classes_) == 2:
+            if np.array_equal(self.classes_, np.array([0, 1])) or np.array_equal(
+                self.classes_, np.array([0.0, 1.0])
+            ):
+                if not is_fit and not np.all(np.isin(arr, self.classes_)):
+                    raise ValueError("Validation target y contains unseen class labels")
+                return np.ascontiguousarray(arr, dtype=np.float64)
+            if not is_fit and not np.all(np.isin(arr, self.classes_)):
+                raise ValueError("Validation target y contains unseen class labels")
+            mapping = {self.classes_[0]: 0.0, self.classes_[1]: 1.0}
+            return np.array([mapping[v] for v in arr], dtype=np.float64)
+        if not is_fit and not np.all(np.isin(arr, self.classes_)):
+            raise ValueError("Validation target y contains unseen class labels")
+        idx = np.searchsorted(self.classes_, arr)
+        return np.ascontiguousarray(idx, dtype=np.float64)
 
     def fit(
         self,
@@ -694,20 +708,25 @@ class MiterClassifier(_ClassifierMixin, _BaseMiterEstimator):
         return self
 
     def predict_proba(self, X: Any, num_iteration: int | None = None) -> NDArray[np.float64]:
-        # Raw scores through lignum, then miter's sigmoid (bitwise equal to miter's evaluator).
+        # Binary: lignum raw scores + miter sigmoid; Multiclass: miter Evaluator + softmax.
+        model = self._check_fitted()
         raw = self._predict_raw(X, num_iteration=num_iteration)
+        if model.objective == _core.Objective.Multiclass:
+            return _core.proba_softmax_from_raw(np.ascontiguousarray(raw, dtype=np.float64))
         return _core.proba_from_raw(np.ascontiguousarray(raw, dtype=np.float64))
 
     def predict(self, X: Any, num_iteration: int | None = None) -> NDArray[Any]:
         proba = self.predict_proba(X, num_iteration=num_iteration)
-        classes = getattr(self, "classes_", np.array([0, 1]))
+        classes = getattr(self, "classes_", np.arange(proba.shape[1]))
         return classes[np.argmax(proba, axis=1)]
 
     @classmethod
     def load_model(cls, path: str) -> MiterClassifier:
         model = _core.load_model_json(str(path))
-        if model.objective != _core.Objective.Binary:
-            raise ValueError("Loaded model is not a binary classification model")
+        if model.objective not in (_core.Objective.Binary, _core.Objective.Multiclass):
+            raise ValueError("Loaded model is not a classification model")
         est: MiterClassifier = cls._from_core_model(model)
-        est.classes_ = np.array([0, 1])
+        est._objective = model.objective
+        k = int(model.n_classes) if model.objective == _core.Objective.Multiclass else 2
+        est.classes_ = np.arange(k)
         return est

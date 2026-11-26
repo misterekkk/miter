@@ -13,6 +13,7 @@ namespace miter {
 enum class Objective : std::uint8_t {
     Regression = 0,
     Binary = 1,
+    Multiclass = 2,
 };
 
 enum class NodeKind : std::uint8_t {
@@ -81,6 +82,8 @@ struct Model {
     std::string miter_version;
     Objective objective = Objective::Regression;
     double init_score = 0.0;
+    std::uint32_t n_classes = 1;
+    std::vector<double> init_scores;
     double learning_rate = 0.05;
     std::size_t n_features = 0;
     std::size_t best_iteration = 0;

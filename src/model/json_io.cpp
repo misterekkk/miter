@@ -367,7 +367,13 @@ const JsonValue& require_field(const JsonObject& obj, std::string_view key) {
 }
 
 std::string_view objective_to_str(Objective obj) {
-    return (obj == Objective::Regression) ? "regression" : "binary";
+    if (obj == Objective::Regression) {
+        return "regression";
+    }
+    if (obj == Objective::Binary) {
+        return "binary";
+    }
+    return "multiclass";
 }
 
 Objective objective_from_str(std::string_view s) {
@@ -376,6 +382,9 @@ Objective objective_from_str(std::string_view s) {
     }
     if (s == "binary") {
         return Objective::Binary;
+    }
+    if (s == "multiclass") {
+        return Objective::Multiclass;
     }
     throw std::runtime_error("Unsupported objective in model JSON");
 }
@@ -426,6 +435,17 @@ std::string model_to_json(const Model& model) {
     write_escaped_string(os, objective_to_str(model.objective));
     os << ",\n";
     os << "  \"init_score\": " << model.init_score << ",\n";
+    if (model.objective == Objective::Multiclass || model.n_classes > 1U) {
+        os << "  \"n_classes\": " << model.n_classes << ",\n";
+        os << "  \"init_scores\": [";
+        for (std::size_t k = 0; k < model.init_scores.size(); ++k) {
+            if (k > 0U) {
+                os << ", ";
+            }
+            os << model.init_scores[k];
+        }
+        os << "],\n";
+    }
     os << "  \"learning_rate\": " << model.learning_rate << ",\n";
     os << "  \"n_features\": " << model.n_features << ",\n";
     os << "  \"best_iteration\": " << model.best_iteration << ",\n";
@@ -599,6 +619,22 @@ Model model_from_json(std::string_view json_text) {
     model.miter_version = require_field(root, "miter_version").as_string();
     model.objective = objective_from_str(require_field(root, "objective").as_string());
     model.init_score = require_field(root, "init_score").as_double();
+    if (const auto nc_it = root.find("n_classes"); nc_it != root.end()) {
+        const std::int64_t nc = nc_it->second.as_i64();
+        if (nc < 1) {
+            throw std::runtime_error("Invalid n_classes in model JSON");
+        }
+        model.n_classes = static_cast<std::uint32_t>(nc);
+    }
+    if (const auto is_it = root.find("init_scores"); is_it != root.end()) {
+        for (const auto& sv : is_it->second.as_array()) {
+            model.init_scores.push_back(sv.as_double());
+        }
+    }
+    if (model.objective == Objective::Multiclass &&
+        (model.n_classes < 2U || model.init_scores.size() != model.n_classes)) {
+        throw std::runtime_error("Multiclass model JSON missing valid n_classes / init_scores");
+    }
     model.learning_rate = require_field(root, "learning_rate").as_double();
     const std::int64_t n_feat_i64 = require_field(root, "n_features").as_i64();
     const std::int64_t best_iter_i64 = require_field(root, "best_iteration").as_i64();
