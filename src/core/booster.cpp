@@ -213,7 +213,7 @@ TrainResult fit_booster(const Dataset& ds, Objective objective, std::span<const 
         std::vector<double> mc_class_y;
         std::vector<double> mc_class_prior;
         if (ctr_active) {
-            ctr_state.prepare(ds, params);
+            ctr_state.prepare(ds, params, K);
             if (ctr_state.effective_max_complexity == 0) {
                 ctr_active = false;
             }
@@ -399,7 +399,7 @@ TrainResult fit_booster(const Dataset& ds, Objective objective, std::span<const 
     CtrTrainingState ctr_state;
     CtrGrowContext ctr_ctx;
     if (ctr_active) {
-        ctr_state.prepare(ds, params);
+        ctr_state.prepare(ds, params, objective == Objective::Binary ? 2U : 1U);
         if (ctr_state.effective_max_complexity == 0) {
             ctr_active = false;
         }

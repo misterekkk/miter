@@ -504,10 +504,19 @@ TEST(CtrTest, ResolveEffectiveCtrComplexity) {
         prm.max_cat_to_onehot = 4;
 
         EXPECT_EQ(miter::resolve_effective_ctr_complexity(ds_small, {3U, 3U}, prm), 0);
-        EXPECT_EQ(miter::resolve_effective_ctr_complexity(ds_small, {10U, 3U}, prm), 1);
+        EXPECT_EQ(miter::resolve_effective_ctr_complexity(ds_small, {10U, 3U}, prm), 0);
+        EXPECT_EQ(miter::resolve_effective_ctr_complexity(ds_small, {20U, 3U}, prm), 1);
         EXPECT_EQ(miter::resolve_effective_ctr_complexity(ds_mid, {10U, 10U}, prm), 2);
         EXPECT_EQ(miter::resolve_effective_ctr_complexity(ds_large2, {10U, 10U}, prm), 2);
         EXPECT_EQ(miter::resolve_effective_ctr_complexity(ds_large3, {10U, 10U, 10U}, prm), 3);
+
+        // 4. Multiclass sample-per-class guard (n < 300 * n_classes requires card > 16).
+        const auto ds_mc_2k = make_multi(2000U, 2U);
+        EXPECT_EQ(miter::resolve_effective_ctr_complexity(ds_mc_2k, {10U, 10U}, prm, 10U), 0);
+        EXPECT_EQ(miter::resolve_effective_ctr_complexity(ds_mc_2k, {20U, 10U}, prm, 10U), 1);
+        EXPECT_EQ(miter::resolve_effective_ctr_complexity(ds_mid, {10U, 10U}, prm, 10U), 2);
+        prm.max_ctr_complexity = 1;
+        EXPECT_EQ(miter::resolve_effective_ctr_complexity(ds_small, {3U, 3U}, prm, 5U), 1);
     }
 }
 

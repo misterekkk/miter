@@ -65,6 +65,12 @@ _FORWARDED = (
     "feature_fraction",
     "bagging_fraction",
     "extra_trees",
+    "quantizer",
+    "max_ctr_complexity",
+    "ctr_prior_weight",
+    "ctr_n_permutations",
+    "ctr_max_borders",
+    "ctr_model_size_reg",
 )
 
 
@@ -283,6 +289,68 @@ def generate_configs_miter_v11(num_random_configs: int = 7, seed: int = 1234) ->
     out = []
     for config in configs:
         out.append({k: v.item() if isinstance(v, np.generic) else v for k, v in dict(config).items() if v is not None})
+    return out
+
+
+def generate_configs_miter_v12(num_random_configs: int = 19, seed: int = 1234) -> list[dict[str, Any]]:
+    """v1.2 search space adding ``quantizer`` and native C++ online ordered CTRs."""
+    from ConfigSpace import (
+        Categorical,
+        ConfigurationSpace,
+        EqualsCondition,
+        Float,
+        Integer,
+    )
+
+    gp = Categorical("grow_policy", ["leafwise", "symmetric"])
+    nl = Integer("num_leaves", (4, 128), log=True)
+    md = Integer("max_depth", (4, 8))
+    mcc = Categorical("max_ctr_complexity", [0, -1])
+    ctr_p = Categorical("ctr_n_permutations", [1, 4])
+    ctr_pw = Float("ctr_prior_weight", (0.5, 5.0), log=True)
+    ctr_reg = Float("ctr_model_size_reg", (0.1, 2.0), log=True)
+    space = ConfigurationSpace(
+        space=[
+            Float("learning_rate", (1e-2, 1e-1), log=True),
+            gp,
+            nl,
+            md,
+            Integer("min_data_in_leaf", (1, 64), log=True),
+            Float("lambda_l2", (1e-3, 10.0), log=True),
+            Categorical("m_mult", [1, 2, 4]),
+            Float("feature_fraction", (0.5, 1.0)),
+            Categorical("extra_trees", [False, True]),
+            Categorical("quantizer", ["linear", "auto", "quantile"]),
+            mcc,
+            ctr_p,
+            ctr_pw,
+            ctr_reg,
+            Integer("min_data_per_group", (2, 100), log=True),
+            Float("cat_l2", (5e-3, 10.0), log=True),
+            Float("cat_smooth", (1e-3, 100.0), log=True),
+            Integer("max_cat_to_onehot", (4, 64), log=True),
+        ],
+        seed=seed,
+    )
+    space.add(
+        [
+            EqualsCondition(nl, gp, "leafwise"),
+            EqualsCondition(md, gp, "symmetric"),
+            EqualsCondition(mcc, gp, "symmetric"),
+            EqualsCondition(ctr_p, mcc, -1),
+            EqualsCondition(ctr_pw, mcc, -1),
+            EqualsCondition(ctr_reg, mcc, -1),
+        ]
+    )
+    configs = space.sample_configuration(num_random_configs)
+    if num_random_configs == 1:
+        configs = [configs]
+    out: list[dict[str, Any]] = []
+    for config in configs:
+        d = {k: v.item() if isinstance(v, np.generic) else v for k, v in dict(config).items() if v is not None}
+        if d.get("max_ctr_complexity") == -1:
+            d["max_ctr_complexity"] = "auto"
+        out.append(d)
     return out
 
 

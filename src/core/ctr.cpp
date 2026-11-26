@@ -260,7 +260,7 @@ std::size_t CtrCacheKeyHash::operator()(const CtrCacheKey& k) const noexcept {
 
 int resolve_effective_ctr_complexity(const Dataset& ds,
                                      const std::vector<std::size_t>& cat_cardinalities,
-                                     const Params& params) noexcept {
+                                     const Params& params, std::size_t n_classes) noexcept {
     if (params.max_ctr_complexity >= 0) {
         return params.max_ctr_complexity;
     }
@@ -274,22 +274,29 @@ int resolve_effective_ctr_complexity(const Dataset& ds,
         return 0;
     }
     const auto onehot_max = static_cast<std::size_t>(params.max_cat_to_onehot);
+    const std::size_t high_card_guard = std::max<std::size_t>(onehot_max, 16U);
     std::size_t n_high_card = 0U;
+    std::size_t n_very_high_card = 0U;
     for (const std::size_t card : cat_cardinalities) {
         if (card > onehot_max) {
             ++n_high_card;
         }
+        if (card > high_card_guard) {
+            ++n_very_high_card;
+        }
+    }
+    const std::size_t eff_classes = std::max<std::size_t>(n_classes, 1U);
+    const bool is_small_sample = (n < 1500U) || (n < 300U * eff_classes);
+    if (is_small_sample) {
+        return (n_very_high_card >= 1U) ? 1 : 0;
     }
     if (p_cat == 1U) {
-        if (params.ctr_num_combinations && has_num && n >= 1500U) {
+        if (params.ctr_num_combinations && has_num) {
             if (params.ctr_num_skip_onehot && n_high_card == 0U) {
                 return 0;
             }
             return 2;
         }
-        return (n_high_card >= 1U) ? 1 : 0;
-    }
-    if (n < 1500U) {
         return (n_high_card >= 1U) ? 1 : 0;
     }
     if (n < 8000U) {
@@ -301,7 +308,7 @@ int resolve_effective_ctr_complexity(const Dataset& ds,
     return 2;
 }
 
-void CtrTrainingState::prepare(const Dataset& ds, const Params& params) {
+void CtrTrainingState::prepare(const Dataset& ds, const Params& params, std::size_t n_classes) {
     n_rows = ds.n_rows();
     n_perms = static_cast<std::size_t>(std::max(params.ctr_n_permutations, 1));
     perms.resize(n_perms);
@@ -350,7 +357,8 @@ void CtrTrainingState::prepare(const Dataset& ds, const Params& params) {
         }
     }
 
-    effective_max_complexity = resolve_effective_ctr_complexity(ds, cat_cardinalities, params);
+    effective_max_complexity =
+        resolve_effective_ctr_complexity(ds, cat_cardinalities, params, n_classes);
     cache.clear();
     cache_bytes = 0U;
     win_ctr_bins.resize(n_rows);

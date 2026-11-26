@@ -95,7 +95,7 @@ struct CtrThreadScratch {
 
 class CtrTrainingState {
 public:
-    void prepare(const Dataset& ds, const Params& params);
+    void prepare(const Dataset& ds, const Params& params, std::size_t n_classes = 1U);
 
     std::size_t n_rows = 0;
     std::size_t n_perms = 0;
@@ -124,7 +124,7 @@ public:
 // Resolve effective max CTR complexity (-1 = auto, else clamp/pass params.max_ctr_complexity).
 int resolve_effective_ctr_complexity(const Dataset& ds,
                                      const std::vector<std::size_t>& cat_cardinalities,
-                                     const Params& params) noexcept;
+                                     const Params& params, std::size_t n_classes = 1U) noexcept;
 
 // Compute projection hashes for all rows [0, n_rows) in dataset.
 void compute_projection_hashes(const Dataset& ds, const CtrProjection& proj,
