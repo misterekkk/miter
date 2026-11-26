@@ -540,13 +540,21 @@ NB_MODULE(_core, m) {
         .def_rw("random_state", &miter::Params::random_state)
         .def_rw("feature_fraction", &miter::Params::feature_fraction)
         .def_rw("bagging_fraction", &miter::Params::bagging_fraction)
-        .def_rw("extra_trees", &miter::Params::extra_trees);
+        .def_rw("extra_trees", &miter::Params::extra_trees)
+        .def_rw("max_ctr_complexity", &miter::Params::max_ctr_complexity)
+        .def_rw("ctr_prior_weight", &miter::Params::ctr_prior_weight)
+        .def_rw("ctr_n_permutations", &miter::Params::ctr_n_permutations)
+        .def_rw("ctr_max_borders", &miter::Params::ctr_max_borders);
 
     nb::class_<miter::Model>(m, "Model")
         .def_ro("miter_version", &miter::Model::miter_version)
         .def_ro("objective", &miter::Model::objective)
         .def_ro("init_score", &miter::Model::init_score)
         .def_ro("n_classes", &miter::Model::n_classes)
+        .def_prop_ro("n_ctr_tables",
+                     [](const miter::Model& model) { return model.ctr_tables.size(); })
+        .def_prop_ro("n_ctr_projections",
+                     [](const miter::Model& model) { return model.ctr_projections.size(); })
         .def_prop_ro("init_scores",
                      [](const miter::Model& model) { return vec_to_ndarray_1d(model.init_scores); })
         .def_ro("learning_rate", &miter::Model::learning_rate)

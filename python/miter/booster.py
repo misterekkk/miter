@@ -259,6 +259,10 @@ class _BaseMiterEstimator(_SklearnBase):
         cat_ctr_mode: str = "oof",
         cat_ctr_pairs: int = 0,
         cat_ctr_counter: bool = False,
+        max_ctr_complexity: int = 0,
+        ctr_prior_weight: float = 1.0,
+        ctr_n_permutations: int = 4,
+        ctr_max_borders: int = 15,
         early_stopping_rounds: int | None = 50,
         time_limit: float | None = None,
         n_jobs: int = -1,
@@ -293,6 +297,10 @@ class _BaseMiterEstimator(_SklearnBase):
         self.cat_ctr_mode = cat_ctr_mode
         self.cat_ctr_pairs = cat_ctr_pairs
         self.cat_ctr_counter = cat_ctr_counter
+        self.max_ctr_complexity = max_ctr_complexity
+        self.ctr_prior_weight = ctr_prior_weight
+        self.ctr_n_permutations = ctr_n_permutations
+        self.ctr_max_borders = ctr_max_borders
         self.early_stopping_rounds = early_stopping_rounds
         self.time_limit = time_limit
         self.n_jobs = n_jobs
@@ -371,6 +379,10 @@ class _BaseMiterEstimator(_SklearnBase):
         p.feature_fraction = float(self.feature_fraction)
         p.bagging_fraction = float(self.bagging_fraction)
         p.extra_trees = bool(self.extra_trees)
+        p.max_ctr_complexity = int(self.max_ctr_complexity)
+        p.ctr_prior_weight = float(self.ctr_prior_weight)
+        p.ctr_n_permutations = int(self.ctr_n_permutations)
+        p.ctr_max_borders = int(self.ctr_max_borders)
         return p
 
     def _check_fitted(self) -> _core.Model:
@@ -606,6 +618,10 @@ class _BaseMiterEstimator(_SklearnBase):
             feature_fraction=p.feature_fraction,
             bagging_fraction=p.bagging_fraction,
             extra_trees=p.extra_trees,
+            max_ctr_complexity=p.max_ctr_complexity,
+            ctr_prior_weight=p.ctr_prior_weight,
+            ctr_n_permutations=p.ctr_n_permutations,
+            ctr_max_borders=p.ctr_max_borders,
         )
         est._model = model
         est._lignum_cache = {}

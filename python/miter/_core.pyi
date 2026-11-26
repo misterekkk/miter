@@ -47,6 +47,10 @@ class Params:
     feature_fraction: float
     bagging_fraction: float
     extra_trees: bool
+    max_ctr_complexity: int
+    ctr_prior_weight: float
+    ctr_n_permutations: int
+    ctr_max_borders: int
     def __init__(self) -> None: ...
 
 class Model:
@@ -54,6 +58,10 @@ class Model:
     objective: Objective
     init_score: float
     n_classes: int
+    @property
+    def n_ctr_tables(self) -> int: ...
+    @property
+    def n_ctr_projections(self) -> int: ...
     @property
     def init_scores(self) -> NDArray[np.float64]: ...
     learning_rate: float
