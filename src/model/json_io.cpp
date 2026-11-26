@@ -524,6 +524,11 @@ std::string model_to_json(const Model& model) {
            << ", \"ctr_n_permutations\": " << model.params.ctr_n_permutations
            << ", \"ctr_max_borders\": " << model.params.ctr_max_borders;
     }
+    if (model.params.quantizer_mode == QuantizerMode::Quantile) {
+        os << ", \"quantizer_mode\": \"quantile\"";
+    } else if (model.params.quantizer_mode == QuantizerMode::Auto) {
+        os << ", \"quantizer_mode\": \"auto\"";
+    }
     os << "},\n";
 
     os << "  \"feature_names\": [";
@@ -551,7 +556,18 @@ std::string model_to_json(const Model& model) {
         }
         const auto& q = model.quantizers[i];
         os << "{\"lo\": " << q.lo << ", \"scale\": " << q.scale
-           << ", \"is_constant\": " << (q.is_constant ? "true" : "false") << "}";
+           << ", \"is_constant\": " << (q.is_constant ? "true" : "false");
+        if (!q.knots.empty()) {
+            os << ", \"knots\": [";
+            for (std::size_t ki = 0; ki < q.knots.size(); ++ki) {
+                if (ki > 0U) {
+                    os << ", ";
+                }
+                os << q.knots[ki];
+            }
+            os << "]";
+        }
+        os << "}";
     }
     os << "],\n";
 
@@ -815,6 +831,18 @@ Model model_from_json(std::string_view json_text) {
         if (const auto cmb = p.find("ctr_max_borders"); cmb != p.end()) {
             model.params.ctr_max_borders = static_cast<int>(cmb->second.as_i64());
         }
+        if (const auto qm = p.find("quantizer_mode"); qm != p.end()) {
+            const std::string& qmv = qm->second.as_string();
+            if (qmv == "linear") {
+                model.params.quantizer_mode = QuantizerMode::Linear;
+            } else if (qmv == "quantile") {
+                model.params.quantizer_mode = QuantizerMode::Quantile;
+            } else if (qmv == "auto") {
+                model.params.quantizer_mode = QuantizerMode::Auto;
+            } else {
+                throw std::runtime_error("Unknown quantizer_mode in model JSON");
+            }
+        }
     }
 
     for (const auto& fn : require_field(root, "feature_names").as_array()) {
@@ -833,7 +861,27 @@ Model model_from_json(std::string_view json_text) {
         q.lo = require_field(qo, "lo").as_double();
         q.scale = require_field(qo, "scale").as_double();
         q.is_constant = require_field(qo, "is_constant").as_bool();
-        model.quantizers.push_back(q);
+        if (const auto kn = qo.find("knots"); kn != qo.end()) {
+            const auto& karr = kn->second.as_array();
+            if (!karr.empty()) {
+                if (karr.size() < 2U) {
+                    throw std::runtime_error("Quantizer knots must have size >= 2 in model JSON");
+                }
+                q.knots.reserve(karr.size());
+                for (const auto& kv : karr) {
+                    const double val = kv.as_double();
+                    if (!std::isfinite(val)) {
+                        throw std::runtime_error("Quantizer knot must be finite in model JSON");
+                    }
+                    if (!q.knots.empty() && val <= q.knots.back()) {
+                        throw std::runtime_error(
+                            "Quantizer knots must be strictly increasing in model JSON");
+                    }
+                    q.knots.push_back(val);
+                }
+            }
+        }
+        model.quantizers.push_back(std::move(q));
     }
 
     if (const auto cf_it = root.find("cat_features"); cf_it != root.end()) {

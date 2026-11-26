@@ -263,6 +263,7 @@ class _BaseMiterEstimator(_SklearnBase):
         ctr_prior_weight: float = 1.0,
         ctr_n_permutations: int = 1,
         ctr_max_borders: int = 15,
+        quantizer: str = "linear",
         early_stopping_rounds: int | None = 50,
         time_limit: float | None = None,
         n_jobs: int = -1,
@@ -301,6 +302,7 @@ class _BaseMiterEstimator(_SklearnBase):
         self.ctr_prior_weight = ctr_prior_weight
         self.ctr_n_permutations = ctr_n_permutations
         self.ctr_max_borders = ctr_max_borders
+        self.quantizer = quantizer
         self.early_stopping_rounds = early_stopping_rounds
         self.time_limit = time_limit
         self.n_jobs = n_jobs
@@ -383,6 +385,16 @@ class _BaseMiterEstimator(_SklearnBase):
         p.ctr_prior_weight = float(self.ctr_prior_weight)
         p.ctr_n_permutations = int(self.ctr_n_permutations)
         p.ctr_max_borders = int(self.ctr_max_borders)
+        if self.quantizer == "linear":
+            p.quantizer_mode = _core.QuantizerMode.Linear
+        elif self.quantizer == "quantile":
+            p.quantizer_mode = _core.QuantizerMode.Quantile
+        elif self.quantizer == "auto":
+            p.quantizer_mode = _core.QuantizerMode.Auto
+        else:
+            raise ValueError(
+                f"quantizer must be 'linear', 'quantile', or 'auto', got {self.quantizer!r}"
+            )
         return p
 
     def _check_fitted(self) -> _core.Model:
@@ -453,6 +465,7 @@ class _BaseMiterEstimator(_SklearnBase):
             min_data_per_group=self.min_data_per_group,
             max_categories=self.max_categories,
             n_jobs=int(self.n_jobs),
+            quantizer_mode=self.quantizer,
         )
 
         valid_ds_inner = None
@@ -622,6 +635,11 @@ class _BaseMiterEstimator(_SklearnBase):
             ctr_prior_weight=p.ctr_prior_weight,
             ctr_n_permutations=p.ctr_n_permutations,
             ctr_max_borders=p.ctr_max_borders,
+            quantizer=(
+                "quantile"
+                if p.quantizer_mode == _core.QuantizerMode.Quantile
+                else ("auto" if p.quantizer_mode == _core.QuantizerMode.Auto else "linear")
+            ),
         )
         est._model = model
         est._lignum_cache = {}

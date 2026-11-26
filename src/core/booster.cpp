@@ -95,6 +95,11 @@ void validate_params(const Params& params) {
     if (params.ctr_max_borders < 1 || params.ctr_max_borders > 255) {
         throw std::invalid_argument("ctr_max_borders must be in [1, 255]");
     }
+    if (params.quantizer_mode != QuantizerMode::Linear &&
+        params.quantizer_mode != QuantizerMode::Quantile &&
+        params.quantizer_mode != QuantizerMode::Auto) {
+        throw std::invalid_argument("quantizer_mode must be Linear, Quantile, or Auto");
+    }
 }
 
 double compute_weighted_target_mean(std::span<const double> y,
@@ -119,6 +124,9 @@ TrainResult fit_booster(const Dataset& ds, Objective objective, std::span<const 
     validate_params(params);
     if (objective == Objective::Multiclass) {
         const std::uint32_t k_classes = infer_and_validate_multiclass_targets(y, sample_weight, 0U);
+        if (k_classes < 2U) {
+            throw std::invalid_argument("Multiclass objective requires at least 2 classes");
+        }
         const auto K = static_cast<std::size_t>(k_classes);
         const bool has_valid = (valid_ds != nullptr);
         if (has_valid) {
@@ -159,7 +167,7 @@ TrainResult fit_booster(const Dataset& ds, Objective objective, std::span<const 
         for (std::size_t j = 0; j < num_indices.size(); ++j) {
             const std::size_t f = num_indices[j];
             const auto& q = ds.quantizer(j);
-            model.quantizers[f] = QuantizerInfo{q.lo, q.scale, q.is_constant};
+            model.quantizers[f] = QuantizerInfo{q.lo, q.scale, q.is_constant, q.knots};
             feature_to_num_idx[f] = j;
         }
         for (const std::size_t f : ds.cat_feature_indices()) {
@@ -351,7 +359,7 @@ TrainResult fit_booster(const Dataset& ds, Objective objective, std::span<const 
     for (std::size_t j = 0; j < num_indices.size(); ++j) {
         const std::size_t f = num_indices[j];
         const auto& q = ds.quantizer(j);
-        model.quantizers[f] = QuantizerInfo{q.lo, q.scale, q.is_constant};
+        model.quantizers[f] = QuantizerInfo{q.lo, q.scale, q.is_constant, q.knots};
         feature_to_num_idx[f] = j;
     }
     for (const std::size_t f : ds.cat_feature_indices()) {

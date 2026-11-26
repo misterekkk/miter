@@ -102,6 +102,20 @@ def _prepare_numeric_1d(col: Any, *, is_pandas: bool) -> NDArray[np.float64] | N
     return np.ascontiguousarray(arr, dtype=np.float64)
 
 
+def _parse_quantizer_mode(mode: str | _core.QuantizerMode) -> _core.QuantizerMode:
+    if isinstance(mode, _core.QuantizerMode):
+        return mode
+    if mode == "linear":
+        return _core.QuantizerMode.Linear
+    if mode == "quantile":
+        return _core.QuantizerMode.Quantile
+    if mode == "auto":
+        return _core.QuantizerMode.Auto
+    raise ValueError(
+        f"quantizer_mode must be 'linear', 'quantile', or 'auto', got {mode!r}"
+    )
+
+
 class TransformedData:
     """Quantized codes and binned features returned by ``Dataset.transform``."""
 
@@ -145,10 +159,12 @@ class Dataset:
         max_categories: int = 253,
         feature_names: Sequence[str] | None = None,
         n_jobs: int = 1,
+        quantizer_mode: str | _core.QuantizerMode = "linear",
     ) -> None:
         is_df = _is_pandas_dataframe(X)
         self._fitted_on_dataframe = is_df
         self._n_jobs = int(n_jobs)
+        qmode = _parse_quantizer_mode(quantizer_mode)
 
         if is_df:
             n_rows, n_features = X.shape
@@ -166,12 +182,12 @@ class Dataset:
             if not cat_idx:
                 arr = X.to_numpy()
                 if arr.dtype == np.float64 and (n_rows <= 1 or arr.strides[0] > 0) and (n_features <= 1 or arr.strides[1] > 0):
-                    self._inner = _core.fit_numeric_f64(arr, max_bin, resolved_names, self._n_jobs)
+                    self._inner = _core.fit_numeric_f64(arr, max_bin, resolved_names, self._n_jobs, qmode)
                 elif arr.dtype == np.float32 and (n_rows <= 1 or arr.strides[0] > 0) and (n_features <= 1 or arr.strides[1] > 0):
-                    self._inner = _core.fit_numeric_f32(arr, max_bin, resolved_names, self._n_jobs)
+                    self._inner = _core.fit_numeric_f32(arr, max_bin, resolved_names, self._n_jobs, qmode)
                 else:
                     arr_f64 = np.ascontiguousarray(arr, dtype=np.float64)
-                    self._inner = _core.fit_numeric_f64(arr_f64, max_bin, resolved_names, self._n_jobs)
+                    self._inner = _core.fit_numeric_f64(arr_f64, max_bin, resolved_names, self._n_jobs, qmode)
                 return
 
             cat_set = set(cat_idx)
@@ -198,6 +214,7 @@ class Dataset:
                 min_data_per_group,
                 max_categories,
                 self._n_jobs,
+                qmode,
             )
             return
 
@@ -216,12 +233,12 @@ class Dataset:
         cat_idx = _resolve_categorical_indices(n_features, resolved_names, categorical_feature, [])
         if not cat_idx:
             if arr.dtype == np.float64 and (n_rows <= 1 or arr.strides[0] > 0) and (n_features <= 1 or arr.strides[1] > 0):
-                self._inner = _core.fit_numeric_f64(arr, max_bin, resolved_names, self._n_jobs)
+                self._inner = _core.fit_numeric_f64(arr, max_bin, resolved_names, self._n_jobs, qmode)
             elif arr.dtype == np.float32 and (n_rows <= 1 or arr.strides[0] > 0) and (n_features <= 1 or arr.strides[1] > 0):
-                self._inner = _core.fit_numeric_f32(arr, max_bin, resolved_names, self._n_jobs)
+                self._inner = _core.fit_numeric_f32(arr, max_bin, resolved_names, self._n_jobs, qmode)
             else:
                 arr_f64 = np.ascontiguousarray(arr, dtype=np.float64)
-                self._inner = _core.fit_numeric_f64(arr_f64, max_bin, resolved_names, self._n_jobs)
+                self._inner = _core.fit_numeric_f64(arr_f64, max_bin, resolved_names, self._n_jobs, qmode)
             return
 
         cat_set = set(cat_idx)
@@ -248,6 +265,7 @@ class Dataset:
             min_data_per_group,
             max_categories,
             self._n_jobs,
+            qmode,
         )
 
     @property

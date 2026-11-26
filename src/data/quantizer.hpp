@@ -1,8 +1,11 @@
 #pragma once
 
+#include <miter/params.hpp>
+
 #include <cstddef>
 #include <cstdint>
 #include <span>
+#include <vector>
 
 namespace miter {
 
@@ -12,6 +15,8 @@ inline constexpr std::int32_t kQ16CodeOffset = 32768;
 inline constexpr std::int16_t kQ16SignedNanCode = 32767;
 inline constexpr double kQ16QuantileLo = 0.0001;
 inline constexpr double kQ16QuantileHi = 0.9999;
+inline constexpr std::size_t kQ16QuantileIntervals = 256U;
+inline constexpr std::size_t kQ16AutoMinSliceSpan = 32U;
 
 /**
  * @brief Exact type-7 sample quantile (linear interpolation) on a non-empty sorted span.
@@ -29,10 +34,14 @@ struct Q16Quantizer {
     double lo = 0.0;
     double scale = 0.0;
     bool is_constant = true;
+    std::vector<double> knots;
 
-    static Q16Quantizer fit(std::span<const double> values);
-    static Q16Quantizer fit_strided(const double* data, std::size_t n, std::size_t stride);
-    static Q16Quantizer fit_strided(const float* data, std::size_t n, std::size_t stride);
+    static Q16Quantizer fit(std::span<const double> values,
+                            QuantizerMode mode = QuantizerMode::Linear);
+    static Q16Quantizer fit_strided(const double* data, std::size_t n, std::size_t stride,
+                                    QuantizerMode mode = QuantizerMode::Linear);
+    static Q16Quantizer fit_strided(const float* data, std::size_t n, std::size_t stride,
+                                    QuantizerMode mode = QuantizerMode::Linear);
 
     std::uint16_t encode_u16(double x) const noexcept;
 

@@ -20,6 +20,11 @@ class GrowPolicy(Enum):
     Leafwise = ...
     Symmetric = ...
 
+class QuantizerMode(Enum):
+    Linear = ...
+    Quantile = ...
+    Auto = ...
+
 class Params:
     n_estimators: int
     learning_rate: float
@@ -51,6 +56,7 @@ class Params:
     ctr_prior_weight: float
     ctr_n_permutations: int
     ctr_max_borders: int
+    quantizer_mode: QuantizerMode
     def __init__(self) -> None: ...
 
 class Model:
@@ -62,6 +68,8 @@ class Model:
     def n_ctr_tables(self) -> int: ...
     @property
     def n_ctr_projections(self) -> int: ...
+    @property
+    def n_quantile_features(self) -> int: ...
     @property
     def init_scores(self) -> NDArray[np.float64]: ...
     learning_rate: float
@@ -122,10 +130,18 @@ class Dataset:
     ) -> TransformedData: ...
 
 def fit_numeric_f64(
-    arr: NDArray[np.float64], max_bin: int = 255, feature_names: list[str] = ..., n_jobs: int = 1
+    arr: NDArray[np.float64],
+    max_bin: int = 255,
+    feature_names: list[str] = ...,
+    n_jobs: int = 1,
+    quantizer_mode: QuantizerMode = ...,
 ) -> Dataset: ...
 def fit_numeric_f32(
-    arr: NDArray[np.float32], max_bin: int = 255, feature_names: list[str] = ..., n_jobs: int = 1
+    arr: NDArray[np.float32],
+    max_bin: int = 255,
+    feature_names: list[str] = ...,
+    n_jobs: int = 1,
+    quantizer_mode: QuantizerMode = ...,
 ) -> Dataset: ...
 def fit_mixed(
     n_rows: int,
@@ -138,6 +154,7 @@ def fit_mixed(
     min_data_per_group: int = 100,
     max_categories: int = 253,
     n_jobs: int = 1,
+    quantizer_mode: QuantizerMode = ...,
 ) -> Dataset: ...
 def fit_booster(
     ds: Dataset,

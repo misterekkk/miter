@@ -276,7 +276,7 @@ void Evaluator::predict_raw_views(const Model& model, std::size_t n_rows,
     std::vector<Q16Quantizer> quantizers(p);
     for (std::size_t f = 0; f < p; ++f) {
         quantizers[f] = Q16Quantizer{model.quantizers[f].lo, model.quantizers[f].scale,
-                                     model.quantizers[f].is_constant};
+                                     model.quantizers[f].is_constant, model.quantizers[f].knots};
     }
 
     const std::size_t n_blocks = (n_rows + kEvalBlockRows - 1U) / kEvalBlockRows;
@@ -393,8 +393,9 @@ void Evaluator::predict_raw_mixed(const Model& model, std::size_t n_rows,
         if (model.feature_kinds[f] == 0U) {
             meta[f].is_cat = false;
             meta[f].sub_idx = n_idx++;
-            meta[f].quant = Q16Quantizer{model.quantizers[f].lo, model.quantizers[f].scale,
-                                         model.quantizers[f].is_constant};
+            meta[f].quant =
+                Q16Quantizer{model.quantizers[f].lo, model.quantizers[f].scale,
+                             model.quantizers[f].is_constant, model.quantizers[f].knots};
         } else {
             const auto& cats = model.cat_features[f].categories;
             const auto other = static_cast<std::uint8_t>(cats.size());

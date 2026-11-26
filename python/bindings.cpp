@@ -243,7 +243,8 @@ std::vector<miter::CategoricalColumnView> extract_cat_col_views(
 }
 
 miter::Dataset fit_numeric_f64(const nb::ndarray<const double, nb::ndim<2>, nb::device::cpu>& arr,
-                               int max_bin, std::vector<std::string> feature_names, int n_jobs) {
+                               int max_bin, std::vector<std::string> feature_names, int n_jobs,
+                               miter::QuantizerMode quantizer_mode) {
     const std::size_t n_rows = arr.shape(0);
     const std::size_t n_cols = arr.shape(1);
     auto views = views_from_2d(arr);
@@ -251,13 +252,15 @@ miter::Dataset fit_numeric_f64(const nb::ndarray<const double, nb::ndim<2>, nb::
     miter::DataConfig cfg;
     cfg.max_bin = max_bin;
     cfg.n_jobs = n_jobs;
+    cfg.quantizer_mode = quantizer_mode;
     nb::gil_scoped_release release;
     return miter::Dataset::fit_mixed(n_rows, std::move(kinds), std::move(feature_names), views, {},
                                      cfg);
 }
 
 miter::Dataset fit_numeric_f32(const nb::ndarray<const float, nb::ndim<2>, nb::device::cpu>& arr,
-                               int max_bin, std::vector<std::string> feature_names, int n_jobs) {
+                               int max_bin, std::vector<std::string> feature_names, int n_jobs,
+                               miter::QuantizerMode quantizer_mode) {
     const std::size_t n_rows = arr.shape(0);
     const std::size_t n_cols = arr.shape(1);
     auto views = views_from_2d(arr);
@@ -265,6 +268,7 @@ miter::Dataset fit_numeric_f32(const nb::ndarray<const float, nb::ndim<2>, nb::d
     miter::DataConfig cfg;
     cfg.max_bin = max_bin;
     cfg.n_jobs = n_jobs;
+    cfg.quantizer_mode = quantizer_mode;
     nb::gil_scoped_release release;
     return miter::Dataset::fit_mixed(n_rows, std::move(kinds), std::move(feature_names), views, {},
                                      cfg);
@@ -275,7 +279,8 @@ miter::Dataset fit_mixed_py(
     const nb::list& num_cols, std::vector<std::vector<std::string>> cat_vocabs,
     const std::vector<nb::ndarray<const std::int32_t, nb::ndim<1>, nb::c_contig, nb::device::cpu>>&
         cat_indices,
-    int max_bin, int min_data_per_group, int max_categories, int n_jobs) {
+    int max_bin, int min_data_per_group, int max_categories, int n_jobs,
+    miter::QuantizerMode quantizer_mode) {
     std::vector<miter::FeatureKind> kinds;
     kinds.reserve(is_cat.size());
     for (const bool flag : is_cat) {
@@ -288,6 +293,7 @@ miter::Dataset fit_mixed_py(
     cfg.min_data_per_group = min_data_per_group;
     cfg.max_categories = max_categories;
     cfg.n_jobs = n_jobs;
+    cfg.quantizer_mode = quantizer_mode;
     nb::gil_scoped_release release;
     return miter::Dataset::fit_mixed(n_rows, std::move(kinds), std::move(feature_names), num_views,
                                      cat_views, cfg);
@@ -513,6 +519,11 @@ NB_MODULE(_core, m) {
         .value("Leafwise", miter::GrowPolicy::Leafwise)
         .value("Symmetric", miter::GrowPolicy::Symmetric);
 
+    nb::enum_<miter::QuantizerMode>(m, "QuantizerMode")
+        .value("Linear", miter::QuantizerMode::Linear)
+        .value("Quantile", miter::QuantizerMode::Quantile)
+        .value("Auto", miter::QuantizerMode::Auto);
+
     nb::class_<miter::Params>(m, "Params")
         .def(nb::init<>())
         .def_rw("n_estimators", &miter::Params::n_estimators)
@@ -544,7 +555,8 @@ NB_MODULE(_core, m) {
         .def_rw("max_ctr_complexity", &miter::Params::max_ctr_complexity)
         .def_rw("ctr_prior_weight", &miter::Params::ctr_prior_weight)
         .def_rw("ctr_n_permutations", &miter::Params::ctr_n_permutations)
-        .def_rw("ctr_max_borders", &miter::Params::ctr_max_borders);
+        .def_rw("ctr_max_borders", &miter::Params::ctr_max_borders)
+        .def_rw("quantizer_mode", &miter::Params::quantizer_mode);
 
     nb::class_<miter::Model>(m, "Model")
         .def_ro("miter_version", &miter::Model::miter_version)
@@ -555,6 +567,16 @@ NB_MODULE(_core, m) {
                      [](const miter::Model& model) { return model.ctr_tables.size(); })
         .def_prop_ro("n_ctr_projections",
                      [](const miter::Model& model) { return model.ctr_projections.size(); })
+        .def_prop_ro("n_quantile_features",
+                     [](const miter::Model& model) {
+                         std::size_t count = 0U;
+                         for (const auto& q : model.quantizers) {
+                             if (!q.knots.empty()) {
+                                 ++count;
+                             }
+                         }
+                         return count;
+                     })
         .def_prop_ro("init_scores",
                      [](const miter::Model& model) { return vec_to_ndarray_1d(model.init_scores); })
         .def_ro("learning_rate", &miter::Model::learning_rate)
@@ -691,13 +713,16 @@ NB_MODULE(_core, m) {
             nb::arg("n_jobs") = 1);
 
     m.def("fit_numeric_f64", &fit_numeric_f64, nb::arg("arr").noconvert(), nb::arg("max_bin") = 255,
-          nb::arg("feature_names") = std::vector<std::string>{}, nb::arg("n_jobs") = 1);
+          nb::arg("feature_names") = std::vector<std::string>{}, nb::arg("n_jobs") = 1,
+          nb::arg("quantizer_mode") = miter::QuantizerMode::Linear);
     m.def("fit_numeric_f32", &fit_numeric_f32, nb::arg("arr").noconvert(), nb::arg("max_bin") = 255,
-          nb::arg("feature_names") = std::vector<std::string>{}, nb::arg("n_jobs") = 1);
+          nb::arg("feature_names") = std::vector<std::string>{}, nb::arg("n_jobs") = 1,
+          nb::arg("quantizer_mode") = miter::QuantizerMode::Linear);
     m.def("fit_mixed", &fit_mixed_py, nb::arg("n_rows"), nb::arg("is_cat"),
           nb::arg("feature_names"), nb::arg("num_cols"), nb::arg("cat_vocabs"),
           nb::arg("cat_indices"), nb::arg("max_bin") = 255, nb::arg("min_data_per_group") = 100,
-          nb::arg("max_categories") = 253, nb::arg("n_jobs") = 1);
+          nb::arg("max_categories") = 253, nb::arg("n_jobs") = 1,
+          nb::arg("quantizer_mode") = miter::QuantizerMode::Linear);
 
     m.def("fit_booster", &fit_booster_py, nb::arg("ds"), nb::arg("objective"), nb::arg("y"),
           nb::arg("sample_weight") = nb::none(), nb::arg("valid_ds") = nb::none(),

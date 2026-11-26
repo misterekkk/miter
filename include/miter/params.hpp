@@ -13,6 +13,15 @@ enum class GrowPolicy : std::uint8_t {
 };
 
 /**
+ * @brief Numeric feature quantization strategy to 16-bit codes.
+ */
+enum class QuantizerMode : std::uint8_t {
+    Linear = 0,
+    Quantile = 1,
+    Auto = 2,
+};
+
+/**
  * @brief Training and model hyperparameters for miter.
  *
  * Default values match the frozen research protocol in docs/IMPLEMENTATION_PLAN.md (Section 2.6).
@@ -55,6 +64,8 @@ struct Params {
     int ctr_n_permutations = 1;
     /// Maximum split borders discretized per native CTR candidate (in [1, 255]).
     int ctr_max_borders = 15;
+    /// Per-feature 16-bit numeric quantization mode (Linear, Quantile, or Auto).
+    QuantizerMode quantizer_mode = QuantizerMode::Linear;
 };
 
 } // namespace miter

@@ -22,6 +22,7 @@ struct DataConfig {
     int min_data_per_group = kDefaultMinDataPerGroup;
     int max_categories = kDefaultMaxCategories;
     int n_jobs = 1;
+    QuantizerMode quantizer_mode = QuantizerMode::Linear;
 };
 
 struct NumericColumnView {

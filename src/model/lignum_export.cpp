@@ -33,7 +33,7 @@ double axis_raw_threshold(const QuantizerInfo& q, std::uint16_t t) {
     if (t > kQ16MaxCode) {
         throw std::invalid_argument("axis_raw_threshold: threshold above the largest code");
     }
-    const Q16Quantizer quant{q.lo, q.scale, q.is_constant};
+    const Q16Quantizer quant{q.lo, q.scale, q.is_constant, q.knots};
     // Invariant: encode(key_double(lo)) < t <= encode(key_double(hi)).
     std::uint64_t lo =
         static_cast<std::uint64_t>(double_key(-std::numeric_limits<double>::infinity()));
@@ -71,6 +71,13 @@ RawForest export_raw_forest(const Model& model, std::size_t num_iteration) {
     out.init_score = model.init_score;
     out.objective = model.objective;
     out.quantizers = model.quantizers;
+    bool any_quantile = false;
+    for (const auto& q : model.quantizers) {
+        if (!q.knots.empty()) {
+            any_quantile = true;
+            break;
+        }
+    }
     const std::size_t n_trees = (num_iteration == 0U)
                                     ? std::min(model.best_iteration, model.trees.size())
                                     : std::min(num_iteration, model.trees.size());
@@ -120,6 +127,11 @@ RawForest export_raw_forest(const Model& model, std::size_t num_iteration) {
                 break;
             }
             case NodeKind::Oblique:
+                if (any_quantile) {
+                    throw std::invalid_argument(
+                        "export_raw_forest: models with quantile quantizer and oblique splits "
+                        "use miter Evaluator");
+                }
                 if (n.oblique_k > 3U) {
                     throw std::invalid_argument(
                         "export_raw_forest: oblique split with k = " + std::to_string(n.oblique_k) +

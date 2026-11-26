@@ -203,7 +203,7 @@ Dataset Dataset::fit_mixed(std::size_t n_rows, std::vector<FeatureKind> kinds,
                  j_signed < static_cast<std::ptrdiff_t>(ds.n_num_features_); ++j_signed) {
                 const auto j = static_cast<std::size_t>(j_signed);
                 extract_numeric_column(num_cols[j], n_rows, col_f64);
-                ds.quantizers_[j] = Q16Quantizer::fit(col_f64);
+                ds.quantizers_[j] = Q16Quantizer::fit(col_f64, cfg.quantizer_mode);
                 const Q16Quantizer& q = ds.quantizers_[j];
                 std::int16_t* dst_code_col = codes_ptr + j * n_rows;
                 for (std::size_t i = 0; i < n_rows; ++i) {
@@ -221,7 +221,7 @@ Dataset Dataset::fit_mixed(std::size_t n_rows, std::vector<FeatureKind> kinds,
         std::vector<std::uint16_t> u_col(n_rows);
         for (std::size_t j = 0; j < ds.n_num_features_; ++j) {
             extract_numeric_column(num_cols[j], n_rows, col_f64);
-            ds.quantizers_[j] = Q16Quantizer::fit(col_f64);
+            ds.quantizers_[j] = Q16Quantizer::fit(col_f64, cfg.quantizer_mode);
             const Q16Quantizer& q = ds.quantizers_[j];
             std::int16_t* dst_code_col = codes_ptr + j * n_rows;
             for (std::size_t i = 0; i < n_rows; ++i) {

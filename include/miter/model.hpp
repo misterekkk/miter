@@ -93,6 +93,7 @@ struct QuantizerInfo {
     double lo = 0.0;
     double scale = 0.0;
     bool is_constant = true;
+    std::vector<double> knots;
 };
 
 struct CatFeatureInfo {

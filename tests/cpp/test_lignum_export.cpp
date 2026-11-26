@@ -45,7 +45,7 @@ double eval_raw_tree(const miter::RawForest& f, const miter::RawTree& tree, cons
                 const double x = row[n.features[q]];
                 nan = nan || std::isnan(x);
                 const miter::QuantizerInfo& qi = f.quantizers[n.features[q]];
-                const miter::Q16Quantizer quant{qi.lo, qi.scale, qi.is_constant};
+                const miter::Q16Quantizer quant{qi.lo, qi.scale, qi.is_constant, qi.knots};
                 const std::int32_t c =
                     static_cast<std::int32_t>(quant.encode_u16(x)) - miter::kQ16CodeOffset;
                 p += static_cast<std::int32_t>(n.weights[q]) * c;
@@ -77,7 +77,7 @@ TEST(LignumExportTest, AxisRawThresholdIsExactBoundary) {
             x = (qi % 2 == 1) ? ln(rng) : nd(rng);
         }
         const auto fit = miter::Q16Quantizer::fit(v);
-        const miter::QuantizerInfo info{fit.lo, fit.scale, fit.is_constant};
+        const miter::QuantizerInfo info{fit.lo, fit.scale, fit.is_constant, fit.knots};
         ASSERT_FALSE(info.is_constant);
         for (int s = 0; s < 60; ++s) {
             const auto t = static_cast<std::uint16_t>(1U + rng() % miter::kQ16MaxCode);
@@ -94,8 +94,30 @@ TEST(LignumExportTest, AxisRawThresholdIsExactBoundary) {
             }
         }
     }
+    // Verify exactness on quantile-mode quantizer with extreme outliers.
+    {
+        std::vector<double> heavy(1000);
+        for (std::size_t i = 0; i < 990U; ++i) {
+            heavy[i] = 0.001 + 0.099 * (static_cast<double>(i) / 990.0);
+        }
+        for (std::size_t i = 990U; i < 1000U; ++i) {
+            heavy[i] = 1e9 * static_cast<double>(i - 989U);
+        }
+        const auto qfit = miter::Q16Quantizer::fit(heavy, miter::QuantizerMode::Quantile);
+        const miter::QuantizerInfo qinfo{qfit.lo, qfit.scale, qfit.is_constant, qfit.knots};
+        ASSERT_FALSE(qinfo.knots.empty());
+        for (const std::uint16_t t : {std::uint16_t{1}, std::uint16_t{256}, std::uint16_t{32768},
+                                      std::uint16_t{65000}, miter::kQ16MaxCode}) {
+            const double xt = miter::axis_raw_threshold(qinfo, t);
+            EXPECT_GE(qfit.encode_u16(xt), t);
+            EXPECT_LT(qfit.encode_u16(std::nextafter(xt, -kInf)), t);
+            for (const double x : heavy) {
+                EXPECT_EQ(qfit.encode_u16(x) >= t, x >= xt);
+            }
+        }
+    }
     EXPECT_GT(checks, 0);
-    const miter::QuantizerInfo any{0.0, 1.0, false};
+    const miter::QuantizerInfo any{0.0, 1.0, false, {}};
     EXPECT_EQ(miter::axis_raw_threshold(any, 0), -kInf);
     EXPECT_THROW(miter::axis_raw_threshold(any, miter::kQ16NanCode), std::invalid_argument);
 }
