@@ -530,6 +530,18 @@ std::string model_to_json(const Model& model) {
     if (model.params.ctr_num_combinations) {
         os << ", \"ctr_num_combinations\": 1";
     }
+    if (model.params.ctr_num_gain_margin != 1.0) {
+        os << ", \"ctr_num_gain_margin\": " << model.params.ctr_num_gain_margin;
+    }
+    if (model.params.ctr_num_max_depth != -1) {
+        os << ", \"ctr_num_max_depth\": " << model.params.ctr_num_max_depth;
+    }
+    if (model.params.ctr_new_table_penalty != 0.0) {
+        os << ", \"ctr_new_table_penalty\": " << model.params.ctr_new_table_penalty;
+    }
+    if (model.params.ctr_num_skip_onehot) {
+        os << ", \"ctr_num_skip_onehot\": 1";
+    }
     if (model.params.quantizer_mode == QuantizerMode::Quantile) {
         os << ", \"quantizer_mode\": \"quantile\"";
     } else if (model.params.quantizer_mode == QuantizerMode::Auto) {
@@ -864,6 +876,19 @@ Model model_from_json(std::string_view json_text) {
         if (const auto cnc = p.find("ctr_num_combinations"); cnc != p.end()) {
             model.params.ctr_num_combinations =
                 cnc->second.is_bool() ? cnc->second.as_bool() : (cnc->second.as_i64() != 0);
+        }
+        if (const auto cgm = p.find("ctr_num_gain_margin"); cgm != p.end()) {
+            model.params.ctr_num_gain_margin = cgm->second.as_double();
+        }
+        if (const auto cmd = p.find("ctr_num_max_depth"); cmd != p.end()) {
+            model.params.ctr_num_max_depth = static_cast<int>(cmd->second.as_i64());
+        }
+        if (const auto cnt = p.find("ctr_new_table_penalty"); cnt != p.end()) {
+            model.params.ctr_new_table_penalty = cnt->second.as_double();
+        }
+        if (const auto cso = p.find("ctr_num_skip_onehot"); cso != p.end()) {
+            model.params.ctr_num_skip_onehot =
+                cso->second.is_bool() ? cso->second.as_bool() : (cso->second.as_i64() != 0);
         }
         if (const auto qm = p.find("quantizer_mode"); qm != p.end()) {
             const std::string& qmv = qm->second.as_string();

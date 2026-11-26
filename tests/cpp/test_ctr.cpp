@@ -807,4 +807,128 @@ TEST(CtrTest, NumCatCombinationsXorExactAndNan) {
     EXPECT_GT(imp_split[1], 0U);
 }
 
+TEST(CtrTest, NumCatGatingControlsAndDeterminism) {
+    // 1. Auto complexity skips p_cat=1 low-card when ctr_num_skip_onehot=true.
+    {
+        constexpr std::size_t kN = 2000U;
+        std::vector<double> x(kN);
+        std::vector<std::int32_t> c(kN);
+        for (std::size_t i = 0; i < kN; ++i) {
+            x[i] = static_cast<double>(i);
+            c[i] = static_cast<std::int32_t>(i % 3U);
+        }
+        const auto ds = miter::Dataset::fit_mixed(
+            kN, {miter::FeatureKind::Numeric, miter::FeatureKind::Categorical}, {"x", "c"},
+            {miter::NumericColumnView{x.data(), nullptr, 1U}},
+            {miter::CategoricalColumnView{{"a", "b", "c"}, c.data()}});
+        miter::Params prm{};
+        prm.max_ctr_complexity = miter::kCtrComplexityAuto;
+        prm.ctr_num_combinations = true;
+        prm.ctr_num_skip_onehot = false;
+        EXPECT_EQ(miter::resolve_effective_ctr_complexity(ds, {3U}, prm), 2);
+        prm.ctr_num_skip_onehot = true;
+        EXPECT_EQ(miter::resolve_effective_ctr_complexity(ds, {3U}, prm), 0);
+        EXPECT_EQ(miter::resolve_effective_ctr_complexity(ds, {8U}, prm), 2);
+    }
+
+    // 2. ctr_num_gain_margin and ctr_new_table_penalty suppress marginal num x cat projections,
+    // and ctr_num_max_depth=0 prevents deeper Axis splits from spawning num x cat tables.
+    std::mt19937_64 rng(909);
+    constexpr std::size_t kTr = 1600U;
+    constexpr std::size_t kVa = 300U;
+    constexpr std::size_t kTot = kTr + kVa;
+    constexpr std::size_t kCard = 16U;
+    std::vector<std::string> vocab(kCard);
+    for (std::size_t c = 0; c < kCard; ++c) {
+        vocab[c] = "g_" + std::to_string(c);
+    }
+    std::vector<double> x0(kTot), x1(kTot), y(kTot);
+    std::vector<std::int32_t> c0(kTot);
+    for (std::size_t i = 0; i < kTot; ++i) {
+        x0[i] = static_cast<double>(rng() % 1000ULL) / 500.0 - 1.0;
+        x1[i] = static_cast<double>(rng() % 1000ULL) / 500.0 - 1.0;
+        c0[i] = static_cast<std::int32_t>(rng() % kCard);
+        y[i] = 0.8 * x0[i] + ((x1[i] >= 0.0 && (c0[i] % 2 == 0)) ? 0.45 : -0.45) +
+               0.1 * static_cast<double>((rng() % 10ULL) - 5ULL) / 5.0;
+    }
+
+    const auto ds = miter::Dataset::fit_mixed(
+        kTr,
+        {miter::FeatureKind::Numeric, miter::FeatureKind::Numeric, miter::FeatureKind::Categorical},
+        {"x0", "x1", "c0"},
+        {miter::NumericColumnView{x0.data(), nullptr, 1U},
+         miter::NumericColumnView{x1.data(), nullptr, 1U}},
+        {miter::CategoricalColumnView{vocab, c0.data()}});
+    const auto va_td = ds.transform_mixed(kVa,
+                                          {miter::NumericColumnView{x0.data() + kTr, nullptr, 1U},
+                                           miter::NumericColumnView{x1.data() + kTr, nullptr, 1U}},
+                                          {miter::CategoricalColumnView{vocab, c0.data() + kTr}});
+
+    miter::Params p_base{};
+    p_base.n_estimators = 16;
+    p_base.learning_rate = 0.15;
+    p_base.grow_policy = miter::GrowPolicy::Symmetric;
+    p_base.max_depth = 4;
+    p_base.min_data_in_leaf = 5;
+    p_base.m_mult = 0;
+    p_base.max_ctr_complexity = 2;
+    p_base.ctr_num_combinations = true;
+    p_base.early_stopping_rounds = 0;
+    p_base.random_state = 23U;
+    p_base.n_jobs = 1;
+
+    miter::Params p_margin = p_base;
+    p_margin.ctr_num_gain_margin = 5.0;
+
+    miter::Params p_newtbl = p_base;
+    p_newtbl.ctr_new_table_penalty = 5.0;
+
+    miter::Params p_combo = p_base;
+    p_combo.ctr_num_gain_margin = 1.25;
+    p_combo.ctr_num_max_depth = 1;
+    p_combo.ctr_new_table_penalty = 0.25;
+    p_combo.ctr_num_skip_onehot = true;
+    miter::Params p_combo4 = p_combo;
+    p_combo4.n_jobs = 4;
+
+    const std::span<const double> y_tr(y.data(), kTr);
+    const std::span<const double> y_va(y.data() + kTr, kVa);
+    const auto r_base =
+        miter::fit_booster(ds, miter::Objective::Regression, y_tr, {}, &va_td, y_va, {}, p_base);
+    const auto r_margin =
+        miter::fit_booster(ds, miter::Objective::Regression, y_tr, {}, &va_td, y_va, {}, p_margin);
+    const auto r_newtbl =
+        miter::fit_booster(ds, miter::Objective::Regression, y_tr, {}, &va_td, y_va, {}, p_newtbl);
+    const auto r_combo1 =
+        miter::fit_booster(ds, miter::Objective::Regression, y_tr, {}, &va_td, y_va, {}, p_combo);
+    const auto r_combo4 =
+        miter::fit_booster(ds, miter::Objective::Regression, y_tr, {}, &va_td, y_va, {}, p_combo4);
+
+    auto count_nc = [](const miter::Model& m) {
+        std::size_t cnt = 0U;
+        for (const auto& proj : m.ctr_projections) {
+            if (!proj.num_conds.empty()) {
+                ++cnt;
+            }
+        }
+        return cnt;
+    };
+    const std::size_t nc_base = count_nc(r_base.model);
+    EXPECT_GT(nc_base, 0U);
+    EXPECT_LE(count_nc(r_margin.model), nc_base);
+    EXPECT_LE(count_nc(r_newtbl.model), nc_base);
+
+    const std::string j1 = miter::model_to_json(r_combo1.model);
+    auto m4_norm = r_combo4.model;
+    m4_norm.params.n_jobs = 1;
+    EXPECT_EQ(j1, miter::model_to_json(m4_norm));
+
+    const miter::Model loaded = miter::model_from_json(j1);
+    EXPECT_EQ(loaded.params.ctr_num_gain_margin, 1.25);
+    EXPECT_EQ(loaded.params.ctr_num_max_depth, 1);
+    EXPECT_EQ(loaded.params.ctr_new_table_penalty, 0.25);
+    EXPECT_TRUE(loaded.params.ctr_num_skip_onehot);
+    EXPECT_EQ(miter::model_to_json(loaded), j1);
+}
+
 } // namespace

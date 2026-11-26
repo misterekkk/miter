@@ -265,6 +265,10 @@ class _BaseMiterEstimator(_SklearnBase):
         ctr_max_borders: int = 15,
         ctr_model_size_reg: float = 0.5,
         ctr_num_combinations: bool = False,
+        ctr_num_gain_margin: float = 1.0,
+        ctr_num_max_depth: int = -1,
+        ctr_new_table_penalty: float = 0.0,
+        ctr_num_skip_onehot: bool = False,
         quantizer: str = "linear",
         early_stopping_rounds: int | None = 50,
         time_limit: float | None = None,
@@ -306,6 +310,10 @@ class _BaseMiterEstimator(_SklearnBase):
         self.ctr_max_borders = ctr_max_borders
         self.ctr_model_size_reg = ctr_model_size_reg
         self.ctr_num_combinations = ctr_num_combinations
+        self.ctr_num_gain_margin = ctr_num_gain_margin
+        self.ctr_num_max_depth = ctr_num_max_depth
+        self.ctr_new_table_penalty = ctr_new_table_penalty
+        self.ctr_num_skip_onehot = ctr_num_skip_onehot
         self.quantizer = quantizer
         self.early_stopping_rounds = early_stopping_rounds
         self.time_limit = time_limit
@@ -418,6 +426,32 @@ class _BaseMiterEstimator(_SklearnBase):
                 f"ctr_num_combinations must be a bool, got {self.ctr_num_combinations!r}"
             )
         p.ctr_num_combinations = self.ctr_num_combinations
+        gm = float(self.ctr_num_gain_margin)
+        if not np.isfinite(gm) or gm < 1.0:
+            raise ValueError(
+                f"ctr_num_gain_margin must be finite and >= 1.0, got {self.ctr_num_gain_margin!r}"
+            )
+        p.ctr_num_gain_margin = gm
+        if (
+            isinstance(self.ctr_num_max_depth, bool)
+            or not isinstance(self.ctr_num_max_depth, (int, np.integer))
+            or int(self.ctr_num_max_depth) < -1
+        ):
+            raise ValueError(
+                f"ctr_num_max_depth must be an int >= -1, got {self.ctr_num_max_depth!r}"
+            )
+        p.ctr_num_max_depth = int(self.ctr_num_max_depth)
+        ntp = float(self.ctr_new_table_penalty)
+        if not np.isfinite(ntp) or ntp < 0.0:
+            raise ValueError(
+                f"ctr_new_table_penalty must be finite and >= 0.0, got {self.ctr_new_table_penalty!r}"
+            )
+        p.ctr_new_table_penalty = ntp
+        if not isinstance(self.ctr_num_skip_onehot, bool):
+            raise ValueError(
+                f"ctr_num_skip_onehot must be a bool, got {self.ctr_num_skip_onehot!r}"
+            )
+        p.ctr_num_skip_onehot = self.ctr_num_skip_onehot
         if self.quantizer == "linear":
             p.quantizer_mode = _core.QuantizerMode.Linear
         elif self.quantizer == "quantile":
@@ -670,6 +704,10 @@ class _BaseMiterEstimator(_SklearnBase):
             ctr_max_borders=p.ctr_max_borders,
             ctr_model_size_reg=p.ctr_model_size_reg,
             ctr_num_combinations=p.ctr_num_combinations,
+            ctr_num_gain_margin=p.ctr_num_gain_margin,
+            ctr_num_max_depth=p.ctr_num_max_depth,
+            ctr_new_table_penalty=p.ctr_new_table_penalty,
+            ctr_num_skip_onehot=p.ctr_num_skip_onehot,
             quantizer=(
                 "quantile"
                 if p.quantizer_mode == _core.QuantizerMode.Quantile

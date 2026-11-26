@@ -282,6 +282,9 @@ int resolve_effective_ctr_complexity(const Dataset& ds,
     }
     if (p_cat == 1U) {
         if (params.ctr_num_combinations && has_num && n >= 1500U) {
+            if (params.ctr_num_skip_onehot && n_high_card == 0U) {
+                return 0;
+            }
             return 2;
         }
         return (n_high_card >= 1U) ? 1 : 0;

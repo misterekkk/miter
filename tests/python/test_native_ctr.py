@@ -111,6 +111,14 @@ def test_native_ctr_default_bit_identical_and_validation() -> None:
         MiterRegressor(max_ctr_complexity=1, ctr_model_size_reg=-0.1).fit(df, y)
     with pytest.raises(ValueError, match="ctr_num_combinations"):
         MiterRegressor(max_ctr_complexity=1, ctr_num_combinations=1).fit(df, y)  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="ctr_num_gain_margin"):
+        MiterRegressor(max_ctr_complexity=1, ctr_num_gain_margin=0.9).fit(df, y)
+    with pytest.raises(ValueError, match="ctr_num_max_depth"):
+        MiterRegressor(max_ctr_complexity=1, ctr_num_max_depth=-2).fit(df, y)
+    with pytest.raises(ValueError, match="ctr_new_table_penalty"):
+        MiterRegressor(max_ctr_complexity=1, ctr_new_table_penalty=-0.1).fit(df, y)
+    with pytest.raises(ValueError, match="ctr_num_skip_onehot"):
+        MiterRegressor(max_ctr_complexity=1, ctr_num_skip_onehot=1).fit(df, y)  # type: ignore[arg-type]
 
 
 def test_native_ctr_auto_and_num_cat_combinations(tmp_path: Path) -> None:
@@ -156,6 +164,10 @@ def test_native_ctr_auto_and_num_cat_combinations(tmp_path: Path) -> None:
         max_ctr_complexity="auto",
         ctr_model_size_reg=0.5,
         ctr_num_combinations=True,
+        ctr_num_gain_margin=1.15,
+        ctr_num_max_depth=1,
+        ctr_new_table_penalty=0.1,
+        ctr_num_skip_onehot=True,
         early_stopping_rounds=None,
         n_jobs=1,
         random_state=3,
@@ -174,5 +186,9 @@ def test_native_ctr_auto_and_num_cat_combinations(tmp_path: Path) -> None:
     assert loaded.max_ctr_complexity == "auto"
     assert loaded.ctr_model_size_reg == 0.5
     assert loaded.ctr_num_combinations is True
+    assert loaded.ctr_num_gain_margin == 1.15
+    assert loaded.ctr_num_max_depth == 1
+    assert loaded.ctr_new_table_penalty == 0.1
+    assert loaded.ctr_num_skip_onehot is True
     np.testing.assert_array_equal(p_nc, loaded.predict_proba(df.iloc[te]))
     np.testing.assert_array_equal(p_nc, pickle.loads(pickle.dumps(clf_nc)).predict_proba(df.iloc[te]))
