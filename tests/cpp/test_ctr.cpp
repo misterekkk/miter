@@ -438,4 +438,373 @@ TEST(CtrTest, MultiCatPairThreadDeterminismAndEvalBitExact) {
     }
 }
 
+TEST(CtrTest, ResolveEffectiveCtrComplexity) {
+    // 1. No categoricals -> 0 even in auto mode.
+    {
+        const std::vector<double> x = {1.0, 2.0, 3.0, 4.0};
+        const auto ds =
+            miter::Dataset::fit_mixed(4U, {miter::FeatureKind::Numeric}, {"x"},
+                                      {miter::NumericColumnView{x.data(), nullptr, 1U}}, {});
+        miter::Params prm{};
+        prm.max_ctr_complexity = miter::kCtrComplexityAuto;
+        EXPECT_EQ(miter::resolve_effective_ctr_complexity(ds, {}, prm), 0);
+    }
+
+    // 2. Single categorical + numeric.
+    {
+        constexpr std::size_t kN = 2000U;
+        std::vector<double> x(kN, 0.0);
+        std::vector<std::int32_t> c(kN, 0);
+        for (std::size_t i = 0; i < kN; ++i) {
+            x[i] = static_cast<double>(i);
+            c[i] = static_cast<std::int32_t>(i % 2U);
+        }
+        const auto ds = miter::Dataset::fit_mixed(
+            kN, {miter::FeatureKind::Numeric, miter::FeatureKind::Categorical}, {"x", "c"},
+            {miter::NumericColumnView{x.data(), nullptr, 1U}},
+            {miter::CategoricalColumnView{{"a", "b"}, c.data()}});
+        miter::Params prm{};
+        prm.max_ctr_complexity = miter::kCtrComplexityAuto;
+        prm.max_cat_to_onehot = 4;
+
+        // Low-card (card=2 <= 4) without num combinations -> 0; high-card (card=10) -> 1.
+        EXPECT_EQ(miter::resolve_effective_ctr_complexity(ds, {2U}, prm), 0);
+        EXPECT_EQ(miter::resolve_effective_ctr_complexity(ds, {10U}, prm), 1);
+
+        // With num combinations and n >= 1500 -> 2 regardless of cardinality.
+        prm.ctr_num_combinations = true;
+        EXPECT_EQ(miter::resolve_effective_ctr_complexity(ds, {2U}, prm), 2);
+        EXPECT_EQ(miter::resolve_effective_ctr_complexity(ds, {10U}, prm), 2);
+
+        // Explicit complexity bypasses auto.
+        prm.max_ctr_complexity = 3;
+        EXPECT_EQ(miter::resolve_effective_ctr_complexity(ds, {2U}, prm), 3);
+    }
+
+    // 3. Multiple categoricals scaling with n_rows and p_cat.
+    {
+        auto make_multi = [](std::size_t n_rows, std::size_t p_cat) {
+            std::vector<miter::FeatureKind> kinds(p_cat, miter::FeatureKind::Categorical);
+            std::vector<std::string> names;
+            std::vector<std::int32_t> codes(n_rows, 0);
+            std::vector<miter::CategoricalColumnView> views;
+            for (std::size_t k = 0; k < p_cat; ++k) {
+                names.push_back("c" + std::to_string(k));
+                views.push_back({{"a", "b"}, codes.data()});
+            }
+            return miter::Dataset::fit_mixed(n_rows, kinds, names, {}, views);
+        };
+        const auto ds_small = make_multi(500U, 2U);
+        const auto ds_mid = make_multi(3000U, 2U);
+        const auto ds_large2 = make_multi(8500U, 2U);
+        const auto ds_large3 = make_multi(8500U, 3U);
+
+        miter::Params prm{};
+        prm.max_ctr_complexity = miter::kCtrComplexityAuto;
+        prm.max_cat_to_onehot = 4;
+
+        EXPECT_EQ(miter::resolve_effective_ctr_complexity(ds_small, {3U, 3U}, prm), 0);
+        EXPECT_EQ(miter::resolve_effective_ctr_complexity(ds_small, {10U, 3U}, prm), 1);
+        EXPECT_EQ(miter::resolve_effective_ctr_complexity(ds_mid, {10U, 10U}, prm), 2);
+        EXPECT_EQ(miter::resolve_effective_ctr_complexity(ds_large2, {10U, 10U}, prm), 2);
+        EXPECT_EQ(miter::resolve_effective_ctr_complexity(ds_large3, {10U, 10U, 10U}, prm), 3);
+    }
+}
+
+TEST(CtrTest, SupportGateAndComplexityPenalty) {
+    // 1. All-unique categorical column (n_rep == 0 < min_rep) is gated out cleanly.
+    constexpr std::size_t kUniqN = 200U;
+    std::vector<std::string> uniq_vocab;
+    std::vector<std::int32_t> uniq_codes(kUniqN);
+    std::vector<double> uniq_y(kUniqN);
+    uniq_vocab.reserve(kUniqN);
+    for (std::size_t i = 0; i < kUniqN; ++i) {
+        uniq_vocab.push_back("u_" + std::to_string(i));
+        uniq_codes[i] = static_cast<std::int32_t>(i);
+        uniq_y[i] = (i % 2U == 0U) ? 1.0 : 0.0;
+    }
+    const auto ds_uniq =
+        miter::Dataset::fit_mixed(kUniqN, {miter::FeatureKind::Categorical}, {"u"}, {},
+                                  {miter::CategoricalColumnView{uniq_vocab, uniq_codes.data()}});
+    miter::Params p_gate{};
+    p_gate.n_estimators = 4;
+    p_gate.grow_policy = miter::GrowPolicy::Symmetric;
+    p_gate.max_depth = 2;
+    p_gate.max_ctr_complexity = 1;
+    p_gate.early_stopping_rounds = 0;
+    const auto r_gate =
+        miter::fit_booster(ds_uniq, miter::Objective::Binary, uniq_y, {}, nullptr, {}, {}, p_gate);
+    EXPECT_TRUE(r_gate.model.ctr_tables.empty());
+
+    // 2. Higher ctr_model_size_reg penalizes pairs/triples more heavily and reduces multi-cat
+    // CTR tables on noisy high-cardinality combinations.
+    std::mt19937_64 rng(321);
+    constexpr std::size_t kN = 500U;
+    constexpr std::size_t kCard = 20U;
+    std::vector<std::string> v0(kCard), v1(kCard), v2(kCard);
+    for (std::size_t c = 0; c < kCard; ++c) {
+        v0[c] = "a" + std::to_string(c);
+        v1[c] = "b" + std::to_string(c);
+        v2[c] = "c" + std::to_string(c);
+    }
+    std::vector<std::int32_t> c0(kN), c1(kN), c2(kN);
+    std::vector<double> y(kN);
+    for (std::size_t i = 0; i < kN; ++i) {
+        c0[i] = static_cast<std::int32_t>(rng() % kCard);
+        c1[i] = static_cast<std::int32_t>(rng() % kCard);
+        c2[i] = static_cast<std::int32_t>(rng() % kCard);
+        y[i] = (c0[i] % 2 == 0) ? 0.65 : 0.35;
+        if (rng() % 3ULL == 0ULL) {
+            y[i] = 1.0 - y[i];
+        }
+    }
+    const auto ds = miter::Dataset::fit_mixed(
+        kN,
+        {miter::FeatureKind::Categorical, miter::FeatureKind::Categorical,
+         miter::FeatureKind::Categorical},
+        {"c0", "c1", "c2"}, {}, {{v0, c0.data()}, {v1, c1.data()}, {v2, c2.data()}});
+
+    miter::Params p_low{};
+    p_low.n_estimators = 12;
+    p_low.learning_rate = 0.1;
+    p_low.grow_policy = miter::GrowPolicy::Symmetric;
+    p_low.max_depth = 4;
+    p_low.min_data_in_leaf = 1;
+    p_low.m_mult = 0;
+    p_low.max_ctr_complexity = 2;
+    p_low.ctr_model_size_reg = 0.0;
+    p_low.early_stopping_rounds = 0;
+    p_low.n_jobs = 1;
+    p_low.random_state = 19U;
+
+    miter::Params p_high = p_low;
+    p_high.ctr_model_size_reg = 15.0;
+
+    const auto r_low =
+        miter::fit_booster(ds, miter::Objective::Binary, y, {}, nullptr, {}, {}, p_low);
+    const auto r_high =
+        miter::fit_booster(ds, miter::Objective::Binary, y, {}, nullptr, {}, {}, p_high);
+
+    auto count_complex = [](const miter::Model& m) {
+        std::size_t cnt = 0U;
+        for (const auto& t : m.ctr_tables) {
+            if (m.ctr_projections[t.projection].complexity() >= 2U) {
+                ++cnt;
+            }
+        }
+        return cnt;
+    };
+    const std::size_t c_low = count_complex(r_low.model);
+    const std::size_t c_high = count_complex(r_high.model);
+    EXPECT_GT(c_low, 0U);
+    EXPECT_LT(c_high, c_low);
+}
+
+TEST(CtrTest, AutoComplexityJsonAndThreadDeterminism) {
+    std::mt19937_64 rng(555);
+    constexpr std::size_t kTr = 1600U;
+    constexpr std::size_t kVa = 400U;
+    constexpr std::size_t kTot = kTr + kVa;
+    constexpr std::size_t kCard = 8U;
+
+    std::vector<std::string> v0(kCard), v1(kCard), v2(kCard);
+    for (std::size_t c = 0; c < kCard; ++c) {
+        v0[c] = "a_" + std::to_string(c);
+        v1[c] = "b_" + std::to_string(c);
+        v2[c] = "c_" + std::to_string(c);
+    }
+    std::vector<std::int32_t> c0(kTot), c1(kTot), c2(kTot);
+    std::vector<double> y(kTot);
+    for (std::size_t i = 0; i < kTot; ++i) {
+        c0[i] = static_cast<std::int32_t>(rng() % kCard);
+        c1[i] = static_cast<std::int32_t>(rng() % kCard);
+        c2[i] = static_cast<std::int32_t>(rng() % kCard);
+        y[i] = (((c0[i] ^ c1[i]) & 1) != 0) ? 1.0 : 0.0;
+    }
+
+    const auto ds = miter::Dataset::fit_mixed(
+        kTr,
+        {miter::FeatureKind::Categorical, miter::FeatureKind::Categorical,
+         miter::FeatureKind::Categorical},
+        {"c0", "c1", "c2"}, {}, {{v0, c0.data()}, {v1, c1.data()}, {v2, c2.data()}});
+    const auto va_td = ds.transform_mixed(
+        kVa, {}, {{v0, c0.data() + kTr}, {v1, c1.data() + kTr}, {v2, c2.data() + kTr}});
+
+    miter::Params p1{};
+    p1.n_estimators = 12;
+    p1.learning_rate = 0.15;
+    p1.grow_policy = miter::GrowPolicy::Symmetric;
+    p1.max_depth = 3;
+    p1.min_data_in_leaf = 5;
+    p1.m_mult = 0;
+    p1.max_ctr_complexity = miter::kCtrComplexityAuto;
+    p1.early_stopping_rounds = 0;
+    p1.random_state = 42U;
+    p1.n_jobs = 1;
+
+    miter::Params p4 = p1;
+    p4.n_jobs = 4;
+
+    const std::span<const double> y_tr(y.data(), kTr);
+    const std::span<const double> y_va(y.data() + kTr, kVa);
+    const auto r1 =
+        miter::fit_booster(ds, miter::Objective::Binary, y_tr, {}, &va_td, y_va, {}, p1);
+    const auto r4 =
+        miter::fit_booster(ds, miter::Objective::Binary, y_tr, {}, &va_td, y_va, {}, p4);
+
+    EXPECT_EQ(r1.model.params.max_ctr_complexity, miter::kCtrComplexityAuto);
+    EXPECT_FALSE(r1.model.ctr_tables.empty());
+    const std::string j1 = miter::model_to_json(r1.model);
+    auto m4_norm = r4.model;
+    m4_norm.params.n_jobs = 1;
+    EXPECT_EQ(j1, miter::model_to_json(m4_norm));
+
+    const miter::Model loaded = miter::model_from_json(j1);
+    EXPECT_EQ(loaded.params.max_ctr_complexity, miter::kCtrComplexityAuto);
+    EXPECT_EQ(miter::model_to_json(loaded), j1);
+
+    std::vector<double> va_raw1(kVa), va_raw_loaded(kVa);
+    miter::Evaluator::predict_raw_mixed(
+        r1.model, kVa, {}, {{v0, c0.data() + kTr}, {v1, c1.data() + kTr}, {v2, c2.data() + kTr}},
+        va_raw1.data());
+    miter::Evaluator::predict_raw_mixed(
+        loaded, kVa, {}, {{v0, c0.data() + kTr}, {v1, c1.data() + kTr}, {v2, c2.data() + kTr}},
+        va_raw_loaded.data());
+    for (std::size_t i = 0; i < kVa; ++i) {
+        EXPECT_EQ(std::bit_cast<std::uint64_t>(va_raw1[i]),
+                  std::bit_cast<std::uint64_t>(va_raw_loaded[i]));
+    }
+}
+
+TEST(CtrTest, NumCatCombinationsXorExactAndNan) {
+    std::mt19937_64 rng(888);
+    constexpr std::size_t kTr = 2400U;
+    constexpr std::size_t kVa = 500U;
+    constexpr std::size_t kTe = 500U;
+    constexpr std::size_t kTot = kTr + kVa + kTe;
+    constexpr std::size_t kCard = 120U;
+
+    std::vector<std::string> vocab(kCard);
+    for (std::size_t c = 0; c < kCard; ++c) {
+        vocab[c] = "cat_" + std::to_string(c);
+    }
+
+    std::vector<double> x_num(kTot);
+    std::vector<std::int32_t> c_idx(kTot);
+    std::vector<double> y(kTot);
+    for (std::size_t i = 0; i < kTot; ++i) {
+        const std::size_t cat = rng() % kCard;
+        c_idx[i] = static_cast<std::int32_t>(cat);
+        if (i % 23U == 0U) {
+            x_num[i] = std::numeric_limits<double>::quiet_NaN();
+            y[i] = (cat % 2U == 0U) ? 1.0 : 0.0;
+        } else {
+            const double raw_u = static_cast<double>(rng() % 2000ULL) / 1000.0 - 1.0;
+            x_num[i] = raw_u;
+            const bool is_neg = (raw_u < 0.0);
+            // Marginal CTR of cat alone is ~0.5 for every cat; Fisher collapses >16 cats.
+            y[i] = is_neg ? ((cat % 3U == 0U) ? 1.0 : 0.0) : ((cat % 3U != 0U) ? 1.0 : 0.0);
+        }
+    }
+
+    const std::vector<miter::FeatureKind> kinds = {miter::FeatureKind::Numeric,
+                                                   miter::FeatureKind::Categorical};
+    const std::vector<std::string> names = {"x0", "c0"};
+    miter::DataConfig dcfg;
+    dcfg.max_categories = 16;
+    dcfg.min_data_per_group = 5;
+    const auto ds = miter::Dataset::fit_mixed(
+        kTr, kinds, names, {miter::NumericColumnView{x_num.data(), nullptr, 1U}},
+        {miter::CategoricalColumnView{vocab, c_idx.data()}}, dcfg);
+    const auto va_td =
+        ds.transform_mixed(kVa, {miter::NumericColumnView{x_num.data() + kTr, nullptr, 1U}},
+                           {miter::CategoricalColumnView{vocab, c_idx.data() + kTr}});
+
+    miter::Params p_no_nc{};
+    p_no_nc.n_estimators = 12;
+    p_no_nc.learning_rate = 0.25;
+    p_no_nc.grow_policy = miter::GrowPolicy::Symmetric;
+    p_no_nc.max_depth = 2;
+    p_no_nc.min_data_in_leaf = 5;
+    p_no_nc.max_categories = 16;
+    p_no_nc.min_data_per_group = 5;
+    p_no_nc.m_mult = 0;
+    p_no_nc.max_ctr_complexity = 2;
+    p_no_nc.ctr_num_combinations = false;
+    p_no_nc.early_stopping_rounds = 0;
+    p_no_nc.random_state = 17U;
+    p_no_nc.n_jobs = 1;
+
+    miter::Params p_nc = p_no_nc;
+    p_nc.ctr_num_combinations = true;
+
+    miter::Params p_nc4 = p_nc;
+    p_nc4.n_jobs = 4;
+
+    const std::span<const double> y_tr(y.data(), kTr);
+    const std::span<const double> y_va(y.data() + kTr, kVa);
+    const auto r_no =
+        miter::fit_booster(ds, miter::Objective::Binary, y_tr, {}, &va_td, y_va, {}, p_no_nc);
+    const auto r_nc1 =
+        miter::fit_booster(ds, miter::Objective::Binary, y_tr, {}, &va_td, y_va, {}, p_nc);
+    const auto r_nc4 =
+        miter::fit_booster(ds, miter::Objective::Binary, y_tr, {}, &va_td, y_va, {}, p_nc4);
+
+    bool has_num_cond_proj = false;
+    for (const auto& proj : r_nc1.model.ctr_projections) {
+        if (!proj.num_conds.empty() && !proj.cat_features.empty()) {
+            has_num_cond_proj = true;
+        }
+    }
+    EXPECT_TRUE(has_num_cond_proj);
+
+    const std::string j1 = miter::model_to_json(r_nc1.model);
+    auto m4_norm = r_nc4.model;
+    m4_norm.params.n_jobs = 1;
+    EXPECT_EQ(j1, miter::model_to_json(m4_norm));
+
+    const miter::Model loaded = miter::model_from_json(j1);
+    EXPECT_TRUE(loaded.params.ctr_num_combinations);
+    EXPECT_EQ(miter::model_to_json(loaded), j1);
+
+    // Validation loss during training must match predict_raw_mixed bit-for-bit on num_conds + NaNs.
+    std::vector<double> va_raw(kVa), va_raw_loaded(kVa);
+    miter::Evaluator::predict_raw_mixed(
+        r_nc1.model, kVa, {miter::NumericColumnView{x_num.data() + kTr, nullptr, 1U}},
+        {miter::CategoricalColumnView{vocab, c_idx.data() + kTr}}, va_raw.data());
+    miter::Evaluator::predict_raw_mixed(
+        loaded, kVa, {miter::NumericColumnView{x_num.data() + kTr, nullptr, 1U}},
+        {miter::CategoricalColumnView{vocab, c_idx.data() + kTr}}, va_raw_loaded.data());
+    for (std::size_t i = 0; i < kVa; ++i) {
+        EXPECT_EQ(std::bit_cast<std::uint64_t>(va_raw[i]),
+                  std::bit_cast<std::uint64_t>(va_raw_loaded[i]));
+    }
+    const double recomputed_vloss = miter::compute_loss(miter::Objective::Binary, va_raw, y_va, {});
+    EXPECT_EQ(std::bit_cast<std::uint64_t>(r_nc1.valid_loss.back()),
+              std::bit_cast<std::uint64_t>(recomputed_vloss));
+
+    auto eval_acc = [&](const miter::Model& model) {
+        std::vector<double> te_raw(kTe);
+        miter::Evaluator::predict_raw_mixed(
+            model, kTe, {miter::NumericColumnView{x_num.data() + kTr + kVa, nullptr, 1U}},
+            {miter::CategoricalColumnView{vocab, c_idx.data() + kTr + kVa}}, te_raw.data());
+        std::size_t ok = 0U;
+        for (std::size_t i = 0; i < kTe; ++i) {
+            const int pred = (te_raw[i] >= 0.0) ? 1 : 0;
+            if (pred == static_cast<int>(y[kTr + kVa + i])) {
+                ++ok;
+            }
+        }
+        return static_cast<double>(ok) / static_cast<double>(kTe);
+    };
+    const double acc_no = eval_acc(r_no.model);
+    const double acc_nc = eval_acc(r_nc1.model);
+    EXPECT_GT(acc_nc, 0.88);
+    EXPECT_GT(acc_nc, acc_no + 0.15);
+
+    const auto imp_split = r_nc1.model.feature_importances_split();
+    EXPECT_GT(imp_split[0], 0U);
+    EXPECT_GT(imp_split[1], 0U);
+}
+
 } // namespace

@@ -83,8 +83,9 @@ void validate_params(const Params& params) {
     if (params.k_proj != 0 && (params.k_proj < 2 || params.k_proj > 8)) {
         throw std::invalid_argument("k_proj must be 0 or in [2, 8]");
     }
-    if (params.max_ctr_complexity < 0 || params.max_ctr_complexity > 3) {
-        throw std::invalid_argument("max_ctr_complexity must be in [0, 3]");
+    if (params.max_ctr_complexity != kCtrComplexityAuto &&
+        (params.max_ctr_complexity < 0 || params.max_ctr_complexity > 3)) {
+        throw std::invalid_argument("max_ctr_complexity must be -1 (auto) or in [0, 3]");
     }
     if (!std::isfinite(params.ctr_prior_weight) || params.ctr_prior_weight <= 0.0) {
         throw std::invalid_argument("ctr_prior_weight must be finite and > 0");
@@ -94,6 +95,9 @@ void validate_params(const Params& params) {
     }
     if (params.ctr_max_borders < 1 || params.ctr_max_borders > 255) {
         throw std::invalid_argument("ctr_max_borders must be in [1, 255]");
+    }
+    if (!std::isfinite(params.ctr_model_size_reg) || params.ctr_model_size_reg < 0.0) {
+        throw std::invalid_argument("ctr_model_size_reg must be finite and >= 0");
     }
     if (params.quantizer_mode != QuantizerMode::Linear &&
         params.quantizer_mode != QuantizerMode::Quantile &&
@@ -193,13 +197,19 @@ TrainResult fit_booster(const Dataset& ds, Objective objective, std::span<const 
         TreeWorkspace ws;
         ws.prepare(ds, params);
 
-        const bool ctr_active = (params.max_ctr_complexity > 0 && ds.n_cat_features() > 0U &&
-                                 params.grow_policy == GrowPolicy::Symmetric);
+        bool ctr_active =
+            ((params.max_ctr_complexity > 0 || params.max_ctr_complexity == kCtrComplexityAuto) &&
+             ds.n_cat_features() > 0U && params.grow_policy == GrowPolicy::Symmetric);
         CtrTrainingState ctr_state;
         std::vector<double> mc_class_y;
         std::vector<double> mc_class_prior;
         if (ctr_active) {
             ctr_state.prepare(ds, params);
+            if (ctr_state.effective_max_complexity == 0) {
+                ctr_active = false;
+            }
+        }
+        if (ctr_active) {
             mc_class_y.resize(K * n);
             mc_class_prior.assign(K, 0.0);
             const bool has_w = !sample_weight.empty();
@@ -374,12 +384,18 @@ TrainResult fit_booster(const Dataset& ds, Objective objective, std::span<const 
     TreeWorkspace ws;
     ws.prepare(ds, params);
 
-    const bool ctr_active = (params.max_ctr_complexity > 0 && ds.n_cat_features() > 0U &&
-                             params.grow_policy == GrowPolicy::Symmetric);
+    bool ctr_active =
+        ((params.max_ctr_complexity > 0 || params.max_ctr_complexity == kCtrComplexityAuto) &&
+         ds.n_cat_features() > 0U && params.grow_policy == GrowPolicy::Symmetric);
     CtrTrainingState ctr_state;
     CtrGrowContext ctr_ctx;
     if (ctr_active) {
         ctr_state.prepare(ds, params);
+        if (ctr_state.effective_max_complexity == 0) {
+            ctr_active = false;
+        }
+    }
+    if (ctr_active) {
         ctr_ctx.state = &ctr_state;
         ctr_ctx.model = &model;
         ctr_ctx.target_y = y.data();

@@ -82,8 +82,7 @@ bool eval_multi_leaf_gain(const double* gl_arr, const double* hl_arr, const std:
     return true;
 }
 
-void add_unique_cat_proj(std::vector<std::vector<std::uint32_t>>& used,
-                         const std::vector<std::uint32_t>& proj) {
+void add_unique_ctr_proj(std::vector<CtrProjection>& used, const CtrProjection& proj) {
     for (const auto& existing : used) {
         if (existing == proj) {
             return;
@@ -108,7 +107,7 @@ struct CtrScoreJob {
     const CtrCachedCol* col = nullptr;
 };
 
-void compute_ctr_miss_group(const Dataset& ds, std::span<const std::uint32_t> proj,
+void compute_ctr_miss_group(const Dataset& ds, const CtrProjection& proj,
                             std::span<const std::uint32_t> perm, const CtrGrowContext& ctr_ctx,
                             const Params& params, CtrMissGroup& mg, CtrThreadScratch& ts) {
     const std::size_t n = ds.n_rows();
@@ -149,9 +148,9 @@ void compute_ctr_miss_group(const Dataset& ds, std::span<const std::uint32_t> pr
 
 CtrSplitCandidate
 find_sym_ctr_split(const Dataset& ds, const std::vector<std::uint32_t>& active_cat,
-                   const std::vector<std::vector<std::uint32_t>>& used_cat_projs,
-                   const std::uint8_t* leaf_ids, const std::uint32_t* rows, std::size_t n_root,
-                   bool is_contiguous, std::size_t n_leaves, const float* g_seq, const float* h_seq,
+                   const std::vector<CtrProjection>& used_projs, const std::uint8_t* leaf_ids,
+                   const std::uint32_t* rows, std::size_t n_root, bool is_contiguous,
+                   std::size_t n_leaves, const float* g_seq, const float* h_seq,
                    const double* leaf_g, const double* leaf_h, const std::int32_t* leaf_c,
                    const double* parent_score, double lam, double min_h, std::int32_t min_c,
                    double min_gain, const Params& params, std::size_t tree_index, std::size_t depth,
@@ -159,29 +158,35 @@ find_sym_ctr_split(const Dataset& ds, const std::vector<std::uint32_t>& active_c
     CtrSplitCandidate best;
     CtrTrainingState& state = *ctr_ctx.state;
     const std::size_t n = ds.n_rows();
+    const int eff_max_cplx = state.effective_max_complexity;
+    if (eff_max_cplx <= 0) {
+        return best;
+    }
 
-    std::vector<std::vector<std::uint32_t>> cand_projs;
-    cand_projs.reserve(active_cat.size() * (used_cat_projs.size() + 1U));
+    std::vector<CtrProjection> cand_projs;
+    cand_projs.reserve(active_cat.size() * (used_projs.size() + 1U));
     const auto onehot_max = static_cast<std::size_t>(params.max_cat_to_onehot);
     for (const std::uint32_t f : active_cat) {
         const std::size_t cm = ds.cat_sub_index(f);
         if (state.cat_cardinalities[cm] > onehot_max) {
-            cand_projs.push_back({f});
+            cand_projs.push_back(CtrProjection{{f}, {}});
         }
     }
-    if (depth >= 1U && params.max_ctr_complexity >= 2) {
-        const auto max_cplx = static_cast<std::size_t>(params.max_ctr_complexity);
-        for (const auto& base : used_cat_projs) {
-            if (base.size() >= max_cplx) {
+    if (depth >= 1U && eff_max_cplx >= 2) {
+        const auto max_cplx = static_cast<std::size_t>(eff_max_cplx);
+        for (const auto& base : used_projs) {
+            if (base.complexity() >= max_cplx || base.num_conds.size() > 1U) {
                 continue;
             }
             for (const std::uint32_t f : active_cat) {
-                if (std::find(base.begin(), base.end(), f) != base.end()) {
+                if (std::find(base.cat_features.begin(), base.cat_features.end(), f) !=
+                    base.cat_features.end()) {
                     continue;
                 }
-                std::vector<std::uint32_t> next = base;
-                next.push_back(f);
-                std::sort(next.begin(), next.end());
+                CtrProjection next = base;
+                next.cat_features.push_back(f);
+                std::sort(next.cat_features.begin(), next.cat_features.end());
+                std::sort(next.num_conds.begin(), next.num_conds.end());
                 cand_projs.push_back(std::move(next));
             }
         }
@@ -312,10 +317,21 @@ find_sym_ctr_split(const Dataset& ds, const std::vector<std::uint32_t>& active_c
         return best;
     }
 
+    const std::size_t min_rep = (n >= 40U) ? std::max<std::size_t>(20U, n / 20U) : (n / 2U);
     std::vector<CtrSplitCandidate> job_results(jobs.size());
     auto score_one = [&](std::size_t ji, std::size_t tid) {
         const CtrScoreJob& job = jobs[ji];
         const CtrCachedCol& col = *job.col;
+        const auto& proj = cand_projs[job.proj_idx];
+        const std::size_t cplx = proj.complexity();
+        const std::size_t n_uniq = col.n_unique_keys;
+        const std::size_t n_rep = (n > n_uniq) ? (n - n_uniq) : 0U;
+        if (n_uniq <= 1U || (cplx >= 2U && n_rep < min_rep) ||
+            (cplx == 1U && n >= 100U && n_rep < min_rep)) {
+            job_results[ji] = CtrSplitCandidate{};
+            return;
+        }
+
         const auto nb = static_cast<std::uint16_t>(col.borders.size());
         const std::size_t stride = static_cast<std::size_t>(nb) + 1U;
         HistBin* hist_f = sym.axis_thread_hists.data() + tid * sym.max_level_leaves * 256U;
@@ -340,11 +356,18 @@ find_sym_ctr_split(const Dataset& ds, const std::vector<std::uint32_t>& active_c
             }
         }
 
-        const auto& proj = cand_projs[job.proj_idx];
-        const double denom = (proj.size() >= 2U)
-                                 ? (1.0 + 0.5 * static_cast<double>(col.n_unique_keys) /
-                                              static_cast<double>(std::max<std::size_t>(n, 1U)))
-                                 : 1.0;
+        double denom = 1.0;
+        const double reg = params.ctr_model_size_reg;
+        if (reg > 0.0) {
+            const double nd = static_cast<double>(std::max<std::size_t>(n, 1U));
+            const double frac_u = static_cast<double>(n_uniq) / nd;
+            if (cplx >= 2U) {
+                denom = 1.0 + reg * static_cast<double>(cplx - 1U) *
+                                  (std::sqrt(frac_u) + 10.0 / std::sqrt(nd));
+            } else {
+                denom = 1.0 + 0.25 * reg * frac_u;
+            }
+        }
 
         double gl_arr[kSymMaxLeaves] = {};
         double hl_arr[kSymMaxLeaves] = {};
@@ -364,7 +387,7 @@ find_sym_ctr_split(const Dataset& ds, const std::vector<std::uint32_t>& active_c
                 if (scored_gain > min_gain && (!cand.valid || scored_gain > cand.gain)) {
                     cand.valid = true;
                     cand.gain = scored_gain;
-                    cand.cat_features = proj;
+                    cand.proj = proj;
                     cand.kind = job.kind;
                     cand.prior_id = job.prior_id;
                     cand.prior_value = job.prior_value;
@@ -2194,10 +2217,10 @@ Tree grow_symmetric_tree(const Dataset& ds, const float* g, const float* h, cons
     const std::int16_t* codes_base = (p_num > 0U) ? ds.codes_col_major().data() : nullptr;
 
     std::array<SymSplitChoice, 8> level_splits{};
-    std::vector<std::vector<std::uint32_t>> used_cat_projs;
+    std::vector<CtrProjection> used_projs;
     const bool allow_ctr =
         (ctr_ctx != nullptr && ctr_ctx->state != nullptr && ctr_ctx->model != nullptr &&
-         params.max_ctr_complexity > 0 && ds.n_cat_features() > 0U);
+         ctr_ctx->state->effective_max_complexity > 0 && ds.n_cat_features() > 0U);
     std::size_t actual_depth = 0U;
     const double lam = params.lambda_l2;
     const double min_h = params.min_sum_hessian_in_leaf;
@@ -2382,9 +2405,9 @@ Tree grow_symmetric_tree(const Dataset& ds, const float* g, const float* h, cons
             }
         }
 
-        // 4. Online ordered CTR splits (singles & dynamic category combinations).
+        // 4. Online ordered CTR splits (singles & dynamic category/numeric combinations).
         if (allow_ctr && n_cat_act > 0U) {
-            choice.ctr = find_sym_ctr_split(ds, active_cat, used_cat_projs, leaf_ids, rows, n_root,
+            choice.ctr = find_sym_ctr_split(ds, active_cat, used_projs, leaf_ids, rows, n_root,
                                             is_contiguous, n_leaves, g_seq, h_seq, leaf_g, leaf_h,
                                             leaf_c, parent_score, lam, min_h, min_c, min_gain,
                                             params, tree_index, d, n_threads, sym, *ctr_ctx);
@@ -2399,12 +2422,18 @@ Tree grow_symmetric_tree(const Dataset& ds, const float* g, const float* h, cons
             break;
         }
         if (choice.kind == NodeKind::Categorical) {
-            add_unique_cat_proj(used_cat_projs, {choice.cat.feature});
+            add_unique_ctr_proj(used_projs, CtrProjection{{choice.cat.feature}, {}});
         } else if (choice.kind == NodeKind::Ctr) {
-            choice.ctr_id = ctr_ctx->state->register_ctr(choice.ctr.cat_features, choice.ctr.kind,
+            choice.ctr_id = ctr_ctx->state->register_ctr(choice.ctr.proj, choice.ctr.kind,
                                                          ctr_ctx->target_id, choice.ctr.prior_id,
                                                          choice.ctr.prior_value, *ctr_ctx->model);
-            add_unique_cat_proj(used_cat_projs, choice.ctr.cat_features);
+            add_unique_ctr_proj(used_projs, choice.ctr.proj);
+        } else if (choice.kind == NodeKind::Axis && params.ctr_num_combinations) {
+            add_unique_ctr_proj(
+                used_projs,
+                CtrProjection{{},
+                              {CtrBinaryCond{choice.axis.feature, choice.axis.threshold_u16,
+                                             choice.axis.nan_go_left}}});
         }
         level_splits[d] = choice;
         actual_depth = d + 1U;

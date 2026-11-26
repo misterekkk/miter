@@ -108,6 +108,10 @@ public:
 
     std::uint16_t num_bins_for_feature(std::size_t feature_idx) const;
 
+    std::size_t num_sub_index(std::size_t feature_idx) const noexcept {
+        return feature_to_sub_idx_[feature_idx];
+    }
+
     std::size_t cat_sub_index(std::size_t feature_idx) const noexcept {
         return feature_to_sub_idx_[feature_idx];
     }

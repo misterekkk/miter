@@ -519,6 +519,8 @@ NB_MODULE(_core, m) {
         .value("Leafwise", miter::GrowPolicy::Leafwise)
         .value("Symmetric", miter::GrowPolicy::Symmetric);
 
+    m.attr("CTR_COMPLEXITY_AUTO") = miter::kCtrComplexityAuto;
+
     nb::enum_<miter::QuantizerMode>(m, "QuantizerMode")
         .value("Linear", miter::QuantizerMode::Linear)
         .value("Quantile", miter::QuantizerMode::Quantile)
@@ -556,6 +558,8 @@ NB_MODULE(_core, m) {
         .def_rw("ctr_prior_weight", &miter::Params::ctr_prior_weight)
         .def_rw("ctr_n_permutations", &miter::Params::ctr_n_permutations)
         .def_rw("ctr_max_borders", &miter::Params::ctr_max_borders)
+        .def_rw("ctr_model_size_reg", &miter::Params::ctr_model_size_reg)
+        .def_rw("ctr_num_combinations", &miter::Params::ctr_num_combinations)
         .def_rw("quantizer_mode", &miter::Params::quantizer_mode);
 
     nb::class_<miter::Model>(m, "Model")

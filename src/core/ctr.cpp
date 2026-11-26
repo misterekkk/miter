@@ -245,11 +245,57 @@ std::size_t CtrCacheKeyHash::operator()(const CtrCacheKey& k) const noexcept {
     mix(k.target_id);
     mix(k.perm_idx);
     mix(k.prior_id);
-    mix(k.cat_features.size());
-    for (const std::uint32_t f : k.cat_features) {
+    mix(k.proj.cat_features.size());
+    for (const std::uint32_t f : k.proj.cat_features) {
         mix(f);
     }
+    mix(k.proj.num_conds.size());
+    for (const CtrBinaryCond& c : k.proj.num_conds) {
+        mix(c.feature);
+        mix(c.threshold_u16);
+        mix(c.nan_go_left ? 1U : 0U);
+    }
     return h;
+}
+
+int resolve_effective_ctr_complexity(const Dataset& ds,
+                                     const std::vector<std::size_t>& cat_cardinalities,
+                                     const Params& params) noexcept {
+    if (params.max_ctr_complexity >= 0) {
+        return params.max_ctr_complexity;
+    }
+    if (params.max_ctr_complexity != kCtrComplexityAuto) {
+        return 0;
+    }
+    const std::size_t p_cat = ds.n_cat_features();
+    const std::size_t n = ds.n_rows();
+    const bool has_num = (ds.n_num_features() > 0U);
+    if (p_cat == 0U) {
+        return 0;
+    }
+    const auto onehot_max = static_cast<std::size_t>(params.max_cat_to_onehot);
+    std::size_t n_high_card = 0U;
+    for (const std::size_t card : cat_cardinalities) {
+        if (card > onehot_max) {
+            ++n_high_card;
+        }
+    }
+    if (p_cat == 1U) {
+        if (params.ctr_num_combinations && has_num && n >= 1500U) {
+            return 2;
+        }
+        return (n_high_card >= 1U) ? 1 : 0;
+    }
+    if (n < 1500U) {
+        return (n_high_card >= 1U) ? 1 : 0;
+    }
+    if (n < 8000U) {
+        return 2;
+    }
+    if (p_cat >= 3U || (params.ctr_num_combinations && has_num)) {
+        return 3;
+    }
+    return 2;
 }
 
 void CtrTrainingState::prepare(const Dataset& ds, const Params& params) {
@@ -301,6 +347,7 @@ void CtrTrainingState::prepare(const Dataset& ds, const Params& params) {
         }
     }
 
+    effective_max_complexity = resolve_effective_ctr_complexity(ds, cat_cardinalities, params);
     cache.clear();
     cache_bytes = 0U;
     win_ctr_bins.resize(n_rows);
@@ -309,13 +356,12 @@ void CtrTrainingState::prepare(const Dataset& ds, const Params& params) {
     finalized_count = 0U;
 }
 
-std::uint32_t CtrTrainingState::register_ctr(const std::vector<std::uint32_t>& cat_features,
-                                             CtrKind kind, std::uint32_t target_id,
-                                             std::uint8_t prior_id, double prior_value,
-                                             Model& model) {
+std::uint32_t CtrTrainingState::register_ctr(const CtrProjection& proj, CtrKind kind,
+                                             std::uint32_t target_id, std::uint8_t prior_id,
+                                             double prior_value, Model& model) {
     for (std::size_t id = 0; id < specs.size(); ++id) {
         if (specs[id].kind == kind && specs[id].target_id == target_id &&
-            specs[id].prior_id == prior_id && specs[id].cat_features == cat_features) {
+            specs[id].prior_id == prior_id && specs[id].proj == proj) {
             return static_cast<std::uint32_t>(id);
         }
     }
@@ -324,7 +370,7 @@ std::uint32_t CtrTrainingState::register_ctr(const std::vector<std::uint32_t>& c
     std::uint32_t proj_idx = 0U;
     bool found_proj = false;
     for (std::size_t pi = 0; pi < model.ctr_projections.size(); ++pi) {
-        if (model.ctr_projections[pi].cat_features == cat_features) {
+        if (model.ctr_projections[pi] == proj) {
             proj_idx = static_cast<std::uint32_t>(pi);
             found_proj = true;
             break;
@@ -332,11 +378,11 @@ std::uint32_t CtrTrainingState::register_ctr(const std::vector<std::uint32_t>& c
     }
     if (!found_proj) {
         proj_idx = static_cast<std::uint32_t>(model.ctr_projections.size());
-        model.ctr_projections.push_back(CtrProjection{cat_features});
+        model.ctr_projections.push_back(proj);
     }
 
     const auto new_id = static_cast<std::uint32_t>(specs.size());
-    specs.push_back(CtrRegisteredSpec{cat_features, kind, target_id, prior_id, prior_value});
+    specs.push_back(CtrRegisteredSpec{proj, kind, target_id, prior_id, prior_value});
 
     CtrTable tbl;
     tbl.projection = proj_idx;
@@ -345,26 +391,66 @@ std::uint32_t CtrTrainingState::register_ctr(const std::vector<std::uint32_t>& c
     return new_id;
 }
 
-void compute_projection_hashes(const Dataset& ds, std::span<const std::uint32_t> cat_features,
-                               std::uint64_t* out_hashes) noexcept {
+namespace {
+
+void compute_projection_hashes_spans(const Dataset& ds, std::span<const std::uint32_t> cat_features,
+                                     std::span<const CtrBinaryCond> num_conds,
+                                     std::uint64_t* out_hashes) noexcept {
     const std::size_t n = ds.n_rows();
-    const std::uint32_t* base = ds.cat_hashes_col_major().data();
-    if (cat_features.empty()) {
+    if (cat_features.empty() && num_conds.empty()) {
         std::fill_n(out_hashes, n, 0ULL);
         return;
     }
-    const std::size_t c0 = ds.cat_sub_index(cat_features[0]);
-    const std::uint32_t* h0 = base + c0 * n;
-    for (std::size_t i = 0; i < n; ++i) {
-        out_hashes[i] = static_cast<std::uint64_t>(h0[i]);
-    }
-    for (std::size_t m = 1U; m < cat_features.size(); ++m) {
-        const std::size_t cm = ds.cat_sub_index(cat_features[m]);
-        const std::uint32_t* hm = base + cm * n;
-        for (std::size_t i = 0; i < n; ++i) {
-            out_hashes[i] = combine_cat_hash(out_hashes[i], static_cast<std::uint64_t>(hm[i]));
+    bool first = true;
+    const std::uint32_t* cat_base = ds.cat_hashes_col_major().data();
+    for (const std::uint32_t f : cat_features) {
+        const std::size_t cf = ds.cat_sub_index(f);
+        const std::uint32_t* hf = cat_base + cf * n;
+        if (first) {
+            for (std::size_t i = 0; i < n; ++i) {
+                out_hashes[i] = static_cast<std::uint64_t>(hf[i]);
+            }
+            first = false;
+        } else {
+            for (std::size_t i = 0; i < n; ++i) {
+                out_hashes[i] = combine_cat_hash(out_hashes[i], static_cast<std::uint64_t>(hf[i]));
+            }
         }
     }
+    const std::int16_t* code_base = ds.codes_col_major().data();
+    for (const CtrBinaryCond& cond : num_conds) {
+        const std::size_t nf = ds.num_sub_index(cond.feature);
+        const std::int16_t* cf = code_base + nf * n;
+        const std::uint16_t thr = cond.threshold_u16;
+        const bool nan_left = cond.nan_go_left;
+        if (first) {
+            for (std::size_t i = 0; i < n; ++i) {
+                const std::uint16_t u = Q16Quantizer::to_unsigned_code(cf[i]);
+                const bool go_left = (u == kQ16NanCode) ? nan_left : (u < thr);
+                out_hashes[i] = go_left ? kCtrNumLeftHash : kCtrNumRightHash;
+            }
+            first = false;
+        } else {
+            for (std::size_t i = 0; i < n; ++i) {
+                const std::uint16_t u = Q16Quantizer::to_unsigned_code(cf[i]);
+                const bool go_left = (u == kQ16NanCode) ? nan_left : (u < thr);
+                out_hashes[i] =
+                    combine_cat_hash(out_hashes[i], go_left ? kCtrNumLeftHash : kCtrNumRightHash);
+            }
+        }
+    }
+}
+
+} // namespace
+
+void compute_projection_hashes(const Dataset& ds, const CtrProjection& proj,
+                               std::uint64_t* out_hashes) noexcept {
+    compute_projection_hashes_spans(ds, proj.cat_features, proj.num_conds, out_hashes);
+}
+
+void compute_projection_hashes(const Dataset& ds, std::span<const std::uint32_t> cat_features,
+                               std::uint64_t* out_hashes) noexcept {
+    compute_projection_hashes_spans(ds, cat_features, {}, out_hashes);
 }
 
 void compute_projection_hashes(const TransformedData& td,
@@ -573,7 +659,7 @@ void finalize_pending_ctr_tables(const Dataset& ds, CtrTrainingState& state, con
         if (spec.target_id != current_target_id) {
             continue;
         }
-        compute_projection_hashes(ds, spec.cat_features, hashes.data());
+        compute_projection_hashes(ds, spec.proj, hashes.data());
         scratch.next_generation();
 
         std::vector<std::size_t> occupied;

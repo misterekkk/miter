@@ -20,6 +20,8 @@ class GrowPolicy(Enum):
     Leafwise = ...
     Symmetric = ...
 
+CTR_COMPLEXITY_AUTO: int
+
 class QuantizerMode(Enum):
     Linear = ...
     Quantile = ...
@@ -56,6 +58,8 @@ class Params:
     ctr_prior_weight: float
     ctr_n_permutations: int
     ctr_max_borders: int
+    ctr_model_size_reg: float
+    ctr_num_combinations: bool
     quantizer_mode: QuantizerMode
     def __init__(self) -> None: ...
 

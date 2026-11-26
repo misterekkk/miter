@@ -21,6 +21,8 @@ enum class QuantizerMode : std::uint8_t {
     Auto = 2,
 };
 
+inline constexpr int kCtrComplexityAuto = -1;
+
 /**
  * @brief Training and model hyperparameters for miter.
  *
@@ -56,7 +58,8 @@ struct Params {
     double bagging_fraction = 1.0;
     /// Axis candidates: one random valid threshold per feature instead of the best one.
     bool extra_trees = false;
-    /// CatBoost-style native online ordered CTR max combination complexity (0 = off, 1..3).
+    /// CatBoost-style native online ordered CTR max combination complexity
+    /// (-1 = auto, 0 = off, 1..3).
     int max_ctr_complexity = 0;
     /// Smoothing prior weight for native online ordered CTRs (> 0).
     double ctr_prior_weight = 1.0;
@@ -64,6 +67,10 @@ struct Params {
     int ctr_n_permutations = 1;
     /// Maximum split borders discretized per native CTR candidate (in [1, 255]).
     int ctr_max_borders = 15;
+    /// Sample-size-aware complexity regularization weight for native CTR combinations (>= 0).
+    double ctr_model_size_reg = 0.5;
+    /// Whether to allow binary numeric-split x categorical CTR combinations.
+    bool ctr_num_combinations = false;
     /// Per-feature 16-bit numeric quantization mode (Linear, Quantile, or Auto).
     QuantizerMode quantizer_mode = QuantizerMode::Linear;
 };

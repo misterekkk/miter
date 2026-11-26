@@ -259,10 +259,12 @@ class _BaseMiterEstimator(_SklearnBase):
         cat_ctr_mode: str = "oof",
         cat_ctr_pairs: int = 0,
         cat_ctr_counter: bool = False,
-        max_ctr_complexity: int = 0,
+        max_ctr_complexity: int | str = 0,
         ctr_prior_weight: float = 1.0,
         ctr_n_permutations: int = 1,
         ctr_max_borders: int = 15,
+        ctr_model_size_reg: float = 0.5,
+        ctr_num_combinations: bool = False,
         quantizer: str = "linear",
         early_stopping_rounds: int | None = 50,
         time_limit: float | None = None,
@@ -302,6 +304,8 @@ class _BaseMiterEstimator(_SklearnBase):
         self.ctr_prior_weight = ctr_prior_weight
         self.ctr_n_permutations = ctr_n_permutations
         self.ctr_max_borders = ctr_max_borders
+        self.ctr_model_size_reg = ctr_model_size_reg
+        self.ctr_num_combinations = ctr_num_combinations
         self.quantizer = quantizer
         self.early_stopping_rounds = early_stopping_rounds
         self.time_limit = time_limit
@@ -381,10 +385,39 @@ class _BaseMiterEstimator(_SklearnBase):
         p.feature_fraction = float(self.feature_fraction)
         p.bagging_fraction = float(self.bagging_fraction)
         p.extra_trees = bool(self.extra_trees)
-        p.max_ctr_complexity = int(self.max_ctr_complexity)
+        if isinstance(self.max_ctr_complexity, str):
+            if self.max_ctr_complexity != "auto":
+                raise ValueError(
+                    "max_ctr_complexity must be 'auto' or an int in [-1, 3], "
+                    f"got {self.max_ctr_complexity!r}"
+                )
+            p.max_ctr_complexity = _core.CTR_COMPLEXITY_AUTO
+        elif isinstance(self.max_ctr_complexity, bool) or not isinstance(
+            self.max_ctr_complexity, (int, np.integer)
+        ):
+            raise ValueError(
+                "max_ctr_complexity must be 'auto' or an int in [-1, 3], "
+                f"got {self.max_ctr_complexity!r}"
+            )
+        else:
+            mcc = int(self.max_ctr_complexity)
+            if mcc < -1 or mcc > 3:
+                raise ValueError(f"max_ctr_complexity must be -1 (auto) or in [0, 3], got {mcc}")
+            p.max_ctr_complexity = mcc
         p.ctr_prior_weight = float(self.ctr_prior_weight)
         p.ctr_n_permutations = int(self.ctr_n_permutations)
         p.ctr_max_borders = int(self.ctr_max_borders)
+        reg = float(self.ctr_model_size_reg)
+        if not np.isfinite(reg) or reg < 0.0:
+            raise ValueError(
+                f"ctr_model_size_reg must be finite and >= 0, got {self.ctr_model_size_reg!r}"
+            )
+        p.ctr_model_size_reg = reg
+        if not isinstance(self.ctr_num_combinations, bool):
+            raise ValueError(
+                f"ctr_num_combinations must be a bool, got {self.ctr_num_combinations!r}"
+            )
+        p.ctr_num_combinations = self.ctr_num_combinations
         if self.quantizer == "linear":
             p.quantizer_mode = _core.QuantizerMode.Linear
         elif self.quantizer == "quantile":
@@ -631,10 +664,12 @@ class _BaseMiterEstimator(_SklearnBase):
             feature_fraction=p.feature_fraction,
             bagging_fraction=p.bagging_fraction,
             extra_trees=p.extra_trees,
-            max_ctr_complexity=p.max_ctr_complexity,
+            max_ctr_complexity=("auto" if p.max_ctr_complexity == -1 else p.max_ctr_complexity),
             ctr_prior_weight=p.ctr_prior_weight,
             ctr_n_permutations=p.ctr_n_permutations,
             ctr_max_borders=p.ctr_max_borders,
+            ctr_model_size_reg=p.ctr_model_size_reg,
+            ctr_num_combinations=p.ctr_num_combinations,
             quantizer=(
                 "quantile"
                 if p.quantizer_mode == _core.QuantizerMode.Quantile

@@ -16,6 +16,8 @@ namespace miter {
 
 inline constexpr std::uint32_t kMissingCatHash = 0x9e3779b9U;
 inline constexpr std::uint64_t kCtrHashMagic = 0x4906ba494954cb65ULL;
+inline constexpr std::uint64_t kCtrNumLeftHash = 0x517cc1b727220a95ULL;
+inline constexpr std::uint64_t kCtrNumRightHash = 0x94d049bb133111ebULL;
 inline constexpr std::size_t kMaxCtrCacheBytes = 128ULL * 1024ULL * 1024ULL;
 
 std::uint32_t cat_hash_string(std::string_view s) noexcept;
@@ -44,7 +46,7 @@ struct CtrScratch {
 };
 
 struct CtrSplitCandidate {
-    std::vector<std::uint32_t> cat_features;
+    CtrProjection proj;
     CtrKind kind = CtrKind::TargetMean;
     std::uint8_t prior_id = 0;
     double prior_value = 0.0;
@@ -55,7 +57,7 @@ struct CtrSplitCandidate {
 };
 
 struct CtrRegisteredSpec {
-    std::vector<std::uint32_t> cat_features;
+    CtrProjection proj;
     CtrKind kind = CtrKind::TargetMean;
     std::uint32_t target_id = 0;
     std::uint8_t prior_id = 0;
@@ -63,7 +65,7 @@ struct CtrRegisteredSpec {
 };
 
 struct CtrCacheKey {
-    std::vector<std::uint32_t> cat_features;
+    CtrProjection proj;
     CtrKind kind = CtrKind::TargetMean;
     std::uint32_t target_id = 0;
     std::uint32_t perm_idx = 0;
@@ -97,6 +99,7 @@ public:
 
     std::size_t n_rows = 0;
     std::size_t n_perms = 0;
+    int effective_max_complexity = 0;
     std::vector<std::vector<std::uint32_t>> perms;
     CtrScratch scratch;
     std::vector<CtrThreadScratch> thread_scratches;
@@ -114,12 +117,19 @@ public:
     std::vector<CtrRegisteredSpec> specs;
     std::size_t finalized_count = 0;
 
-    std::uint32_t register_ctr(const std::vector<std::uint32_t>& cat_features, CtrKind kind,
-                               std::uint32_t target_id, std::uint8_t prior_id, double prior_value,
-                               Model& model);
+    std::uint32_t register_ctr(const CtrProjection& proj, CtrKind kind, std::uint32_t target_id,
+                               std::uint8_t prior_id, double prior_value, Model& model);
 };
 
+// Resolve effective max CTR complexity (-1 = auto, else clamp/pass params.max_ctr_complexity).
+int resolve_effective_ctr_complexity(const Dataset& ds,
+                                     const std::vector<std::size_t>& cat_cardinalities,
+                                     const Params& params) noexcept;
+
 // Compute projection hashes for all rows [0, n_rows) in dataset.
+void compute_projection_hashes(const Dataset& ds, const CtrProjection& proj,
+                               std::uint64_t* out_hashes) noexcept;
+
 void compute_projection_hashes(const Dataset& ds, std::span<const std::uint32_t> cat_features,
                                std::uint64_t* out_hashes) noexcept;
 

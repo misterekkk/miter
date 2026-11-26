@@ -48,18 +48,34 @@ std::vector<NumericColumnView> make_eval_views(const FloatT* data, std::size_t n
 
 float eval_ctr_value(const Model& model, std::uint32_t ctr_id, const std::uint32_t* cat_hashes_base,
                      std::size_t cat_col_stride, std::size_t row_offset,
-                     const std::size_t* feature_to_cat_idx) noexcept {
+                     const std::size_t* feature_to_cat_idx, const std::uint16_t* row_codes,
+                     const std::int16_t* codes_col_major, std::size_t n_code_rows,
+                     const std::vector<std::size_t>* feature_to_num_idx) noexcept {
     const CtrTable& tbl = model.ctr_tables[ctr_id];
-    const auto& cats = model.ctr_projections[tbl.projection].cat_features;
-    if (cats.empty()) {
+    const CtrProjection& proj = model.ctr_projections[tbl.projection];
+    if (proj.cat_features.empty() && proj.num_conds.empty()) {
         return tbl.default_value;
     }
-    std::uint64_t h = static_cast<std::uint64_t>(
-        cat_hashes_base[feature_to_cat_idx[cats[0]] * cat_col_stride + row_offset]);
-    for (std::size_t m = 1U; m < cats.size(); ++m) {
-        const auto hm = static_cast<std::uint64_t>(
-            cat_hashes_base[feature_to_cat_idx[cats[m]] * cat_col_stride + row_offset]);
-        h = combine_cat_hash(h, hm);
+    std::uint64_t h = 0ULL;
+    bool first = true;
+    for (const std::uint32_t f : proj.cat_features) {
+        const auto hf = static_cast<std::uint64_t>(
+            cat_hashes_base[feature_to_cat_idx[f] * cat_col_stride + row_offset]);
+        h = first ? hf : combine_cat_hash(h, hf);
+        first = false;
+    }
+    for (const CtrBinaryCond& cond : proj.num_conds) {
+        std::uint16_t u = kQ16NanCode;
+        if (row_codes != nullptr) {
+            u = row_codes[cond.feature];
+        } else if (codes_col_major != nullptr && feature_to_num_idx != nullptr) {
+            const std::size_t nf = (*feature_to_num_idx)[cond.feature];
+            u = Q16Quantizer::to_unsigned_code(codes_col_major[nf * n_code_rows + row_offset]);
+        }
+        const bool go_left = (u == kQ16NanCode) ? cond.nan_go_left : (u < cond.threshold_u16);
+        const std::uint64_t hc = go_left ? kCtrNumLeftHash : kCtrNumRightHash;
+        h = first ? hc : combine_cat_hash(h, hc);
+        first = false;
     }
     return lookup_ctr_table(tbl, h);
 }
@@ -81,8 +97,8 @@ double eval_tree_u16(const Tree& tree, const std::uint16_t* row_codes, const Mod
             const auto code = static_cast<std::uint8_t>(row_codes[node.feature]);
             go_left = cat_bitset_test(tree.cat_bitsets[node.cat_bitset_offset], code);
         } else if (node.kind == NodeKind::Ctr) {
-            const float val =
-                eval_ctr_value(*model, node.feature, row_cat_hashes, 1U, 0U, feature_to_cat_idx);
+            const float val = eval_ctr_value(*model, node.feature, row_cat_hashes, 1U, 0U,
+                                             feature_to_cat_idx, row_codes, nullptr, 0U, nullptr);
             go_left = (val < node.ctr_threshold);
         } else {
             const std::uint8_t k = node.oblique_k;
@@ -147,6 +163,11 @@ std::vector<std::uint64_t> Model::feature_importances_split() const {
                                 counts[f] += 1U;
                             }
                         }
+                        for (const CtrBinaryCond& cond : ctr_projections[pi].num_conds) {
+                            if (cond.feature < n_features) {
+                                counts[cond.feature] += 1U;
+                            }
+                        }
                     }
                 }
             } else if (node.kind == NodeKind::Oblique) {
@@ -190,6 +211,11 @@ std::vector<double> Model::feature_importances_gain() const {
                         for (const std::uint32_t f : ctr_projections[pi].cat_features) {
                             if (f < n_features) {
                                 gains[f] += node.split_gain;
+                            }
+                        }
+                        for (const CtrBinaryCond& cond : ctr_projections[pi].num_conds) {
+                            if (cond.feature < n_features) {
+                                gains[cond.feature] += node.split_gain;
                             }
                         }
                     }
@@ -626,7 +652,8 @@ void Evaluator::add_tree_predictions_from_codes(
                     break;
                 }
                 const float val = eval_ctr_value(*model, node.feature, cat_hashes_col_major, n_rows,
-                                                 i, feature_to_cat_idx->data());
+                                                 i, feature_to_cat_idx->data(), nullptr,
+                                                 codes_col_major, n_rows, &feature_to_num_idx);
                 go_left = (val < node.ctr_threshold);
             } else {
                 if (!has_codes) {
