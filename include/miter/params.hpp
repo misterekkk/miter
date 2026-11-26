@@ -47,6 +47,14 @@ struct Params {
     double bagging_fraction = 1.0;
     /// Axis candidates: one random valid threshold per feature instead of the best one.
     bool extra_trees = false;
+    /// CatBoost-style native online ordered CTR max combination complexity (0 = off, 1..3).
+    int max_ctr_complexity = 0;
+    /// Smoothing prior weight for native online ordered CTRs (> 0).
+    double ctr_prior_weight = 1.0;
+    /// Number of deterministic permutations cycled across trees for native CTRs (>= 1).
+    int ctr_n_permutations = 4;
+    /// Maximum split borders discretized per native CTR candidate (in [1, 255]).
+    int ctr_max_borders = 15;
 };
 
 } // namespace miter

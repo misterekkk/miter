@@ -399,6 +399,8 @@ std::string_view node_kind_to_str(NodeKind k) {
         return "oblique";
     case NodeKind::Categorical:
         return "categorical";
+    case NodeKind::Ctr:
+        return "ctr";
     }
     return "leaf";
 }
@@ -416,7 +418,40 @@ NodeKind node_kind_from_str(std::string_view s) {
     if (s == "categorical") {
         return NodeKind::Categorical;
     }
+    if (s == "ctr") {
+        return NodeKind::Ctr;
+    }
     throw std::runtime_error("Unsupported node kind in model JSON");
+}
+
+std::string u64_to_hex(std::uint64_t v) {
+    static constexpr char kHex[] = "0123456789abcdef";
+    std::string s(16U, '0');
+    for (int i = 15; i >= 0; --i) {
+        s[static_cast<std::size_t>(i)] = kHex[v & 0xFULL];
+        v >>= 4U;
+    }
+    return s;
+}
+
+std::uint64_t u64_from_hex(std::string_view s) {
+    if (s.empty() || s.size() > 16U) {
+        throw std::runtime_error("Invalid hex uint64 in model JSON");
+    }
+    std::uint64_t v = 0;
+    for (const char ch : s) {
+        v <<= 4U;
+        if (ch >= '0' && ch <= '9') {
+            v |= static_cast<std::uint64_t>(ch - '0');
+        } else if (ch >= 'a' && ch <= 'f') {
+            v |= static_cast<std::uint64_t>(10 + (ch - 'a'));
+        } else if (ch >= 'A' && ch <= 'F') {
+            v |= static_cast<std::uint64_t>(10 + (ch - 'A'));
+        } else {
+            throw std::runtime_error("Invalid hex digit in model JSON");
+        }
+    }
+    return v;
 }
 
 } // namespace
@@ -483,6 +518,12 @@ std::string model_to_json(const Model& model) {
     if (model.params.grow_policy != GrowPolicy::Leafwise) {
         os << ", \"grow_policy\": \"symmetric\"";
     }
+    if (model.params.max_ctr_complexity > 0) {
+        os << ", \"max_ctr_complexity\": " << model.params.max_ctr_complexity
+           << ", \"ctr_prior_weight\": " << model.params.ctr_prior_weight
+           << ", \"ctr_n_permutations\": " << model.params.ctr_n_permutations
+           << ", \"ctr_max_borders\": " << model.params.ctr_max_borders;
+    }
     os << "},\n";
 
     os << "  \"feature_names\": [";
@@ -530,6 +571,58 @@ std::string model_to_json(const Model& model) {
         os << "]";
     }
     os << "],\n";
+
+    if (!model.ctr_projections.empty()) {
+        os << "  \"ctr_projections\": [";
+        for (std::size_t i = 0; i < model.ctr_projections.size(); ++i) {
+            if (i > 0U) {
+                os << ", ";
+            }
+            os << "[";
+            const auto& cf = model.ctr_projections[i].cat_features;
+            for (std::size_t k = 0; k < cf.size(); ++k) {
+                if (k > 0U) {
+                    os << ", ";
+                }
+                os << cf[k];
+            }
+            os << "]";
+        }
+        os << "],\n";
+    }
+    if (!model.ctr_tables.empty()) {
+        os << "  \"ctr_tables\": [\n";
+        for (std::size_t i = 0; i < model.ctr_tables.size(); ++i) {
+            const auto& tb = model.ctr_tables[i];
+            os << "    {\"projection\": " << tb.projection
+               << ", \"kind\": " << static_cast<unsigned int>(tb.kind)
+               << ", \"default_value\": " << static_cast<double>(tb.default_value)
+               << ", \"mask\": \"" << u64_to_hex(tb.mask) << "\""
+               << ", \"keys\": [";
+            for (std::size_t j = 0; j < tb.keys.size(); ++j) {
+                if (j > 0U) {
+                    os << ", ";
+                }
+                os << "\"" << u64_to_hex(tb.keys[j]) << "\"";
+            }
+            os << "], \"slots\": [";
+            for (std::size_t j = 0; j < tb.slots.size(); ++j) {
+                if (j > 0U) {
+                    os << ", ";
+                }
+                os << tb.slots[j];
+            }
+            os << "], \"values\": [";
+            for (std::size_t j = 0; j < tb.values.size(); ++j) {
+                if (j > 0U) {
+                    os << ", ";
+                }
+                os << static_cast<double>(tb.values[j]);
+            }
+            os << "]}" << (i + 1U < model.ctr_tables.size() ? "," : "") << "\n";
+        }
+        os << "  ],\n";
+    }
 
     os << "  \"trees\": [\n";
     for (std::size_t t = 0; t < model.trees.size(); ++t) {
@@ -594,6 +687,11 @@ std::string model_to_json(const Model& model) {
                 }
                 os << "], \"threshold\": " << thr
                    << ", \"nan_go_left\": " << (nd.nan_go_left ? "true" : "false")
+                   << ", \"split_gain\": " << nd.split_gain;
+            } else if (nd.kind == NodeKind::Ctr) {
+                os << ", \"left_child\": " << nd.left_child
+                   << ", \"right_child\": " << nd.right_child << ", \"ctr_id\": " << nd.feature
+                   << ", \"ctr_threshold\": " << static_cast<double>(nd.ctr_threshold)
                    << ", \"split_gain\": " << nd.split_gain;
             }
             os << "}" << (n_idx + 1U < tree.nodes.size() ? "," : "") << "\n";
@@ -705,6 +803,18 @@ Model model_from_json(std::string_view json_text) {
                 throw std::runtime_error("Unknown grow_policy in model JSON");
             }
         }
+        if (const auto mcc = p.find("max_ctr_complexity"); mcc != p.end()) {
+            model.params.max_ctr_complexity = static_cast<int>(mcc->second.as_i64());
+        }
+        if (const auto cpw = p.find("ctr_prior_weight"); cpw != p.end()) {
+            model.params.ctr_prior_weight = cpw->second.as_double();
+        }
+        if (const auto cnp = p.find("ctr_n_permutations"); cnp != p.end()) {
+            model.params.ctr_n_permutations = static_cast<int>(cnp->second.as_i64());
+        }
+        if (const auto cmb = p.find("ctr_max_borders"); cmb != p.end()) {
+            model.params.ctr_max_borders = static_cast<int>(cmb->second.as_i64());
+        }
     }
 
     for (const auto& fn : require_field(root, "feature_names").as_array()) {
@@ -748,6 +858,52 @@ Model model_from_json(std::string_view json_text) {
         model.quantizers.size() != model.n_features ||
         model.cat_features.size() != model.n_features) {
         throw std::runtime_error("Feature metadata size mismatch in model JSON");
+    }
+
+    if (const auto cp_it = root.find("ctr_projections"); cp_it != root.end()) {
+        for (const auto& pv : cp_it->second.as_array()) {
+            CtrProjection proj;
+            for (const auto& fv : pv.as_array()) {
+                const std::int64_t fi = fv.as_i64();
+                if (fi < 0 || static_cast<std::size_t>(fi) >= model.n_features ||
+                    model.feature_kinds[static_cast<std::size_t>(fi)] != 1U) {
+                    throw std::runtime_error("Invalid ctr_projection feature index in JSON");
+                }
+                proj.cat_features.push_back(static_cast<std::uint32_t>(fi));
+            }
+            model.ctr_projections.push_back(std::move(proj));
+        }
+    }
+    if (const auto ct_it = root.find("ctr_tables"); ct_it != root.end()) {
+        for (const auto& tv : ct_it->second.as_array()) {
+            const auto& to = tv.as_object();
+            CtrTable tbl;
+            const std::int64_t pi = require_field(to, "projection").as_i64();
+            if (pi < 0 || static_cast<std::size_t>(pi) >= model.ctr_projections.size()) {
+                throw std::runtime_error("Invalid ctr_table projection index in JSON");
+            }
+            tbl.projection = static_cast<std::uint32_t>(pi);
+            const std::int64_t kd = require_field(to, "kind").as_i64();
+            if (kd != 0 && kd != 1) {
+                throw std::runtime_error("Invalid ctr_table kind in JSON");
+            }
+            tbl.kind = (kd == 0) ? CtrKind::TargetMean : CtrKind::Counter;
+            tbl.default_value = static_cast<float>(require_field(to, "default_value").as_double());
+            tbl.mask = u64_from_hex(require_field(to, "mask").as_string());
+            for (const auto& kv : require_field(to, "keys").as_array()) {
+                tbl.keys.push_back(u64_from_hex(kv.as_string()));
+            }
+            for (const auto& sv : require_field(to, "slots").as_array()) {
+                tbl.slots.push_back(static_cast<std::uint32_t>(sv.as_i64()));
+            }
+            for (const auto& vv : require_field(to, "values").as_array()) {
+                tbl.values.push_back(static_cast<float>(vv.as_double()));
+            }
+            if (tbl.keys.size() != tbl.slots.size()) {
+                throw std::runtime_error("ctr_table keys/slots size mismatch in JSON");
+            }
+            model.ctr_tables.push_back(std::move(tbl));
+        }
     }
 
     for (const auto& tv : require_field(root, "trees").as_array()) {
@@ -867,6 +1023,21 @@ Model model_from_json(std::string_view json_text) {
                     nd.overflow_offset = static_cast<std::uint32_t>(tree.oblique_overflow.size());
                     tree.oblique_overflow.push_back(std::move(ov));
                 }
+            } else if (nd.kind == NodeKind::Ctr) {
+                const std::int64_t lc = require_field(no, "left_child").as_i64();
+                const std::int64_t rc = require_field(no, "right_child").as_i64();
+                const std::int64_t cid = require_field(no, "ctr_id").as_i64();
+                if (lc < 0 || rc < 0 || static_cast<std::size_t>(lc) >= nodes_arr.size() ||
+                    static_cast<std::size_t>(rc) >= nodes_arr.size() || cid < 0 ||
+                    static_cast<std::size_t>(cid) >= model.ctr_tables.size()) {
+                    throw std::runtime_error("Invalid ctr node indices in model JSON");
+                }
+                nd.left_child = static_cast<std::uint32_t>(lc);
+                nd.right_child = static_cast<std::uint32_t>(rc);
+                nd.feature = static_cast<std::uint32_t>(cid);
+                nd.ctr_threshold =
+                    static_cast<float>(require_field(no, "ctr_threshold").as_double());
+                nd.split_gain = require_field(no, "split_gain").as_double();
             } else {
                 throw std::runtime_error("Unsupported node kind in model JSON");
             }

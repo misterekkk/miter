@@ -9,6 +9,7 @@
 #include <stdexcept>
 #include <vector>
 
+#include "core/ctr.hpp"
 #include "core/objective.hpp"
 #include "core/tree_learner.hpp"
 #include "model/evaluator.hpp"
@@ -82,6 +83,31 @@ void validate_params(const Params& params) {
     if (params.k_proj != 0 && (params.k_proj < 2 || params.k_proj > 8)) {
         throw std::invalid_argument("k_proj must be 0 or in [2, 8]");
     }
+    if (params.max_ctr_complexity < 0 || params.max_ctr_complexity > 3) {
+        throw std::invalid_argument("max_ctr_complexity must be in [0, 3]");
+    }
+    if (!std::isfinite(params.ctr_prior_weight) || params.ctr_prior_weight <= 0.0) {
+        throw std::invalid_argument("ctr_prior_weight must be finite and > 0");
+    }
+    if (params.ctr_n_permutations < 1) {
+        throw std::invalid_argument("ctr_n_permutations must be >= 1");
+    }
+    if (params.ctr_max_borders < 1 || params.ctr_max_borders > 255) {
+        throw std::invalid_argument("ctr_max_borders must be in [1, 255]");
+    }
+}
+
+double compute_weighted_target_mean(std::span<const double> y,
+                                    std::span<const double> sample_weight) noexcept {
+    double wy = 0.0;
+    double sw = 0.0;
+    const bool has_w = !sample_weight.empty();
+    for (std::size_t i = 0; i < y.size(); ++i) {
+        const double w = has_w ? sample_weight[i] : 1.0;
+        wy += w * y[i];
+        sw += w;
+    }
+    return (sw > 0.0) ? (wy / sw) : 0.0;
 }
 
 } // namespace
@@ -159,6 +185,31 @@ TrainResult fit_booster(const Dataset& ds, Objective objective, std::span<const 
         TreeWorkspace ws;
         ws.prepare(ds, params);
 
+        const bool ctr_active = (params.max_ctr_complexity > 0 && ds.n_cat_features() > 0U &&
+                                 params.grow_policy == GrowPolicy::Symmetric);
+        CtrTrainingState ctr_state;
+        std::vector<double> mc_class_y;
+        std::vector<double> mc_class_prior;
+        if (ctr_active) {
+            ctr_state.prepare(ds, params);
+            mc_class_y.resize(K * n);
+            mc_class_prior.assign(K, 0.0);
+            const bool has_w = !sample_weight.empty();
+            double total_w = 0.0;
+            for (std::size_t i = 0; i < n; ++i) {
+                const double w = has_w ? sample_weight[i] : 1.0;
+                total_w += w;
+                const auto yi = static_cast<std::size_t>(y[i]);
+                mc_class_y[yi * n + i] = 1.0;
+                mc_class_prior[yi] += w;
+            }
+            if (total_w > 0.0) {
+                for (std::size_t k = 0; k < K; ++k) {
+                    mc_class_prior[k] /= total_w;
+                }
+            }
+        }
+
         TrainResult result;
         result.train_loss.reserve(static_cast<std::size_t>(params.n_estimators));
         if (has_valid) {
@@ -183,9 +234,23 @@ TrainResult fit_booster(const Dataset& ds, Objective objective, std::span<const 
             compute_multiclass_gradients(scores.data(), n, k_classes, y, sample_weight, g.data(),
                                          h.data(), params.n_jobs);
             for (std::size_t k = 0; k < K; ++k) {
-                Tree tree =
-                    grow_tree(ds, g.data() + k * n, h.data() + k * n, params,
-                              static_cast<std::size_t>(t) * K + k, ws, scores.data() + k * n);
+                CtrGrowContext ctr_ctx;
+                if (ctr_active) {
+                    ctr_ctx.state = &ctr_state;
+                    ctr_ctx.model = &model;
+                    ctr_ctx.target_y = mc_class_y.data() + k * n;
+                    ctr_ctx.prior = mc_class_prior[k];
+                    ctr_ctx.sample_weight = sample_weight.empty() ? nullptr : sample_weight.data();
+                    ctr_ctx.target_id = static_cast<std::uint32_t>(k);
+                }
+                Tree tree = grow_tree(ds, g.data() + k * n, h.data() + k * n, params,
+                                      static_cast<std::size_t>(t) * K + k, ws,
+                                      scores.data() + k * n, ctr_active ? &ctr_ctx : nullptr);
+                if (ctr_active) {
+                    finalize_pending_ctr_tables(ds, ctr_state, ctr_ctx.target_y, ctr_ctx.prior,
+                                                ctr_ctx.sample_weight, params.ctr_prior_weight,
+                                                ctr_ctx.target_id, model, ctr_state.scratch);
+                }
                 model.trees.push_back(std::move(tree));
             }
 
@@ -195,13 +260,16 @@ TrainResult fit_booster(const Dataset& ds, Objective objective, std::span<const 
             if (has_valid) {
                 const std::int16_t* valid_codes =
                     (valid_ds->n_num_features > 0U) ? valid_ds->codes_col_major.data() : nullptr;
+                const std::uint32_t* valid_cat_hashes =
+                    ctr_active ? valid_ds->cat_hashes_col_major.data() : nullptr;
                 const std::size_t tree_base = model.trees.size() - K;
                 for (std::size_t k = 0; k < K; ++k) {
                     Evaluator::add_tree_predictions_from_codes(
                         model.trees[tree_base + k], valid_codes, valid_ds->n_rows,
                         valid_ds->n_num_features, feature_to_num_idx,
                         valid_scores.data() + k * valid_ds->n_rows, valid_ds->bins_col_major.data(),
-                        params.n_jobs);
+                        params.n_jobs, nullptr, 0U, ctr_active ? &model : nullptr, valid_cat_hashes,
+                        ctr_active ? &ws.feature_to_cat_idx : nullptr);
                 }
                 const double vloss =
                     compute_multiclass_loss(valid_scores.data(), valid_ds->n_rows, k_classes,
@@ -297,6 +365,20 @@ TrainResult fit_booster(const Dataset& ds, Objective objective, std::span<const 
     TreeWorkspace ws;
     ws.prepare(ds, params);
 
+    const bool ctr_active = (params.max_ctr_complexity > 0 && ds.n_cat_features() > 0U &&
+                             params.grow_policy == GrowPolicy::Symmetric);
+    CtrTrainingState ctr_state;
+    CtrGrowContext ctr_ctx;
+    if (ctr_active) {
+        ctr_state.prepare(ds, params);
+        ctr_ctx.state = &ctr_state;
+        ctr_ctx.model = &model;
+        ctr_ctx.target_y = y.data();
+        ctr_ctx.prior = compute_weighted_target_mean(y, sample_weight);
+        ctr_ctx.sample_weight = sample_weight.empty() ? nullptr : sample_weight.data();
+        ctr_ctx.target_id = 0U;
+    }
+
     TrainResult result;
     result.train_loss.reserve(static_cast<std::size_t>(params.n_estimators));
     if (has_valid) {
@@ -320,7 +402,12 @@ TrainResult fit_booster(const Dataset& ds, Objective objective, std::span<const 
 
         compute_gradients(objective, scores, y, sample_weight, g.data(), h.data(), params.n_jobs);
         Tree tree = grow_tree(ds, g.data(), h.data(), params, static_cast<std::size_t>(t), ws,
-                              scores.data());
+                              scores.data(), ctr_active ? &ctr_ctx : nullptr);
+        if (ctr_active) {
+            finalize_pending_ctr_tables(ds, ctr_state, ctr_ctx.target_y, ctr_ctx.prior,
+                                        ctr_ctx.sample_weight, params.ctr_prior_weight,
+                                        ctr_ctx.target_id, model, ctr_state.scratch);
+        }
         model.trees.push_back(std::move(tree));
 
         result.train_loss.push_back(
@@ -329,10 +416,13 @@ TrainResult fit_booster(const Dataset& ds, Objective objective, std::span<const 
         if (has_valid) {
             const std::int16_t* valid_codes =
                 (valid_ds->n_num_features > 0U) ? valid_ds->codes_col_major.data() : nullptr;
+            const std::uint32_t* valid_cat_hashes =
+                ctr_active ? valid_ds->cat_hashes_col_major.data() : nullptr;
             Evaluator::add_tree_predictions_from_codes(
                 model.trees.back(), valid_codes, valid_ds->n_rows, valid_ds->n_num_features,
                 feature_to_num_idx, valid_scores.data(), valid_ds->bins_col_major.data(),
-                params.n_jobs);
+                params.n_jobs, nullptr, 0U, ctr_active ? &model : nullptr, valid_cat_hashes,
+                ctr_active ? &ws.feature_to_cat_idx : nullptr);
             const double vloss =
                 compute_loss(objective, valid_scores, y_valid, valid_sample_weight, params.n_jobs);
             result.valid_loss.push_back(vloss);

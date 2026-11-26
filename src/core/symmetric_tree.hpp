@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <vector>
 
+#include "core/ctr.hpp"
 #include "core/histogram.hpp"
 #include "core/oblique.hpp"
 #include "data/dataset.hpp"
@@ -15,6 +16,15 @@
 namespace miter {
 
 struct TreeWorkspace;
+
+struct CtrGrowContext {
+    CtrTrainingState* state = nullptr;
+    Model* model = nullptr;
+    const double* target_y = nullptr;
+    double prior = 0.0;
+    const double* sample_weight = nullptr;
+    std::uint32_t target_id = 0;
+};
 
 struct SymmetricWorkspace {
     std::size_t max_depth = 0;
@@ -46,6 +56,7 @@ struct SymmetricWorkspace {
 
 Tree grow_symmetric_tree(const Dataset& ds, const float* g, const float* h, const Params& params,
                          std::size_t tree_index, TreeWorkspace& ws, std::size_t n_root,
-                         bool bagging, double* train_scores);
+                         bool bagging, double* train_scores,
+                         const CtrGrowContext* ctr_ctx = nullptr);
 
 } // namespace miter

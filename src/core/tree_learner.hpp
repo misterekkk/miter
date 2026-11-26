@@ -49,15 +49,17 @@ struct TreeWorkspace {
     std::vector<std::uint32_t> base_active_cat_features;
     std::vector<std::uint8_t> feature_selected;
     std::vector<std::uint32_t> feature_perm;
-    // bagging_fraction: rows outside the bag of the current tree, and feature -> numeric index.
+    // bagging_fraction: rows outside the bag of the current tree, and feature -> sub-indices.
     std::vector<std::uint32_t> oob_rows;
     std::vector<std::size_t> feature_to_num_idx;
+    std::vector<std::size_t> feature_to_cat_idx;
 
     void prepare(const Dataset& ds, const Params& params);
 };
 
 Tree grow_tree(const Dataset& ds, const float* g, const float* h, const Params& params,
-               std::size_t tree_index, TreeWorkspace& ws, double* train_scores);
+               std::size_t tree_index, TreeWorkspace& ws, double* train_scores,
+               const CtrGrowContext* ctr_ctx = nullptr);
 
 Tree grow_axis_tree(const Dataset& ds, const float* g, const float* h, const Params& params,
                     TreeWorkspace& ws, double* train_scores);

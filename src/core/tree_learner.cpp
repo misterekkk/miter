@@ -811,10 +811,15 @@ void TreeWorkspace::prepare(const Dataset& ds, const Params& params) {
     feature_selected.assign(ds.n_features(), 1U);
     feature_perm.assign(base_active_features.size(), 0U);
     feature_to_num_idx.assign(ds.n_features(), 0U);
+    feature_to_cat_idx.assign(ds.n_features(), 0U);
     {
         const auto& num_indices = ds.num_feature_indices();
         for (std::size_t j = 0; j < num_indices.size(); ++j) {
             feature_to_num_idx[num_indices[j]] = j;
+        }
+        const auto& cat_indices = ds.cat_feature_indices();
+        for (std::size_t j = 0; j < cat_indices.size(); ++j) {
+            feature_to_cat_idx[cat_indices[j]] = j;
         }
     }
     oob_rows.clear();
@@ -895,7 +900,8 @@ void TreeWorkspace::prepare(const Dataset& ds, const Params& params) {
 }
 
 Tree grow_tree(const Dataset& ds, const float* g, const float* h, const Params& params,
-               std::size_t tree_index, TreeWorkspace& ws, double* train_scores) {
+               std::size_t tree_index, TreeWorkspace& ws, double* train_scores,
+               const CtrGrowContext* ctr_ctx) {
     const std::size_t n = ds.n_rows();
     const auto max_leaves = static_cast<std::size_t>(std::max(params.num_leaves, 1));
     const bool bagging = params.bagging_fraction < 1.0;
@@ -909,7 +915,8 @@ Tree grow_tree(const Dataset& ds, const float* g, const float* h, const Params& 
         select_features(params, tree_index, ws);
     }
     if (params.grow_policy == GrowPolicy::Symmetric) {
-        return grow_symmetric_tree(ds, g, h, params, tree_index, ws, n_root, bagging, train_scores);
+        return grow_symmetric_tree(ds, g, h, params, tree_index, ws, n_root, bagging, train_scores,
+                                   ctr_ctx);
     }
 
     Tree tree;

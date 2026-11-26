@@ -63,6 +63,10 @@ RawForest export_raw_forest(const Model& model, std::size_t num_iteration) {
         throw std::invalid_argument(
             "export_raw_forest: multiclass models use miter Evaluator in v1.1");
     }
+    if (!model.ctr_tables.empty()) {
+        throw std::invalid_argument(
+            "export_raw_forest: models with native CTR splits use miter Evaluator");
+    }
     RawForest out;
     out.init_score = model.init_score;
     out.objective = model.objective;
@@ -133,6 +137,9 @@ RawForest export_raw_forest(const Model& model, std::size_t num_iteration) {
                 }
                 r.oblique_threshold = n.threshold_i32;
                 break;
+            case NodeKind::Ctr:
+                throw std::invalid_argument(
+                    "export_raw_forest: models with native CTR splits use miter Evaluator");
             }
         }
     }

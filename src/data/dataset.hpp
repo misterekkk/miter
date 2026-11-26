@@ -41,6 +41,7 @@ struct TransformedData {
     std::size_t n_features = 0;
     AlignedBuffer<std::int16_t> codes_col_major;
     AlignedBuffer<std::uint8_t> bins_col_major;
+    AlignedBuffer<std::uint32_t> cat_hashes_col_major;
 };
 
 /**
@@ -106,9 +107,17 @@ public:
 
     std::uint16_t num_bins_for_feature(std::size_t feature_idx) const;
 
+    std::size_t cat_sub_index(std::size_t feature_idx) const noexcept {
+        return feature_to_sub_idx_[feature_idx];
+    }
+
     const AlignedBuffer<std::int16_t>& codes_col_major() const noexcept { return codes_col_major_; }
 
     const AlignedBuffer<std::uint8_t>& bins_col_major() const noexcept { return bins_col_major_; }
+
+    const AlignedBuffer<std::uint32_t>& cat_hashes_col_major() const noexcept {
+        return cat_hashes_col_major_;
+    }
 
 private:
     std::size_t n_rows_ = 0;
@@ -126,6 +135,7 @@ private:
     std::vector<CatEncoder> cat_encoders_;
     AlignedBuffer<std::int16_t> codes_col_major_;
     AlignedBuffer<std::uint8_t> bins_col_major_;
+    AlignedBuffer<std::uint32_t> cat_hashes_col_major_;
 };
 
 } // namespace miter

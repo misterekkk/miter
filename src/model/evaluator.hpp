@@ -38,7 +38,9 @@ public:
         const Tree& tree, const std::int16_t* codes_col_major, std::size_t n_rows,
         std::size_t n_num_features, const std::vector<std::size_t>& feature_to_num_idx,
         double* scores, const std::uint8_t* bins_col_major = nullptr, int n_jobs = 1,
-        const std::uint32_t* row_subset = nullptr, std::size_t n_subset = 0) noexcept;
+        const std::uint32_t* row_subset = nullptr, std::size_t n_subset = 0,
+        const Model* model = nullptr, const std::uint32_t* cat_hashes_col_major = nullptr,
+        const std::vector<std::size_t>* feature_to_cat_idx = nullptr) noexcept;
 };
 
 } // namespace miter

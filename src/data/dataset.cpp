@@ -7,6 +7,7 @@
 #include <utility>
 #include <vector>
 
+#include "core/ctr.hpp"
 #include "util/threading.hpp"
 
 namespace miter {
@@ -77,6 +78,28 @@ void validate_categorical_views(std::size_t n_rows,
     for (const auto& col : cat_cols) {
         if (n_rows > 0 && col.indices == nullptr) {
             throw std::invalid_argument("CategoricalColumnView received null indices pointer");
+        }
+    }
+}
+
+void fill_cat_hashes(const std::vector<CategoricalColumnView>& cat_cols, std::size_t n_rows,
+                     AlignedBuffer<std::uint32_t>& out_hashes) {
+    const std::size_t n_cat = cat_cols.size();
+    out_hashes.resize(n_rows * n_cat);
+    std::uint32_t* dst_base = out_hashes.data();
+    for (std::size_t c = 0; c < n_cat; ++c) {
+        const auto& vocab = cat_cols[c].vocab;
+        std::vector<std::uint32_t> vocab_hashes(vocab.size());
+        for (std::size_t v = 0; v < vocab.size(); ++v) {
+            vocab_hashes[v] = cat_hash_string(vocab[v]);
+        }
+        const std::int32_t* src_idx = cat_cols[c].indices;
+        std::uint32_t* dst = dst_base + c * n_rows;
+        const auto n_vocab = static_cast<std::int32_t>(vocab.size());
+        for (std::size_t i = 0; i < n_rows; ++i) {
+            const std::int32_t code = src_idx[i];
+            dst[i] = (code >= 0 && code < n_vocab) ? vocab_hashes[static_cast<std::size_t>(code)]
+                                                   : kMissingCatHash;
         }
     }
 }
@@ -221,6 +244,7 @@ Dataset Dataset::fit_mixed(std::size_t n_rows, std::vector<FeatureKind> kinds,
             cat_cols[c].vocab, std::span<const std::int32_t>(cat_cols[c].indices, n_rows),
             bins_ptr + f * n_rows);
     }
+    fill_cat_hashes(cat_cols, n_rows, ds.cat_hashes_col_major_);
 
     return ds;
 }
@@ -320,6 +344,7 @@ TransformedData Dataset::transform_mixed(std::size_t n_rows,
             cat_cols[c].vocab, std::span<const std::int32_t>(cat_cols[c].indices, n_rows),
             bins_ptr + f * n_rows);
     }
+    fill_cat_hashes(cat_cols, n_rows, out.cat_hashes_col_major);
 
     return out;
 }

@@ -21,6 +21,7 @@ enum class NodeKind : std::uint8_t {
     Axis = 1,
     Oblique = 2,
     Categorical = 3,
+    Ctr = 4,
 };
 
 struct Node {
@@ -32,12 +33,32 @@ struct Node {
     std::uint32_t feature = 0;
     std::uint16_t threshold_u16 = 0; // Axis: right iff u >= threshold_u16 (left iff u < threshold)
     std::int32_t threshold_i32 = 0;  // Oblique (k <= 3): left iff P < threshold_i32
+    float ctr_threshold = 0.0f;      // Ctr: left iff ctr_val < ctr_threshold
     std::uint32_t oblique_features[3] = {0, 0, 0};
     std::int16_t oblique_weights[3] = {0, 0, 0};
     std::uint32_t overflow_offset = 0;   // Index into Tree::oblique_overflow when oblique_k > 3
     std::uint32_t cat_bitset_offset = 0; // Index into Tree::cat_bitsets when kind == Categorical
     double leaf_value = 0.0;             // Scaled by learning_rate
     double split_gain = 0.0;
+};
+
+enum class CtrKind : std::uint8_t {
+    TargetMean = 0,
+    Counter = 1,
+};
+
+struct CtrProjection {
+    std::vector<std::uint32_t> cat_features;
+};
+
+struct CtrTable {
+    std::uint32_t projection = 0;
+    CtrKind kind = CtrKind::TargetMean;
+    float default_value = 0.0f;
+    std::vector<std::uint64_t> keys;
+    std::vector<std::uint32_t> slots; // 0 = empty, else entry + 1
+    std::vector<float> values;
+    std::uint64_t mask = 0;
 };
 
 struct CatBitset {
@@ -92,6 +113,8 @@ struct Model {
     std::vector<std::uint8_t> feature_kinds; // 0 = Numeric, 1 = Categorical
     std::vector<QuantizerInfo> quantizers;
     std::vector<CatFeatureInfo> cat_features;
+    std::vector<CtrProjection> ctr_projections;
+    std::vector<CtrTable> ctr_tables;
     std::vector<Tree> trees;
 
     std::vector<std::uint64_t> feature_importances_split() const;

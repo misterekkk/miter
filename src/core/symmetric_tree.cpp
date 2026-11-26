@@ -37,6 +37,8 @@ struct SymSplitChoice {
     AxisSplitCandidate axis;
     CatSplitCandidate cat;
     ObliqueSplitCandidate oblique;
+    CtrSplitCandidate ctr;
+    std::uint32_t ctr_id = 0;
 };
 
 struct CatGroup {
@@ -78,6 +80,112 @@ bool eval_multi_leaf_gain(const double* gl_arr, const double* hl_arr, const std:
     }
     total_gain_out = total_gain;
     return true;
+}
+
+void add_unique_cat_proj(std::vector<std::vector<std::uint32_t>>& used,
+                         const std::vector<std::uint32_t>& proj) {
+    for (const auto& existing : used) {
+        if (existing == proj) {
+            return;
+        }
+    }
+    used.push_back(proj);
+}
+
+CtrSplitCandidate
+find_sym_ctr_split(const Dataset& ds, const std::vector<std::uint32_t>& active_cat,
+                   const std::vector<std::vector<std::uint32_t>>& used_cat_projs,
+                   const std::uint8_t* leaf_ids, const std::uint32_t* rows, std::size_t n_root,
+                   bool is_contiguous, std::size_t n_leaves, const float* g_seq, const float* h_seq,
+                   const double* leaf_g, const double* leaf_h, const std::int32_t* leaf_c,
+                   const double* parent_score, double lam, double min_h, std::int32_t min_c,
+                   double min_gain, const Params& params, std::size_t tree_index, std::size_t depth,
+                   SymmetricWorkspace& sym, const CtrGrowContext& ctr_ctx) {
+    CtrSplitCandidate best;
+    CtrTrainingState& state = *ctr_ctx.state;
+    const std::size_t n = ds.n_rows();
+
+    std::vector<std::vector<std::uint32_t>> cand_projs;
+    cand_projs.reserve(active_cat.size() * (used_cat_projs.size() + 1U));
+    for (const std::uint32_t f : active_cat) {
+        cand_projs.push_back({f});
+    }
+    if (depth >= 1U && params.max_ctr_complexity >= 2) {
+        const auto max_cplx = static_cast<std::size_t>(params.max_ctr_complexity);
+        for (const auto& base : used_cat_projs) {
+            if (base.size() >= max_cplx) {
+                continue;
+            }
+            for (const std::uint32_t f : active_cat) {
+                if (std::find(base.begin(), base.end(), f) != base.end()) {
+                    continue;
+                }
+                std::vector<std::uint32_t> next = base;
+                next.push_back(f);
+                std::sort(next.begin(), next.end());
+                cand_projs.push_back(std::move(next));
+            }
+        }
+    }
+    std::sort(cand_projs.begin(), cand_projs.end());
+    cand_projs.erase(std::unique(cand_projs.begin(), cand_projs.end()), cand_projs.end());
+
+    const auto& perm = state.perms[tree_index % state.n_perms];
+    HistBin* hist_f = sym.axis_thread_hists.data();
+    double gl_arr[kSymMaxLeaves] = {};
+    double hl_arr[kSymMaxLeaves] = {};
+    std::int32_t cl_arr[kSymMaxLeaves] = {};
+
+    for (const auto& proj : cand_projs) {
+        compute_projection_hashes(ds, proj, state.proj_hashes.data());
+        for (const CtrKind kind : {CtrKind::TargetMean, CtrKind::Counter}) {
+            compute_online_ctr(state.proj_hashes.data(), n, perm, ctr_ctx.target_y,
+                               ctr_ctx.sample_weight, ctr_ctx.prior, params.ctr_prior_weight, kind,
+                               state.scratch, state.ctr_vals.data());
+            const std::uint16_t nb = build_ctr_borders_and_bins(
+                state.ctr_vals.data(), rows, n_root, is_contiguous, params.ctr_max_borders,
+                state.sample_vals, state.borders, state.ctr_bins.data());
+            if (nb == 0U) {
+                continue;
+            }
+
+            const std::size_t stride = static_cast<std::size_t>(nb) + 1U;
+            std::fill_n(hist_f, n_leaves * stride, HistBin{});
+            const std::uint8_t* bins = state.ctr_bins.data();
+            for (std::size_t t = 0; t < n_root; ++t) {
+                const std::size_t idx = static_cast<std::size_t>(leaf_ids[t]) * stride + bins[t];
+                hist_f[idx].g += static_cast<double>(g_seq[t]);
+                hist_f[idx].h += static_cast<double>(h_seq[t]);
+                hist_f[idx].c += 1;
+            }
+
+            std::fill_n(gl_arr, n_leaves, 0.0);
+            std::fill_n(hl_arr, n_leaves, 0.0);
+            std::fill_n(cl_arr, n_leaves, 0);
+            for (std::uint16_t b = 0U; b < nb; ++b) {
+                for (std::size_t l = 0; l < n_leaves; ++l) {
+                    const HistBin& hb = hist_f[l * stride + b];
+                    gl_arr[l] += hb.g;
+                    hl_arr[l] += hb.h;
+                    cl_arr[l] += hb.c;
+                }
+                double cand_gain = 0.0;
+                if (eval_multi_leaf_gain(gl_arr, hl_arr, cl_arr, leaf_g, leaf_h, leaf_c,
+                                         parent_score, n_leaves, lam, min_h, min_c, min_gain,
+                                         cand_gain)) {
+                    if (!best.valid || cand_gain > best.gain) {
+                        best.valid = true;
+                        best.gain = cand_gain;
+                        best.cat_features = proj;
+                        best.kind = kind;
+                        best.threshold = state.borders[b];
+                        std::copy_n(state.ctr_vals.data(), n, state.win_ctr_vals.data());
+                    }
+                }
+            }
+        }
+    }
+    return best;
 }
 
 void build_axis_hist_feat(const std::uint8_t* col, const std::uint32_t* leaf_rows, std::size_t r0,
@@ -1788,7 +1896,7 @@ void SymmetricWorkspace::prepare(const Dataset& ds, const Params& params) {
 
 Tree grow_symmetric_tree(const Dataset& ds, const float* g, const float* h, const Params& params,
                          std::size_t tree_index, TreeWorkspace& ws, std::size_t n_root,
-                         bool bagging, double* train_scores) {
+                         bool bagging, double* train_scores, const CtrGrowContext* ctr_ctx) {
     const std::size_t n = ds.n_rows();
     SymmetricWorkspace& sym = ws.sym;
     const std::size_t depth_limit = sym.max_depth;
@@ -1864,6 +1972,10 @@ Tree grow_symmetric_tree(const Dataset& ds, const float* g, const float* h, cons
     const std::int16_t* codes_base = (p_num > 0U) ? ds.codes_col_major().data() : nullptr;
 
     std::array<SymSplitChoice, 8> level_splits{};
+    std::vector<std::vector<std::uint32_t>> used_cat_projs;
+    const bool allow_ctr =
+        (ctr_ctx != nullptr && ctr_ctx->state != nullptr && ctr_ctx->model != nullptr &&
+         params.max_ctr_complexity > 0 && ds.n_cat_features() > 0U);
     std::size_t actual_depth = 0U;
     const double lam = params.lambda_l2;
     const double min_h = params.min_sum_hessian_in_leaf;
@@ -2048,8 +2160,28 @@ Tree grow_symmetric_tree(const Dataset& ds, const float* g, const float* h, cons
             }
         }
 
+        // 4. Online ordered CTR splits (singles & dynamic category combinations).
+        if (allow_ctr && n_cat_act > 0U) {
+            choice.ctr = find_sym_ctr_split(ds, active_cat, used_cat_projs, leaf_ids, rows, n_root,
+                                            is_contiguous, n_leaves, g_seq, h_seq, leaf_g, leaf_h,
+                                            leaf_c, parent_score, lam, min_h, min_c, min_gain,
+                                            params, tree_index, d, sym, *ctr_ctx);
+            if (choice.ctr.valid && (!choice.valid || choice.ctr.gain > choice.gain)) {
+                choice.kind = NodeKind::Ctr;
+                choice.gain = choice.ctr.gain;
+                choice.valid = true;
+            }
+        }
+
         if (!choice.valid) {
             break;
+        }
+        if (choice.kind == NodeKind::Categorical) {
+            add_unique_cat_proj(used_cat_projs, {choice.cat.feature});
+        } else if (choice.kind == NodeKind::Ctr) {
+            choice.ctr_id = ctr_ctx->state->register_ctr(choice.ctr.cat_features, choice.ctr.kind,
+                                                         ctr_ctx->target_id, *ctr_ctx->model);
+            add_unique_cat_proj(used_cat_projs, choice.ctr.cat_features);
         }
         level_splits[d] = choice;
         actual_depth = d + 1U;
@@ -2083,6 +2215,14 @@ Tree grow_symmetric_tree(const Dataset& ds, const float* g, const float* h, cons
                                h_seq, leaf_g, leaf_h, leaf_c,
                                [col, rows, is_contiguous, &bs](std::size_t t) noexcept {
                                    return cat_bitset_test(bs, col[is_contiguous ? t : rows[t]]);
+                               });
+        } else if (choice.kind == NodeKind::Ctr) {
+            const float* win_ctr = ctr_ctx->state->win_ctr_vals.data();
+            const float thr = choice.ctr.threshold;
+            advance_sym_leaves(choice, leaf_ids, n_root, next_leaves, params.n_jobs, sym, g_seq,
+                               h_seq, leaf_g, leaf_h, leaf_c,
+                               [win_ctr, rows, is_contiguous, thr](std::size_t t) noexcept {
+                                   return win_ctr[is_contiguous ? t : rows[t]] < thr;
                                });
         } else {
             const auto& ob = choice.oblique;
@@ -2176,6 +2316,9 @@ Tree grow_symmetric_tree(const Dataset& ds, const float* g, const float* h, cons
                 nd.nan_go_left = sp.cat.default_go_left;
                 nd.feature = sp.cat.feature;
                 nd.cat_bitset_offset = shared_offset;
+            } else if (sp.kind == NodeKind::Ctr) {
+                nd.feature = sp.ctr_id;
+                nd.ctr_threshold = sp.ctr.threshold;
             } else {
                 const auto& ob = sp.oblique;
                 nd.nan_go_left = ob.nan_go_left;
@@ -2228,9 +2371,18 @@ Tree grow_symmetric_tree(const Dataset& ds, const float* g, const float* h, cons
                 train_scores[rows[t]] += leaf_vals[leaf_ids[t]];
             }
             if (!ws.oob_rows.empty()) {
+                if (allow_ctr) {
+                    finalize_pending_ctr_tables(ds, *ctr_ctx->state, ctr_ctx->target_y,
+                                                ctr_ctx->prior, ctr_ctx->sample_weight,
+                                                params.ctr_prior_weight, ctr_ctx->target_id,
+                                                *ctr_ctx->model, ctr_ctx->state->scratch);
+                }
                 Evaluator::add_tree_predictions_from_codes(
                     tree, codes_base, n, p_num, ws.feature_to_num_idx, train_scores, bins_base,
-                    params.n_jobs, ws.oob_rows.data(), ws.oob_rows.size());
+                    params.n_jobs, ws.oob_rows.data(), ws.oob_rows.size(),
+                    allow_ctr ? ctr_ctx->model : nullptr,
+                    allow_ctr ? ds.cat_hashes_col_major().data() : nullptr,
+                    allow_ctr ? &ws.feature_to_cat_idx : nullptr);
             }
         }
     }

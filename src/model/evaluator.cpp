@@ -9,6 +9,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include "core/ctr.hpp"
 #include "core/objective.hpp"
 #include "data/quantizer.hpp"
 #include "util/threading.hpp"
@@ -45,7 +46,27 @@ std::vector<NumericColumnView> make_eval_views(const FloatT* data, std::size_t n
     return views;
 }
 
-double eval_tree_u16(const Tree& tree, const std::uint16_t* row_codes) noexcept {
+float eval_ctr_value(const Model& model, std::uint32_t ctr_id, const std::uint32_t* cat_hashes_base,
+                     std::size_t cat_col_stride, std::size_t row_offset,
+                     const std::size_t* feature_to_cat_idx) noexcept {
+    const CtrTable& tbl = model.ctr_tables[ctr_id];
+    const auto& cats = model.ctr_projections[tbl.projection].cat_features;
+    if (cats.empty()) {
+        return tbl.default_value;
+    }
+    std::uint64_t h = static_cast<std::uint64_t>(
+        cat_hashes_base[feature_to_cat_idx[cats[0]] * cat_col_stride + row_offset]);
+    for (std::size_t m = 1U; m < cats.size(); ++m) {
+        const auto hm = static_cast<std::uint64_t>(
+            cat_hashes_base[feature_to_cat_idx[cats[m]] * cat_col_stride + row_offset]);
+        h = combine_cat_hash(h, hm);
+    }
+    return lookup_ctr_table(tbl, h);
+}
+
+double eval_tree_u16(const Tree& tree, const std::uint16_t* row_codes, const Model* model = nullptr,
+                     const std::uint32_t* row_cat_hashes = nullptr,
+                     const std::size_t* feature_to_cat_idx = nullptr) noexcept {
     std::uint32_t nid = 0U;
     for (;;) {
         const Node& node = tree.nodes[nid];
@@ -59,6 +80,10 @@ double eval_tree_u16(const Tree& tree, const std::uint16_t* row_codes) noexcept 
         } else if (node.kind == NodeKind::Categorical) {
             const auto code = static_cast<std::uint8_t>(row_codes[node.feature]);
             go_left = cat_bitset_test(tree.cat_bitsets[node.cat_bitset_offset], code);
+        } else if (node.kind == NodeKind::Ctr) {
+            const float val =
+                eval_ctr_value(*model, node.feature, row_cat_hashes, 1U, 0U, feature_to_cat_idx);
+            go_left = (val < node.ctr_threshold);
         } else {
             const std::uint8_t k = node.oblique_k;
             if (k <= 3U) {
@@ -113,6 +138,17 @@ std::vector<std::uint64_t> Model::feature_importances_split() const {
                 if (node.feature < n_features) {
                     counts[node.feature] += 1U;
                 }
+            } else if (node.kind == NodeKind::Ctr) {
+                if (node.feature < ctr_tables.size()) {
+                    const std::uint32_t pi = ctr_tables[node.feature].projection;
+                    if (pi < ctr_projections.size()) {
+                        for (const std::uint32_t f : ctr_projections[pi].cat_features) {
+                            if (f < n_features) {
+                                counts[f] += 1U;
+                            }
+                        }
+                    }
+                }
             } else if (node.kind == NodeKind::Oblique) {
                 const std::uint8_t k = node.oblique_k;
                 if (k <= 3U) {
@@ -146,6 +182,17 @@ std::vector<double> Model::feature_importances_gain() const {
             if (node.kind == NodeKind::Axis || node.kind == NodeKind::Categorical) {
                 if (node.feature < n_features) {
                     gains[node.feature] += node.split_gain;
+                }
+            } else if (node.kind == NodeKind::Ctr) {
+                if (node.feature < ctr_tables.size()) {
+                    const std::uint32_t pi = ctr_tables[node.feature].projection;
+                    if (pi < ctr_projections.size()) {
+                        for (const std::uint32_t f : ctr_projections[pi].cat_features) {
+                            if (f < n_features) {
+                                gains[f] += node.split_gain;
+                            }
+                        }
+                    }
                 }
             } else if (node.kind == NodeKind::Oblique) {
                 const std::uint8_t k = node.oblique_k;
@@ -334,9 +381,12 @@ void Evaluator::predict_raw_mixed(const Model& model, std::size_t n_rows,
         std::uint8_t other_code = 0U;
         std::uint8_t missing_code = 1U;
         std::vector<std::uint8_t> vocab_to_code;
+        std::vector<std::uint32_t> vocab_hashes;
     };
 
+    const bool has_ctrs = !model.ctr_tables.empty();
     std::vector<MixedColMeta> meta(p);
+    std::vector<std::size_t> feature_to_cat_idx(p, 0U);
     std::size_t n_idx = 0U;
     std::size_t c_idx = 0U;
     for (std::size_t f = 0; f < p; ++f) {
@@ -359,13 +409,21 @@ void Evaluator::predict_raw_mixed(const Model& model, std::size_t n_rows,
                 throw std::invalid_argument("CategoricalColumnView received null indices pointer");
             }
             meta[f].is_cat = true;
-            meta[f].sub_idx = c_idx++;
+            meta[f].sub_idx = c_idx;
+            feature_to_cat_idx[f] = c_idx;
+            ++c_idx;
             meta[f].other_code = other;
             meta[f].missing_code = missing;
             meta[f].vocab_to_code.resize(col.vocab.size(), other);
+            if (has_ctrs) {
+                meta[f].vocab_hashes.resize(col.vocab.size());
+            }
             for (std::size_t v = 0; v < col.vocab.size(); ++v) {
                 if (const auto it = map.find(std::string_view(col.vocab[v])); it != map.end()) {
                     meta[f].vocab_to_code[v] = it->second;
+                }
+                if (has_ctrs) {
+                    meta[f].vocab_hashes[v] = cat_hash_string(col.vocab[v]);
                 }
             }
         }
@@ -385,7 +443,8 @@ void Evaluator::predict_raw_mixed(const Model& model, std::size_t n_rows,
     const std::size_t n_blocks = (n_rows + kEvalBlockRows - 1U) / kEvalBlockRows;
     const int n_threads = resolve_num_threads(n_jobs);
 
-    auto eval_block = [&](std::size_t blk_idx, std::uint16_t* block_codes) noexcept {
+    auto eval_block = [&](std::size_t blk_idx, std::uint16_t* block_codes,
+                          std::uint32_t* block_cat_hashes) noexcept {
         const std::size_t base = blk_idx * kEvalBlockRows;
         const std::size_t blk = std::min(kEvalBlockRows, n_rows - base);
 
@@ -407,12 +466,25 @@ void Evaluator::predict_raw_mixed(const Model& model, std::size_t n_rows,
             } else {
                 const CategoricalColumnView& col = cat_cols[m.sub_idx];
                 const std::size_t vocab_sz = m.vocab_to_code.size();
-                for (std::size_t r = 0; r < blk; ++r) {
-                    const std::int32_t idx = col.indices[base + r];
-                    const std::uint8_t code = (idx < 0 || static_cast<std::size_t>(idx) >= vocab_sz)
-                                                  ? m.missing_code
-                                                  : m.vocab_to_code[static_cast<std::size_t>(idx)];
-                    block_codes[r * p + f] = static_cast<std::uint16_t>(code);
+                if (has_ctrs) {
+                    for (std::size_t r = 0; r < blk; ++r) {
+                        const std::int32_t idx = col.indices[base + r];
+                        const bool valid = idx >= 0 && static_cast<std::size_t>(idx) < vocab_sz;
+                        block_codes[r * p + f] = static_cast<std::uint16_t>(
+                            valid ? m.vocab_to_code[static_cast<std::size_t>(idx)]
+                                  : m.missing_code);
+                        block_cat_hashes[r * expected_cat + m.sub_idx] =
+                            valid ? m.vocab_hashes[static_cast<std::size_t>(idx)] : kMissingCatHash;
+                    }
+                } else {
+                    for (std::size_t r = 0; r < blk; ++r) {
+                        const std::int32_t idx = col.indices[base + r];
+                        const std::uint8_t code =
+                            (idx < 0 || static_cast<std::size_t>(idx) >= vocab_sz)
+                                ? m.missing_code
+                                : m.vocab_to_code[static_cast<std::size_t>(idx)];
+                        block_codes[r * p + f] = static_cast<std::uint16_t>(code);
+                    }
                 }
             }
         }
@@ -421,19 +493,25 @@ void Evaluator::predict_raw_mixed(const Model& model, std::size_t n_rows,
             for (std::size_t r = 0; r < blk; ++r) {
                 double score = model.init_score;
                 const std::uint16_t* row_codes = block_codes + r * p;
+                const std::uint32_t* row_cats =
+                    has_ctrs ? (block_cat_hashes + r * expected_cat) : nullptr;
                 for (std::size_t t = 0; t < n_rounds; ++t) {
-                    score += eval_tree_u16(model.trees[t], row_codes);
+                    score += eval_tree_u16(model.trees[t], row_codes, &model, row_cats,
+                                           feature_to_cat_idx.data());
                 }
                 out[base + r] = score;
             }
         } else {
             for (std::size_t r = 0; r < blk; ++r) {
                 const std::uint16_t* row_codes = block_codes + r * p;
+                const std::uint32_t* row_cats =
+                    has_ctrs ? (block_cat_hashes + r * expected_cat) : nullptr;
                 double* dst = out + (base + r) * K;
                 for (std::size_t k = 0; k < K; ++k) {
                     double score = model.init_scores[k];
                     for (std::size_t t = 0; t < n_rounds; ++t) {
-                        score += eval_tree_u16(model.trees[t * K + k], row_codes);
+                        score += eval_tree_u16(model.trees[t * K + k], row_codes, &model, row_cats,
+                                               feature_to_cat_idx.data());
                     }
                     dst[k] = score;
                 }
@@ -441,21 +519,25 @@ void Evaluator::predict_raw_mixed(const Model& model, std::size_t n_rows,
         }
     };
 
+    const std::size_t cat_buf_elems = has_ctrs ? (kEvalBlockRows * expected_cat) : 0U;
     if (n_threads > 1 && n_rows >= 4096U && n_blocks >= 2U) {
 #ifdef _OPENMP
 #pragma omp parallel num_threads(n_threads)
         {
             std::vector<std::uint16_t> block_codes(kEvalBlockRows * p);
+            std::vector<std::uint32_t> block_cat_hashes(cat_buf_elems);
 #pragma omp for schedule(static)
             for (std::ptrdiff_t bi = 0; bi < static_cast<std::ptrdiff_t>(n_blocks); ++bi) {
-                eval_block(static_cast<std::size_t>(bi), block_codes.data());
+                eval_block(static_cast<std::size_t>(bi), block_codes.data(),
+                           block_cat_hashes.data());
             }
         }
 #endif
     } else {
         std::vector<std::uint16_t> block_codes(kEvalBlockRows * p);
+        std::vector<std::uint32_t> block_cat_hashes(cat_buf_elems);
         for (std::size_t bi = 0; bi < n_blocks; ++bi) {
-            eval_block(bi, block_codes.data());
+            eval_block(bi, block_codes.data(), block_cat_hashes.data());
         }
     }
 }
@@ -500,18 +582,19 @@ void Evaluator::predict_proba_softmax(const double* raw, std::size_t n_rows,
     }
 }
 
-void Evaluator::add_tree_predictions_from_codes(const Tree& tree,
-                                                const std::int16_t* codes_col_major,
-                                                std::size_t n_rows, std::size_t n_num_features,
-                                                const std::vector<std::size_t>& feature_to_num_idx,
-                                                double* scores, const std::uint8_t* bins_col_major,
-                                                int n_jobs, const std::uint32_t* row_subset,
-                                                std::size_t n_subset) noexcept {
+void Evaluator::add_tree_predictions_from_codes(
+    const Tree& tree, const std::int16_t* codes_col_major, std::size_t n_rows,
+    std::size_t n_num_features, const std::vector<std::size_t>& feature_to_num_idx, double* scores,
+    const std::uint8_t* bins_col_major, int n_jobs, const std::uint32_t* row_subset,
+    std::size_t n_subset, const Model* model, const std::uint32_t* cat_hashes_col_major,
+    const std::vector<std::size_t>* feature_to_cat_idx) noexcept {
     const int n_threads = resolve_num_threads(n_jobs);
     // With a row subset only rows row_subset[0, n_subset) are scored (n_rows stays the stride).
     const std::size_t n_iter = (row_subset != nullptr) ? n_subset : n_rows;
     const bool use_omp = (n_threads > 1) && (n_iter >= 4096U);
     const bool has_codes = (n_num_features > 0U && codes_col_major != nullptr);
+    const bool has_ctrs =
+        (model != nullptr && cat_hashes_col_major != nullptr && feature_to_cat_idx != nullptr);
 
     auto score_row = [&](std::size_t i) noexcept {
         std::uint32_t nid = 0U;
@@ -537,6 +620,13 @@ void Evaluator::add_tree_predictions_from_codes(const Tree& tree,
                 const std::uint8_t code =
                     bins_col_major[static_cast<std::size_t>(node.feature) * n_rows + i];
                 go_left = cat_bitset_test(tree.cat_bitsets[node.cat_bitset_offset], code);
+            } else if (node.kind == NodeKind::Ctr) {
+                if (!has_ctrs) {
+                    break;
+                }
+                const float val = eval_ctr_value(*model, node.feature, cat_hashes_col_major, n_rows,
+                                                 i, feature_to_cat_idx->data());
+                go_left = (val < node.ctr_threshold);
             } else {
                 if (!has_codes) {
                     break;
