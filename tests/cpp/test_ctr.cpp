@@ -92,16 +92,54 @@ TEST(CtrTest, OnlineOrderedCtrExactAndZeroLeakage) {
     EXPECT_FLOAT_EQ(got[5], static_cast<float>(prior));
     EXPECT_FLOAT_EQ(got[6], static_cast<float>(prior));
 
-    // 2. Counter pass computes exact LOO log1p(count - 1).
+    // 2. Counter pass computes normalized log1p(count) / log1p(max_count).
     std::vector<float> cnt_got(n);
     miter::compute_online_ctr(hashes.data(), n, state.perms[0], y.data(), w.data(), prior,
                               prm.ctr_prior_weight, miter::CtrKind::Counter, state.scratch,
                               cnt_got.data());
-    EXPECT_FLOAT_EQ(cnt_got[0],
-                    static_cast<float>(std::log1p(3.0))); // 'a' appears 4 times -> 3 others
-    EXPECT_FLOAT_EQ(cnt_got[5], 0.0f);                    // singleton -> log1p(0)
+    const double max_ld = std::log1p(4.0);
+    EXPECT_FLOAT_EQ(cnt_got[0], 1.0f); // 'a' appears 4 times (max_count)
+    EXPECT_FLOAT_EQ(cnt_got[5],
+                    static_cast<float>(std::log1p(1.0) / max_ld)); // singleton -> 1/4 norm
     EXPECT_FLOAT_EQ(cnt_got[3],
-                    static_cast<float>(std::log1p(1.0))); // missing appears 2 times -> 1
+                    static_cast<float>(std::log1p(2.0) / max_ld)); // missing -> 2/4 norm
+
+    // 3. Multi-prior TargetMean matches three single-prior passes bit-for-bit.
+    const std::array<double, 3> unit_priors = {0.0, 0.5, 1.0};
+    std::vector<float> multi_got(3U * n);
+    const std::size_t n_uniq = miter::compute_online_ctr_multi_prior(
+        hashes.data(), n, state.perms[0], y.data(), w.data(), unit_priors, prm.ctr_prior_weight,
+        state.scratch, multi_got.data());
+    EXPECT_EQ(n_uniq, 5U); // 'a', 'b', missing, 'singleton0', 'singleton1'
+    for (std::size_t p_idx = 0U; p_idx < 3U; ++p_idx) {
+        std::vector<float> single_got(n);
+        miter::compute_online_ctr(hashes.data(), n, state.perms[0], y.data(), w.data(),
+                                  unit_priors[p_idx], prm.ctr_prior_weight,
+                                  miter::CtrKind::TargetMean, state.scratch, single_got.data());
+        for (std::size_t i = 0U; i < n; ++i) {
+            EXPECT_EQ(std::bit_cast<std::uint32_t>(multi_got[p_idx * n + i]),
+                      std::bit_cast<std::uint32_t>(single_got[i]));
+        }
+    }
+
+    // 4. Uniform O(1) binning matches (bin <= b) == (val < borders[b]) across boundaries.
+    std::vector<float> boundary_vals = {0.0f, 1.0f};
+    for (int m = 1; m <= 15; ++m) {
+        const float edge = static_cast<float>(m) / 16.0f;
+        boundary_vals.push_back(std::nextafter(edge, 0.0f));
+        boundary_vals.push_back(edge);
+        boundary_vals.push_back(std::nextafter(edge, 1.0f));
+    }
+    std::vector<float> u_borders;
+    std::vector<std::uint8_t> u_bins(boundary_vals.size());
+    const std::uint16_t nb = miter::build_uniform_unit_borders_and_bins(
+        boundary_vals.data(), boundary_vals.size(), 15, u_borders, u_bins.data());
+    ASSERT_EQ(nb, 15U);
+    for (std::size_t i = 0U; i < boundary_vals.size(); ++i) {
+        for (std::uint16_t b = 0U; b < nb; ++b) {
+            EXPECT_EQ(u_bins[i] <= b, boundary_vals[i] < u_borders[b]);
+        }
+    }
 }
 
 TEST(CtrTest, DynamicPairDiscoveryRecoversXor) {
@@ -192,7 +230,6 @@ TEST(CtrTest, DynamicPairDiscoveryRecoversXor) {
 
 TEST(CtrTest, HighCardMulticlassBaggingJsonAndThreadDeterminism) {
     std::mt19937_64 rng(99);
-    std::normal_distribution<double> norm(0.0, 0.25);
     constexpr std::size_t kTr = 900U;
     constexpr std::size_t kVa = 300U;
     constexpr std::size_t kTot = kTr + kVa;
@@ -210,7 +247,7 @@ TEST(CtrTest, HighCardMulticlassBaggingJsonAndThreadDeterminism) {
     std::vector<std::int32_t> c_idx(kTot);
     std::vector<double> y(kTot);
     for (std::size_t i = 0; i < kTot; ++i) {
-        x_num[i] = norm(rng);
+        x_num[i] = 0.25 * std::sin(static_cast<double>(i) * 0.7);
         const std::size_t cat = rng() % kCard;
         c_idx[i] = (i % 37U == 0U) ? -1 : static_cast<std::int32_t>(cat);
         if (i >= kTr && (i % 19U == 0U)) {
@@ -233,7 +270,7 @@ TEST(CtrTest, HighCardMulticlassBaggingJsonAndThreadDeterminism) {
                            {miter::CategoricalColumnView{vocab, c_idx.data() + kTr}});
 
     miter::Params p1{};
-    p1.n_estimators = 12;
+    p1.n_estimators = 16;
     p1.learning_rate = 0.15;
     p1.grow_policy = miter::GrowPolicy::Symmetric;
     p1.max_depth = 4;
@@ -241,6 +278,7 @@ TEST(CtrTest, HighCardMulticlassBaggingJsonAndThreadDeterminism) {
     p1.bagging_fraction = 0.85; // exercises OOB evaluation with NodeKind::Ctr
     p1.max_ctr_complexity = 2;
     p1.ctr_prior_weight = 2.0;
+    p1.ctr_n_permutations = 4;
     p1.early_stopping_rounds = 0;
     p1.random_state = 123U;
     p1.n_jobs = 1;
@@ -324,6 +362,80 @@ TEST(CtrTest, DisabledDefaultBitIdentical) {
         miter::fit_booster(ds, miter::Objective::Regression, y, {}, nullptr, {}, {}, p_explicit);
     EXPECT_TRUE(r0.model.ctr_tables.empty());
     EXPECT_EQ(miter::model_to_json(r0.model), miter::model_to_json(r1.model));
+}
+
+TEST(CtrTest, MultiCatPairThreadDeterminismAndEvalBitExact) {
+    std::mt19937_64 rng(2026);
+    constexpr std::size_t kTr = 800U;
+    constexpr std::size_t kTe = 250U;
+    constexpr std::size_t kTot = kTr + kTe;
+
+    std::vector<std::string> v0(12), v1(10), v2(3), v3(16);
+    for (int i = 0; i < 12; ++i) {
+        v0[i] = "c0_" + std::to_string(i);
+    }
+    for (int i = 0; i < 10; ++i) {
+        v1[i] = "c1_" + std::to_string(i);
+    }
+    for (int i = 0; i < 3; ++i) {
+        v2[i] = "c2_" + std::to_string(i);
+    }
+    for (int i = 0; i < 16; ++i) {
+        v3[i] = "c3_" + std::to_string(i);
+    }
+
+    std::vector<std::int32_t> c0(kTot), c1(kTot), c2(kTot), c3(kTot);
+    std::vector<double> y(kTot);
+    for (std::size_t i = 0; i < kTot; ++i) {
+        c0[i] = static_cast<std::int32_t>(rng() % 12ULL);
+        c1[i] = static_cast<std::int32_t>(rng() % 10ULL);
+        c2[i] = static_cast<std::int32_t>(rng() % 3ULL);
+        c3[i] = static_cast<std::int32_t>(rng() % 16ULL);
+        y[i] = (((c0[i] + c1[i]) % 3 == 0) || (c2[i] == 1 && c3[i] % 2 == 0)) ? 1.0 : 0.0;
+    }
+
+    const std::vector<miter::FeatureKind> kinds(4, miter::FeatureKind::Categorical);
+    const std::vector<std::string> names = {"c0", "c1", "c2", "c3"};
+    const auto ds = miter::Dataset::fit_mixed(
+        kTr, kinds, names, {},
+        {{v0, c0.data()}, {v1, c1.data()}, {v2, c2.data()}, {v3, c3.data()}});
+
+    miter::Params p1{};
+    p1.n_estimators = 15;
+    p1.learning_rate = 0.1;
+    p1.grow_policy = miter::GrowPolicy::Symmetric;
+    p1.max_depth = 4;
+    p1.min_data_in_leaf = 1;
+    p1.bagging_fraction = 0.85;
+    p1.max_ctr_complexity = 2;
+    p1.ctr_prior_weight = 1.0;
+    p1.early_stopping_rounds = 0;
+    p1.random_state = 77U;
+    p1.n_jobs = 1;
+
+    miter::Params p4 = p1;
+    p4.n_jobs = 4;
+
+    const auto r1 =
+        miter::fit_booster(ds, miter::Objective::Binary, std::span<const double>(y.data(), kTr), {},
+                           nullptr, {}, {}, p1);
+    const auto r4 =
+        miter::fit_booster(ds, miter::Objective::Binary, std::span<const double>(y.data(), kTr), {},
+                           nullptr, {}, {}, p4);
+
+    auto m4 = r4.model;
+    m4.params.n_jobs = 1;
+    const std::string j1 = miter::model_to_json(r1.model);
+    EXPECT_EQ(j1, miter::model_to_json(m4));
+    EXPECT_FALSE(r1.model.ctr_tables.empty());
+
+    std::vector<double> p_tr(kTr);
+    miter::Evaluator::predict_raw_mixed(
+        r1.model, kTr, {}, {{v0, c0.data()}, {v1, c1.data()}, {v2, c2.data()}, {v3, c3.data()}},
+        p_tr.data());
+    for (std::size_t i = 0; i < kTr; ++i) {
+        EXPECT_TRUE(std::isfinite(p_tr[i]));
+    }
 }
 
 } // namespace

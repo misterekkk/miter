@@ -242,6 +242,7 @@ TrainResult fit_booster(const Dataset& ds, Objective objective, std::span<const 
                     ctr_ctx.prior = mc_class_prior[k];
                     ctr_ctx.sample_weight = sample_weight.empty() ? nullptr : sample_weight.data();
                     ctr_ctx.target_id = static_cast<std::uint32_t>(k);
+                    ctr_ctx.is_unit_target = true;
                 }
                 Tree tree = grow_tree(ds, g.data() + k * n, h.data() + k * n, params,
                                       static_cast<std::size_t>(t) * K + k, ws,
@@ -377,6 +378,7 @@ TrainResult fit_booster(const Dataset& ds, Objective objective, std::span<const 
         ctr_ctx.prior = compute_weighted_target_mean(y, sample_weight);
         ctr_ctx.sample_weight = sample_weight.empty() ? nullptr : sample_weight.data();
         ctr_ctx.target_id = 0U;
+        ctr_ctx.is_unit_target = (objective == Objective::Binary);
     }
 
     TrainResult result;

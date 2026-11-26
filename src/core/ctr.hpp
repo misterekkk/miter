@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <span>
 #include <string_view>
+#include <unordered_map>
 #include <vector>
 
 #include "data/dataset.hpp"
@@ -15,6 +16,7 @@ namespace miter {
 
 inline constexpr std::uint32_t kMissingCatHash = 0x9e3779b9U;
 inline constexpr std::uint64_t kCtrHashMagic = 0x4906ba494954cb65ULL;
+inline constexpr std::size_t kMaxCtrCacheBytes = 128ULL * 1024ULL * 1024ULL;
 
 std::uint32_t cat_hash_string(std::string_view s) noexcept;
 
@@ -44,6 +46,9 @@ struct CtrScratch {
 struct CtrSplitCandidate {
     std::vector<std::uint32_t> cat_features;
     CtrKind kind = CtrKind::TargetMean;
+    std::uint8_t prior_id = 0;
+    double prior_value = 0.0;
+    std::uint8_t bin_idx = 0;
     float threshold = 0.0f;
     double gain = -1.0;
     bool valid = false;
@@ -53,6 +58,37 @@ struct CtrRegisteredSpec {
     std::vector<std::uint32_t> cat_features;
     CtrKind kind = CtrKind::TargetMean;
     std::uint32_t target_id = 0;
+    std::uint8_t prior_id = 0;
+    double prior_value = 0.0;
+};
+
+struct CtrCacheKey {
+    std::vector<std::uint32_t> cat_features;
+    CtrKind kind = CtrKind::TargetMean;
+    std::uint32_t target_id = 0;
+    std::uint32_t perm_idx = 0;
+    std::uint8_t prior_id = 0;
+
+    bool operator==(const CtrCacheKey& other) const = default;
+};
+
+struct CtrCacheKeyHash {
+    std::size_t operator()(const CtrCacheKey& k) const noexcept;
+};
+
+struct CtrCachedCol {
+    std::vector<std::uint8_t> bins;
+    std::vector<float> borders;
+    std::size_t n_unique_keys = 0;
+
+    std::size_t byte_size() const noexcept { return bins.size() + borders.size() * sizeof(float); }
+};
+
+struct CtrThreadScratch {
+    CtrScratch scratch;
+    std::vector<std::uint64_t> proj_hashes;
+    std::vector<float> ctr_vals;
+    std::vector<float> sample_vals;
 };
 
 class CtrTrainingState {
@@ -63,21 +99,24 @@ public:
     std::size_t n_perms = 0;
     std::vector<std::vector<std::uint32_t>> perms;
     CtrScratch scratch;
+    std::vector<CtrThreadScratch> thread_scratches;
+    std::vector<std::size_t> cat_cardinalities;
 
-    // Reusable buffers during symmetric tree level candidate scoring.
-    std::vector<std::uint64_t> proj_hashes;
-    std::vector<float> ctr_vals;
-    std::vector<float> win_ctr_vals;
-    std::vector<std::uint8_t> ctr_bins;
-    std::vector<float> borders;
-    std::vector<float> sample_vals;
+    // Quantized 1-byte CTR cache across levels and trees.
+    std::unordered_map<CtrCacheKey, CtrCachedCol, CtrCacheKeyHash> cache;
+    std::size_t cache_bytes = 0;
+
+    // Winning split bins copied once per level for advancing tree leaf_ids.
+    std::vector<std::uint8_t> win_ctr_bins;
+    std::uint8_t win_ctr_bin_idx = 0;
 
     // Model-wide deduplicated CTR definitions registered during boosting.
     std::vector<CtrRegisteredSpec> specs;
     std::size_t finalized_count = 0;
 
     std::uint32_t register_ctr(const std::vector<std::uint32_t>& cat_features, CtrKind kind,
-                               std::uint32_t target_id, Model& model);
+                               std::uint32_t target_id, std::uint8_t prior_id, double prior_value,
+                               Model& model);
 };
 
 // Compute projection hashes for all rows [0, n_rows) in dataset.
@@ -91,14 +130,30 @@ void compute_projection_hashes(const TransformedData& td,
                                std::uint64_t* out_hashes) noexcept;
 
 // Compute online ordered CTRs into out_vals[0..n_rows) (indexed by row id) along perm.
-// For CtrKind::Counter, computes LOO log1p(count - 1) independent of y/perm.
+// For CtrKind::Counter, computes normalized log1p(count) / log1p(max_count) independent of y/perm.
 void compute_online_ctr(const std::uint64_t* proj_hashes, std::size_t n_rows,
                         std::span<const std::uint32_t> perm, const double* y,
                         const double* sample_weight, double prior, double prior_weight,
                         CtrKind kind, CtrScratch& scratch, float* out_vals) noexcept;
 
-// Extract up to max_borders strictly increasing float thresholds from active rows and bin active
-// rows into out_bins[0..n_active) (values in [0, n_borders]). Returns n_borders.
+// Compute TargetMean online ordered CTRs for multiple priors in a single permutation pass.
+// out_vals_col_major must have space for priors.size() * n_rows floats. Returns unique key count.
+std::size_t compute_online_ctr_multi_prior(const std::uint64_t* proj_hashes, std::size_t n_rows,
+                                           std::span<const std::uint32_t> perm, const double* y,
+                                           const double* sample_weight,
+                                           std::span<const double> priors, double prior_weight,
+                                           CtrScratch& scratch, float* out_vals_col_major) noexcept;
+
+// Compute normalized Counter CTRs into out_vals[0..n_rows). Returns unique key count.
+std::size_t compute_online_counter(const std::uint64_t* proj_hashes, std::size_t n_rows,
+                                   CtrScratch& scratch, float* out_vals) noexcept;
+
+// Uniform O(1) binning on [0, 1] matching bin <= b <=> val < borders[b] bit-for-bit.
+std::uint16_t build_uniform_unit_borders_and_bins(const float* ctr_vals, std::size_t n_rows,
+                                                  int max_borders, std::vector<float>& borders_out,
+                                                  std::uint8_t* out_bins);
+
+// Extract up to max_borders data-quantile thresholds from active rows and bin active rows.
 std::uint16_t build_ctr_borders_and_bins(const float* ctr_vals, const std::uint32_t* active_rows,
                                          std::size_t n_active, bool is_contiguous, int max_borders,
                                          std::vector<float>& sample_buf,

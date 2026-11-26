@@ -24,6 +24,7 @@ struct CtrGrowContext {
     double prior = 0.0;
     const double* sample_weight = nullptr;
     std::uint32_t target_id = 0;
+    bool is_unit_target = false;
 };
 
 struct SymmetricWorkspace {

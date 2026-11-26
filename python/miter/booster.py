@@ -261,7 +261,7 @@ class _BaseMiterEstimator(_SklearnBase):
         cat_ctr_counter: bool = False,
         max_ctr_complexity: int = 0,
         ctr_prior_weight: float = 1.0,
-        ctr_n_permutations: int = 4,
+        ctr_n_permutations: int = 1,
         ctr_max_borders: int = 15,
         early_stopping_rounds: int | None = 50,
         time_limit: float | None = None,

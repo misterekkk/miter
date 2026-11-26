@@ -7,6 +7,7 @@
 #include <utility>
 
 #include "core/rng.hpp"
+#include "util/threading.hpp"
 
 namespace miter {
 
@@ -236,6 +237,21 @@ void CtrScratch::next_generation() noexcept {
     }
 }
 
+std::size_t CtrCacheKeyHash::operator()(const CtrCacheKey& k) const noexcept {
+    std::size_t h = static_cast<std::size_t>(k.kind);
+    auto mix = [&h](std::size_t v) noexcept {
+        h ^= v + 0x9e3779b97f4a7c15ULL + (h << 6U) + (h >> 2U);
+    };
+    mix(k.target_id);
+    mix(k.perm_idx);
+    mix(k.prior_id);
+    mix(k.cat_features.size());
+    for (const std::uint32_t f : k.cat_features) {
+        mix(f);
+    }
+    return h;
+}
+
 void CtrTrainingState::prepare(const Dataset& ds, const Params& params) {
     n_rows = ds.n_rows();
     n_perms = static_cast<std::size_t>(std::max(params.ctr_n_permutations, 1));
@@ -253,27 +269,58 @@ void CtrTrainingState::prepare(const Dataset& ds, const Params& params) {
             std::swap(perm[i - 1U], perm[j]);
         }
     }
+
     scratch.prepare(n_rows);
-    proj_hashes.resize(n_rows);
-    ctr_vals.resize(n_rows);
-    win_ctr_vals.resize(n_rows);
-    ctr_bins.resize(n_rows);
-    borders.reserve(static_cast<std::size_t>(std::max(params.ctr_max_borders, 1)));
-    sample_vals.reserve(2048U);
+    const std::size_t n_thr =
+        static_cast<std::size_t>(std::clamp(resolve_num_threads(params.n_jobs), 1, 8));
+    thread_scratches.resize(n_thr);
+    for (auto& ts : thread_scratches) {
+        ts.scratch.prepare(n_rows);
+        ts.proj_hashes.resize(n_rows);
+        ts.ctr_vals.resize(3U * n_rows);
+        ts.sample_vals.reserve(2048U);
+    }
+
+    cat_cardinalities.assign(ds.n_cat_features(), 0U);
+    const std::uint32_t* hash_base = ds.cat_hashes_col_major().data();
+    if (hash_base != nullptr && n_rows > 0U) {
+        CtrScratch& sc = thread_scratches[0].scratch;
+        for (const std::size_t f : ds.cat_feature_indices()) {
+            const std::size_t cm = ds.cat_sub_index(f);
+            const std::uint32_t* hcol = hash_base + cm * n_rows;
+            sc.next_generation();
+            std::size_t uniq = 0U;
+            for (std::size_t i = 0U; i < n_rows; ++i) {
+                bool is_new = false;
+                (void)find_or_insert_slot(sc, static_cast<std::uint64_t>(hcol[i]), is_new);
+                if (is_new) {
+                    ++uniq;
+                }
+            }
+            cat_cardinalities[cm] = uniq;
+        }
+    }
+
+    cache.clear();
+    cache_bytes = 0U;
+    win_ctr_bins.resize(n_rows);
+    win_ctr_bin_idx = 0U;
     specs.clear();
     finalized_count = 0U;
 }
 
 std::uint32_t CtrTrainingState::register_ctr(const std::vector<std::uint32_t>& cat_features,
-                                             CtrKind kind, std::uint32_t target_id, Model& model) {
+                                             CtrKind kind, std::uint32_t target_id,
+                                             std::uint8_t prior_id, double prior_value,
+                                             Model& model) {
     for (std::size_t id = 0; id < specs.size(); ++id) {
         if (specs[id].kind == kind && specs[id].target_id == target_id &&
-            specs[id].cat_features == cat_features) {
+            specs[id].prior_id == prior_id && specs[id].cat_features == cat_features) {
             return static_cast<std::uint32_t>(id);
         }
     }
 
-    // Deduplicate projection across TargetMean/Counter/target_id.
+    // Deduplicate projection across TargetMean/Counter/target_id/prior_id.
     std::uint32_t proj_idx = 0U;
     bool found_proj = false;
     for (std::size_t pi = 0; pi < model.ctr_projections.size(); ++pi) {
@@ -289,7 +336,7 @@ std::uint32_t CtrTrainingState::register_ctr(const std::vector<std::uint32_t>& c
     }
 
     const auto new_id = static_cast<std::uint32_t>(specs.size());
-    specs.push_back(CtrRegisteredSpec{cat_features, kind, target_id});
+    specs.push_back(CtrRegisteredSpec{cat_features, kind, target_id, prior_id, prior_value});
 
     CtrTable tbl;
     tbl.projection = proj_idx;
@@ -344,39 +391,103 @@ void compute_projection_hashes(const TransformedData& td,
     }
 }
 
+std::size_t compute_online_ctr_multi_prior(const std::uint64_t* proj_hashes, std::size_t n_rows,
+                                           std::span<const std::uint32_t> perm, const double* y,
+                                           const double* sample_weight,
+                                           std::span<const double> priors, double prior_weight,
+                                           CtrScratch& scratch,
+                                           float* out_vals_col_major) noexcept {
+    scratch.next_generation();
+    const std::size_t n_priors = priors.size();
+    std::size_t n_unique = 0U;
+    for (std::size_t pos = 0; pos < n_rows; ++pos) {
+        const std::size_t i = perm[pos];
+        const std::uint64_t key = proj_hashes[i];
+        bool is_new = false;
+        const std::size_t slot = find_or_insert_slot(scratch, key, is_new);
+        if (is_new) {
+            ++n_unique;
+        }
+        const double wy = scratch.wy_sum[slot];
+        const double denom = scratch.w_sum[slot] + prior_weight;
+        for (std::size_t p = 0U; p < n_priors; ++p) {
+            out_vals_col_major[p * n_rows + i] =
+                static_cast<float>((wy + prior_weight * priors[p]) / denom);
+        }
+
+        const double w = (sample_weight != nullptr) ? sample_weight[i] : 1.0;
+        scratch.w_sum[slot] += w;
+        scratch.wy_sum[slot] += w * y[i];
+    }
+    return n_unique;
+}
+
+std::size_t compute_online_counter(const std::uint64_t* proj_hashes, std::size_t n_rows,
+                                   CtrScratch& scratch, float* out_vals) noexcept {
+    scratch.next_generation();
+    std::size_t n_unique = 0U;
+    std::uint32_t max_cnt = 0U;
+    for (std::size_t i = 0; i < n_rows; ++i) {
+        bool is_new = false;
+        const std::size_t slot = find_or_insert_slot(scratch, proj_hashes[i], is_new);
+        if (is_new) {
+            ++n_unique;
+        }
+        const std::uint32_t c = ++scratch.cnt[slot];
+        if (c > max_cnt) {
+            max_cnt = c;
+        }
+    }
+    const double log_denom = (max_cnt > 0U) ? std::log1p(static_cast<double>(max_cnt)) : 1.0;
+    for (std::size_t i = 0; i < n_rows; ++i) {
+        const std::size_t slot = find_slot_const(scratch, proj_hashes[i]);
+        out_vals[i] =
+            static_cast<float>(std::log1p(static_cast<double>(scratch.cnt[slot])) / log_denom);
+    }
+    return n_unique;
+}
+
 void compute_online_ctr(const std::uint64_t* proj_hashes, std::size_t n_rows,
                         std::span<const std::uint32_t> perm, const double* y,
                         const double* sample_weight, double prior, double prior_weight,
                         CtrKind kind, CtrScratch& scratch, float* out_vals) noexcept {
-    scratch.next_generation();
     if (kind == CtrKind::TargetMean) {
-        const double wp = prior_weight * prior;
-        for (std::size_t pos = 0; pos < n_rows; ++pos) {
-            const std::size_t i = perm[pos];
-            const std::uint64_t key = proj_hashes[i];
-            bool is_new = false;
-            const std::size_t slot = find_or_insert_slot(scratch, key, is_new);
-            const double val = (scratch.wy_sum[slot] + wp) / (scratch.w_sum[slot] + prior_weight);
-            out_vals[i] = static_cast<float>(val);
-
-            const double w = (sample_weight != nullptr) ? sample_weight[i] : 1.0;
-            scratch.w_sum[slot] += w;
-            scratch.wy_sum[slot] += w * y[i];
-        }
+        (void)compute_online_ctr_multi_prior(proj_hashes, n_rows, perm, y, sample_weight,
+                                             std::span<const double>(&prior, 1U), prior_weight,
+                                             scratch, out_vals);
         return;
     }
+    (void)compute_online_counter(proj_hashes, n_rows, scratch, out_vals);
+}
 
-    // CtrKind::Counter (target-independent leave-one-out log1p count -> zero leakage, zero shift).
-    for (std::size_t i = 0; i < n_rows; ++i) {
-        bool is_new = false;
-        const std::size_t slot = find_or_insert_slot(scratch, proj_hashes[i], is_new);
-        scratch.cnt[slot] += 1U;
+std::uint16_t build_uniform_unit_borders_and_bins(const float* ctr_vals, std::size_t n_rows,
+                                                  int max_borders, std::vector<float>& borders_out,
+                                                  std::uint8_t* out_bins) {
+    borders_out.clear();
+    if (n_rows < 2U || max_borders < 1) {
+        std::fill_n(out_bins, n_rows, std::uint8_t{0});
+        return 0U;
     }
-    for (std::size_t i = 0; i < n_rows; ++i) {
-        const std::size_t slot = find_slot_const(scratch, proj_hashes[i]);
-        const std::uint32_t loo_cnt = (scratch.cnt[slot] > 0U) ? (scratch.cnt[slot] - 1U) : 0U;
-        out_vals[i] = static_cast<float>(std::log1p(static_cast<double>(loo_cnt)));
+    const int nb = std::clamp(max_borders, 1, 255);
+    const float f_steps = static_cast<float>(nb + 1);
+    borders_out.resize(static_cast<std::size_t>(nb));
+    for (int m = 0; m < nb; ++m) {
+        borders_out[static_cast<std::size_t>(m)] = static_cast<float>(m + 1) / f_steps;
     }
+
+    const float* bp = borders_out.data();
+    for (std::size_t i = 0; i < n_rows; ++i) {
+        const float v = ctr_vals[i];
+        int b = std::clamp(static_cast<int>(v * f_steps), 0, nb);
+        while (b > 0 && v < bp[b - 1]) {
+            --b;
+        }
+        while (b < nb && v >= bp[b]) {
+            ++b;
+        }
+        out_bins[i] = static_cast<std::uint8_t>(b);
+    }
+    return static_cast<std::uint16_t>(nb);
 }
 
 std::uint16_t build_ctr_borders_and_bins(const float* ctr_vals, const std::uint32_t* active_rows,
@@ -407,43 +518,26 @@ std::uint16_t build_ctr_borders_and_bins(const float* ctr_vals, const std::uint3
     }
 
     std::sort(sample_buf.begin(), sample_buf.end());
-    sample_buf.erase(std::unique(sample_buf.begin(), sample_buf.end()), sample_buf.end());
-    const std::size_t n_uniq = sample_buf.size();
-    if (n_uniq <= 1U) {
+    if (sample_buf.front() == sample_buf.back()) {
         std::fill_n(out_bins, n_active, std::uint8_t{0});
         return 0U;
     }
 
+    const std::size_t n_sample = sample_buf.size();
     const auto mb = static_cast<std::size_t>(std::min(max_borders, 255));
-    if (n_uniq - 1U <= mb) {
-        borders_out.reserve(n_uniq - 1U);
-        for (std::size_t u = 0; u + 1U < n_uniq; ++u) {
-            const float mid = 0.5f * (sample_buf[u] + sample_buf[u + 1U]);
-            const float b =
-                (mid > sample_buf[u] && mid <= sample_buf[u + 1U]) ? mid : sample_buf[u + 1U];
-            if (borders_out.empty() || b > borders_out.back()) {
-                borders_out.push_back(b);
-            }
+    borders_out.reserve(mb);
+    for (std::size_t m = 1U; m <= mb; ++m) {
+        const std::size_t idx = (m * (n_sample - 1U)) / (mb + 1U);
+        const float b = sample_buf[idx];
+        if (b > sample_buf.front() && (borders_out.empty() || b > borders_out.back())) {
+            borders_out.push_back(b);
         }
-    } else {
-        borders_out.reserve(mb);
-        for (std::size_t m = 1U; m <= mb; ++m) {
-            const std::size_t u = (m * (n_uniq - 1U)) / (mb + 1U);
-            const float mid = 0.5f * (sample_buf[u] + sample_buf[u + 1U]);
-            const float b =
-                (mid > sample_buf[u] && mid <= sample_buf[u + 1U]) ? mid : sample_buf[u + 1U];
-            if (borders_out.empty() || b > borders_out.back()) {
-                borders_out.push_back(b);
-            }
-        }
+    }
+    if (borders_out.empty()) {
+        borders_out.push_back(sample_buf.back());
     }
 
     const std::size_t nb = borders_out.size();
-    if (nb == 0U) {
-        std::fill_n(out_bins, n_active, std::uint8_t{0});
-        return 0U;
-    }
-
     const float* bp = borders_out.data();
     for (std::size_t t = 0; t < n_active; ++t) {
         const std::size_t idx = is_contiguous ? t : active_rows[t];
@@ -467,6 +561,7 @@ void finalize_pending_ctr_tables(const Dataset& ds, CtrTrainingState& state, con
                                  double prior, const double* sample_weight, double prior_weight,
                                  std::uint32_t current_target_id, Model& model,
                                  CtrScratch& scratch) {
+    (void)prior;
     if (state.finalized_count >= state.specs.size()) {
         return;
     }
@@ -484,6 +579,7 @@ void finalize_pending_ctr_tables(const Dataset& ds, CtrTrainingState& state, con
         std::vector<std::size_t> occupied;
         occupied.reserve(std::min<std::size_t>(n, 4096U));
 
+        std::uint32_t max_cnt = 0U;
         if (spec.kind == CtrKind::TargetMean) {
             for (std::size_t i = 0; i < n; ++i) {
                 bool is_new = false;
@@ -502,7 +598,10 @@ void finalize_pending_ctr_tables(const Dataset& ds, CtrTrainingState& state, con
                 if (is_new) {
                     occupied.push_back(slot);
                 }
-                scratch.cnt[slot] += 1U;
+                const std::uint32_t c = ++scratch.cnt[slot];
+                if (c > max_cnt) {
+                    max_cnt = c;
+                }
             }
         }
 
@@ -514,13 +613,15 @@ void finalize_pending_ctr_tables(const Dataset& ds, CtrTrainingState& state, con
         const std::size_t tbl_cap = next_pow2_min(n_entries * 2U + 1U);
         CtrTable& dst = model.ctr_tables[id];
         dst.kind = spec.kind;
-        dst.default_value = (spec.kind == CtrKind::TargetMean) ? static_cast<float>(prior) : 0.0f;
+        dst.default_value =
+            (spec.kind == CtrKind::TargetMean) ? static_cast<float>(spec.prior_value) : 0.0f;
         dst.mask = static_cast<std::uint64_t>(tbl_cap - 1U);
         dst.keys.assign(tbl_cap, 0ULL);
         dst.slots.assign(tbl_cap, 0U);
         dst.values.resize(n_entries);
 
-        const double wp = prior_weight * prior;
+        const double wp = prior_weight * spec.prior_value;
+        const double log_denom = (max_cnt > 0U) ? std::log1p(static_cast<double>(max_cnt)) : 1.0;
         for (std::size_t e = 0; e < n_entries; ++e) {
             const std::size_t src_slot = occupied[e];
             const std::uint64_t key = scratch.keys[src_slot];
@@ -528,8 +629,8 @@ void finalize_pending_ctr_tables(const Dataset& ds, CtrTrainingState& state, con
                 dst.values[e] = static_cast<float>((scratch.wy_sum[src_slot] + wp) /
                                                    (scratch.w_sum[src_slot] + prior_weight));
             } else {
-                dst.values[e] =
-                    static_cast<float>(std::log1p(static_cast<double>(scratch.cnt[src_slot])));
+                dst.values[e] = static_cast<float>(
+                    std::log1p(static_cast<double>(scratch.cnt[src_slot])) / log_denom);
             }
             std::uint64_t t_idx = ctr_slot_of(key, dst.mask);
             while (dst.slots[t_idx] != 0U) {

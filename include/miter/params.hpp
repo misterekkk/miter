@@ -52,7 +52,7 @@ struct Params {
     /// Smoothing prior weight for native online ordered CTRs (> 0).
     double ctr_prior_weight = 1.0;
     /// Number of deterministic permutations cycled across trees for native CTRs (>= 1).
-    int ctr_n_permutations = 4;
+    int ctr_n_permutations = 1;
     /// Maximum split borders discretized per native CTR candidate (in [1, 255]).
     int ctr_max_borders = 15;
 };
