@@ -56,6 +56,9 @@ _FORWARDED = (
     "max_cat_threshold",
     "cat_oblique_ts",
     "cat_ts_smooth",
+    "cat_ctr_mode",
+    "cat_ctr_pairs",
+    "cat_ctr_counter",
     "m_mult",
     "k_proj",
     "preset",
@@ -126,50 +129,46 @@ class MiterModel(AbstractModel):  # type: ignore[misc]
         X = self._prep(self.preprocess(X, is_train=True))
         has_val = X_val is not None
         if self.problem_type == MULTICLASS:
-            self._fit_ovr(params, X, y, X_val, y_val, time_limit=time_limit, n_jobs=int(num_cpus))
+            y_arr = np.asarray(y, dtype=np.int64)
+            present = np.unique(y_arr)
+            n_total_classes = int(getattr(self, "num_classes", None) or (int(np.max(y_arr)) + 1))
+            if len(present) == n_total_classes and np.array_equal(present, np.arange(n_total_classes)):
+                self._present_classes: Any = None
+            else:
+                self._present_classes = present
+            self.model = self._estimator(params, has_val=has_val, time_limit=time_limit, n_jobs=int(num_cpus))
+            fit_kwargs: dict[str, Any] = {}
+            if has_val:
+                Xv = self._prep(self.preprocess(X_val))
+                yv = np.asarray(y_val, dtype=np.int64)
+                if self._present_classes is not None:
+                    mask = np.isin(yv, self._present_classes)
+                    if np.any(mask):
+                        Xv_sub = Xv.iloc[mask] if hasattr(Xv, "iloc") else Xv[mask]
+                        fit_kwargs["eval_set"] = [(Xv_sub, yv[mask])]
+                else:
+                    fit_kwargs["eval_set"] = [(Xv, yv)]
+            self.model.fit(X, y_arr, **fit_kwargs)
+            self.params_trained["n_estimators"] = int(self.model.best_iteration_)
             return
         self.model = self._estimator(params, has_val=has_val, time_limit=time_limit, n_jobs=int(num_cpus))
-        fit_kwargs: dict[str, Any] = {}
+        fit_kwargs = {}
         if has_val:
             fit_kwargs["eval_set"] = [(self._prep(self.preprocess(X_val)), np.asarray(y_val, dtype=np.float64))]
         self.model.fit(X, np.asarray(y, dtype=np.float64), **fit_kwargs)
         self.params_trained["n_estimators"] = int(self.model.best_iteration_)
 
-    def _fit_ovr(
-        self, params: dict[str, Any], X: Any, y: Any, X_val: Any, y_val: Any, *, time_limit: float | None, n_jobs: int
-    ) -> None:
-        y_arr = np.asarray(y).astype(np.int64)
-        n_classes = int(getattr(self, "num_classes", None) or (int(np.max(y_arr)) + 1))
-        has_val = X_val is not None
-        Xv = self._prep(self.preprocess(X_val)) if has_val else None
-        yv = np.asarray(y_val).astype(np.int64) if has_val else None
-        per_class_time = None if time_limit is None else time_limit / n_classes
-        models: list[Any] = []
-        best = 0
-        for k in range(n_classes):
-            yk = (y_arr == k).astype(np.float64)
-            if np.min(yk) == np.max(yk):  # class absent (or the only one) in this fold: constant probability
-                models.append(float(yk[0]))
-                continue
-            est = self._estimator(params, has_val=has_val, time_limit=per_class_time, n_jobs=n_jobs)
-            fit_kwargs: dict[str, Any] = {}
-            if has_val:
-                fit_kwargs["eval_set"] = [(Xv, np.equal(yv, k).astype(np.float64))]
-            est.fit(X, yk, **fit_kwargs)
-            best = max(best, int(est.best_iteration_))
-            models.append(est)
-        self.model = models
-        self.params_trained["n_estimators"] = max(best, 1)
-
     def _predict_proba(self, X: Any, **kwargs: Any) -> Any:
         X = self._prep(self.preprocess(X, **kwargs))
         if self.problem_type == MULTICLASS:
-            n = len(X)
-            cols = [np.full(n, m) if isinstance(m, float) else m.predict_proba(X)[:, 1] for m in self.model]
-            proba = np.column_stack(cols)
-            total = proba.sum(axis=1, keepdims=True)
-            uniform = np.full_like(proba, 1.0 / proba.shape[1])
-            return np.where(total > 0, proba / np.where(total > 0, total, 1.0), uniform)
+            proba = self.model.predict_proba(X)
+            present = getattr(self, "_present_classes", None)
+            if present is None:
+                return proba
+            n_total = int(getattr(self, "num_classes", len(self.model.classes_)))
+            full = np.zeros((len(X), n_total), dtype=np.float64)
+            full[:, present] = proba
+            return full
         if self.problem_type == REGRESSION:
             return self.model.predict(X)
         return self.model.predict_proba(X)[:, 1]  # AutoGluon expects P(class 1) for binary
@@ -221,6 +220,63 @@ def generate_configs_miter(num_random_configs: int = 200, seed: int = 1234) -> l
         seed=seed,
     )
     space.add([EqualsCondition(nl, gp, "leafwise"), EqualsCondition(md, gp, "symmetric")])
+    configs = space.sample_configuration(num_random_configs)
+    if num_random_configs == 1:
+        configs = [configs]
+    out = []
+    for config in configs:
+        out.append({k: v.item() if isinstance(v, np.generic) else v for k, v in dict(config).items() if v is not None})
+    return out
+
+
+def generate_configs_miter_v11(num_random_configs: int = 7, seed: int = 1234) -> list[dict[str, Any]]:
+    """v1.1 search space extending ``generate_configs_miter`` with CatBoost-style CTRs."""
+    from ConfigSpace import (
+        Categorical,
+        ConfigurationSpace,
+        EqualsCondition,
+        Float,
+        Integer,
+    )
+
+    gp = Categorical("grow_policy", ["leafwise", "symmetric"])
+    nl = Integer("num_leaves", (4, 128), log=True)
+    md = Integer("max_depth", (4, 8))
+    cat_ts = Categorical("cat_oblique_ts", [False, True])
+    ctr_mode = Categorical("cat_ctr_mode", ["oof", "ordered"])
+    ctr_pairs = Categorical("cat_ctr_pairs", [0, 8, 16])
+    ctr_counter = Categorical("cat_ctr_counter", [False, True])
+    space = ConfigurationSpace(
+        space=[
+            Float("learning_rate", (1e-2, 1e-1), log=True),
+            gp,
+            nl,
+            md,
+            Integer("min_data_in_leaf", (1, 64), log=True),
+            Float("lambda_l2", (1e-3, 10.0), log=True),
+            Categorical("m_mult", [1, 2, 4]),
+            Float("feature_fraction", (0.5, 1.0)),
+            Categorical("extra_trees", [False, True]),
+            cat_ts,
+            ctr_mode,
+            ctr_pairs,
+            ctr_counter,
+            Integer("min_data_per_group", (2, 100), log=True),
+            Float("cat_l2", (5e-3, 10.0), log=True),
+            Float("cat_smooth", (1e-3, 100.0), log=True),
+            Integer("max_cat_to_onehot", (4, 64), log=True),
+        ],
+        seed=seed,
+    )
+    space.add(
+        [
+            EqualsCondition(nl, gp, "leafwise"),
+            EqualsCondition(md, gp, "symmetric"),
+            EqualsCondition(ctr_mode, cat_ts, True),
+            EqualsCondition(ctr_pairs, cat_ts, True),
+            EqualsCondition(ctr_counter, cat_ts, True),
+        ]
+    )
     configs = space.sample_configuration(num_random_configs)
     if num_random_configs == 1:
         configs = [configs]
