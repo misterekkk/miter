@@ -3,7 +3,7 @@ title: Parameters
 description: Every constructor parameter of MiterRegressor and MiterClassifier.
 ---
 
-Both estimators take the same keyword arguments. Since v1.0 the default is **symmetric trees of
+Both estimators take the same keyword arguments. The default is **symmetric trees of
 depth 6** with `min_data_in_leaf=1`, `lambda_l2=3` and `m_mult=4`. This was the strongest single
 configuration on held-out data (see [Benchmarks](../../benchmarks/)). Three parameters default to
 `None`, which means "the default of the tree shape": symmetric trees take the values above, and

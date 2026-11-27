@@ -313,10 +313,10 @@ class _BaseMiterEstimator(_SklearnBase):
             raise ValueError(f"Unknown preset: {self.preset!r}")
         if self.cat_mode != "k1":
             raise ValueError(
-                f"Unsupported cat_mode={self.cat_mode!r} in v1.0; only 'k1' is supported"
+                f"Unsupported cat_mode={self.cat_mode!r}; only 'k1' is supported"
             )
         if self.robust:
-            raise ValueError("robust=True is not available in miter v1.0")
+            raise ValueError("robust=True is not available yet")
         for name in ("feature_fraction", "bagging_fraction"):
             value = float(getattr(self, name))
             if not (0.0 < value <= 1.0):  # also rejects NaN
@@ -337,7 +337,7 @@ class _BaseMiterEstimator(_SklearnBase):
             raise ValueError(
                 f"Unknown grow_policy: {self.grow_policy!r} (expected 'leafwise' or 'symmetric')"
             )
-        # None = the default of the tree shape: symmetric trees (the default since v1.0) use the
+        # None = the default of the tree shape: symmetric trees (the default) use the
         # S6_M4 setting (min_data_in_leaf 1, lambda_l2 3, m_mult 4); leaf-wise trees keep 20 / 1 / 2.
         symmetric = self.grow_policy == "symmetric"
         p.min_data_in_leaf = (1 if symmetric else 20) if self.min_data_in_leaf is None else int(self.min_data_in_leaf)
@@ -496,7 +496,7 @@ class _BaseMiterEstimator(_SklearnBase):
         y_val_arr = None
         if eval_set:
             if len(eval_set) != 1:
-                raise ValueError("eval_set supports a single (X_val, y_val) pair in v1.0")
+                raise ValueError("eval_set supports a single (X_val, y_val) pair")
             X_val, y_val = eval_set[0]
             n_val, _ = _check_input_X(X_val, name=name)
             y_val = _check_target(y_val, n_val, name=name)

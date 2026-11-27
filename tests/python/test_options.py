@@ -99,7 +99,7 @@ def test_fraction_ranges_validated(name: str, bad: float) -> None:
 
 def test_robust_not_available() -> None:
     X, y = _data(n=200)
-    with pytest.raises(ValueError, match="robust=True is not available in miter v1.0"):
+    with pytest.raises(ValueError, match="robust=True is not available yet"):
         _fit(X, y, robust=True)
     _fit(X, y, robust=False)
 

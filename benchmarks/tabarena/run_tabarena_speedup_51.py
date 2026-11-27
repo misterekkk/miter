@@ -25,9 +25,9 @@ sys.path.insert(0, str(HERE.parent))
 import analyze_v12_default_candidates as cand
 import run_tabarena_default_51 as base
 import run_tabarena_ensemble as ens
-from bench_exp_speedups import VARIANTS
 from miter.tabarena import MiterModel
 from scipy.stats import wilcoxon
+from speedup_variants import VARIANTS
 from tabarena.benchmark.experiment import TabArenaV0pt1ExperimentBundle
 from tabarena.contexts import TabArenaContext
 from tabarena.utils.config_utils import CustomAGConfigGenerator

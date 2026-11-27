@@ -24,7 +24,7 @@ export const singleConfigs: Group[] = [
   { label: 'symmetric + auto quantizer', values: [1026] },
   { label: 'default (symmetric, depth 6, m_mult 4)', values: [998.3] },
   { label: 'symmetric, m_mult 2', values: [991.4] },
-  { label: 'leaf-wise (default before v1.0)', values: [930.4] },
+  { label: 'leaf-wise (earlier default)', values: [930.4] },
 ];
 export const singleConfigRefs = { catDefault: 996, catTuned: 1091 };
 

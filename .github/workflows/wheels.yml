@@ -1,12 +1,31 @@
 name: Wheels
 
-# Builds release wheels and the sdist; nothing is uploaded anywhere (the author publishes).
+# Builds the wheels and the sdist on every change to the build, and publishes them on request:
+# run the workflow by hand with target=testpypi or pypi (trusted publishing; the pypi environment
+# needs the owner's approval).
 on:
-  workflow_dispatch:
   push:
-    tags: ["v*"]
-    branches: ["m7*"]
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'include/**'
+      - 'python/**'
+      - 'CMakeLists.txt'
+      - 'pyproject.toml'
+      - '.github/workflows/wheels.yml'
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Publish to: none, testpypi or pypi"
+        required: false
+        default: "none"
 
+# A push cancels the previous push build of its branch, never a manual (publishing) run.
+concurrency:
+  group: wheels-${{ github.ref }}-${{ github.event_name }}
+  cancel-in-progress: ${{ github.event_name == 'push' }}
+
+# Read-only token by default; the publish job adds id-token: write for trusted publishing.
 permissions:
   contents: read
 
@@ -63,3 +82,24 @@ jobs:
         with:
           name: sdist
           path: dist/*.tar.gz
+
+  publish:
+    needs: [wheels, sdist]
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.target != 'none'
+    runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.target }}
+    permissions:
+      id-token: write  # trusted publishing: no API token stored in the repository
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Publish to TestPyPI
+        if: github.event.inputs.target == 'testpypi'
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/
+      - name: Publish to PyPI
+        if: github.event.inputs.target == 'pypi'
+        uses: pypa/gh-action-pypi-publish@release/v1

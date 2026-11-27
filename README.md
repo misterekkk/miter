@@ -1,4 +1,4 @@
-<p align="center"><img src="docs/assets/logo.svg" width="112" alt="miter logo"></p>
+<p align="center"><img src="https://raw.githubusercontent.com/misterekkk/miter/main/docs/assets/logo.svg" width="112" alt="miter logo"></p>
 
 <h1 align="center">miter</h1>
 
@@ -8,12 +8,14 @@
 </p>
 
 <p align="center">
+  <a href="https://pypi.org/project/miter/"><img src="https://img.shields.io/pypi/v/miter" alt="PyPI"></a>
+  <a href="https://pypi.org/project/miter/"><img src="https://img.shields.io/pypi/pyversions/miter" alt="Python versions"></a>
   <a href="https://github.com/misterekkk/miter/actions/workflows/tests.yml"><img src="https://github.com/misterekkk/miter/actions/workflows/tests.yml/badge.svg" alt="Tests"></a>
   <a href="https://github.com/misterekkk/miter/actions/workflows/wheels.yml"><img src="https://github.com/misterekkk/miter/actions/workflows/wheels.yml/badge.svg" alt="Wheels"></a>
   <a href="https://misterekkk.github.io/miter/"><img src="https://github.com/misterekkk/miter/actions/workflows/docs.yml/badge.svg" alt="Documentation"></a>
   <br>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-blue" alt="License: Apache 2.0"></a>
-  <a href="#installation"><img src="https://img.shields.io/badge/platforms-Linux%20%7C%20macOS%20%7C%20Windows-lightgrey" alt="Platforms: Linux, macOS, Windows"></a>
+  <a href="https://github.com/misterekkk/miter/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-blue" alt="License: Apache 2.0"></a>
+  <a href="https://pypi.org/project/miter/#files"><img src="https://img.shields.io/badge/platforms-Linux%20%7C%20macOS%20%7C%20Windows-lightgrey" alt="Platforms: Linux, macOS, Windows"></a>
   <a href="https://misterekkk.github.io/miter/benchmarks/"><img src="https://img.shields.io/badge/TabArena-%231%20GBDT-d9480f" alt="TabArena: #1 GBDT"></a>
 </p>
 
@@ -92,7 +94,7 @@ About 70% of miter's training time goes into the oblique candidates; with axis s
 fast as LightGBM. Data with many binary (one-hot) columns is the slow case: covertype (44 of 54
 columns binary) trains 4–7× slower than CatBoost. Details and protocols:
 **[misterekkk.github.io/miter/benchmarks](https://misterekkk.github.io/miter/benchmarks/)** and
-[benchmarks/results/](benchmarks/results/).
+[benchmarks/results/](https://github.com/misterekkk/miter/tree/main/benchmarks/results/).
 
 ## Documentation
 
@@ -102,20 +104,20 @@ columns binary) trains 4–7× slower than CatBoost. Details and protocols:
 - how oblique splits and determinism work;
 - the Python reference.
 
-Release notes are in [CHANGELOG.md](CHANGELOG.md).
+Release notes are in [CHANGELOG.md](https://github.com/misterekkk/miter/blob/main/CHANGELOG.md).
 
 ## Contributing
 
 Bug reports, datasets where miter does clearly worse than LightGBM or CatBoost, and benchmark
-results are all welcome. [CONTRIBUTING.md](CONTRIBUTING.md) explains the setup and the rules every
+results are all welcome. [CONTRIBUTING.md](https://github.com/misterekkk/miter/blob/main/CONTRIBUTING.md) explains the setup and the rules every
 change keeps:
 - determinism;
 - pre-registered accuracy claims;
 - measured performance;
 - tests on three platforms.
 
-[ARCHITECTURE.md](ARCHITECTURE.md) describes the engine. Security problems: see
-[SECURITY.md](SECURITY.md).
+[ARCHITECTURE.md](https://github.com/misterekkk/miter/blob/main/ARCHITECTURE.md) describes the engine. Security problems: see
+[SECURITY.md](https://github.com/misterekkk/miter/blob/main/SECURITY.md).
 
 ```bash
 make venv && make py-build && make test   # C++ (GoogleTest) + Python tests
@@ -129,5 +131,5 @@ ideas from [LightGBM](https://github.com/microsoft/LightGBM) (set splits) and
 
 ## License
 
-[Apache License 2.0](LICENSE). If you use miter in research, [CITATION.cff](CITATION.cff) has the
+[Apache License 2.0](https://github.com/misterekkk/miter/blob/main/LICENSE). If you use miter in research, [CITATION.cff](https://github.com/misterekkk/miter/blob/main/CITATION.cff) has the
 citation.

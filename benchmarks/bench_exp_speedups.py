@@ -33,13 +33,7 @@ from scipy.stats import wilcoxon
 RAW_DIR = HERE / "results" / "raw" / "exp_speedups"
 FIELDS = ["kind", "dataset", "n_eval", "p_num", "p_cat", "fold", "variant", "metric", "trees", "secs"]
 
-BASE: dict[str, Any] = {}  # the v1.0 defaults
-VARIANTS: dict[str, dict[str, Any]] = {
-    "BASE": BASE,
-    "E1": {"oblique_min_distinct": 3},
-    "E2": {"oblique_sample_rows": 4096},  # stress setting for the quality checks
-    "E2_64K": {"oblique_sample_rows": 65536},  # the candidate default, for the speed check
-}
+from speedup_variants import BASE, VARIANTS  # noqa: F401
 
 
 def _fit(kind: str, cfg: dict[str, Any], X_tr: Any, y_tr: Any, X_val: Any, y_val: Any, X_te: Any, seed: int):

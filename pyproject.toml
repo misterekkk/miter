@@ -15,7 +15,7 @@ authors = [
 ]
 keywords = ["gradient boosting", "decision trees", "oblique trees", "tabular", "machine learning"]
 classifiers = [
-    "Development Status :: 2 - Pre-Alpha",
+    "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
     "Intended Audience :: Science/Research",
     "Programming Language :: C++",
@@ -29,6 +29,12 @@ classifiers = [
 dependencies = [
     "numpy>=1.21",
 ]
+
+[project.urls]
+Homepage = "https://github.com/misterekkk/miter"
+Documentation = "https://misterekkk.github.io/miter/"
+Changelog = "https://github.com/misterekkk/miter/blob/main/CHANGELOG.md"
+Issues = "https://github.com/misterekkk/miter/issues"
 
 [project.optional-dependencies]
 pandas = ["pandas>=1.5"]

@@ -1,4 +1,4 @@
-"""The v1.0 defaults: symmetric trees of depth 6 with the S6_M4 setting; leaf-wise keeps its own."""
+"""The defaults: symmetric trees of depth 6 with the S6_M4 setting; leaf-wise keeps its own."""
 
 from __future__ import annotations
 

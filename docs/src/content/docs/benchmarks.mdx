@@ -67,7 +67,7 @@ GBDT variant, but below the tabular foundation models and the deep-learning ense
 ## Single configurations
 
 Each bar is one configuration with no tuning, scored the same way as the `default` rows above.
-Symmetric trees are clearly stronger than the leaf-wise default miter used before v1.0. On TabArena,
+Symmetric trees are clearly stronger than the leaf-wise default miter used during development. On TabArena,
 adding CTRs helps further, mostly in binary classification with categorical features. On held-out
 data CTRs were neutral, so they stay an option (`max_ctr_complexity="auto"`).
 
@@ -96,7 +96,7 @@ These are the results that made symmetric trees the default.
 |---|---:|---:|---:|
 | miter default vs CatBoost default | 23/32 | −1.59% | 0.005 |
 | miter default vs LightGBM default | 28/32 | −6.99% | < 0.001 |
-| miter default vs miter leaf-wise (default before v1.0) | 27/32 | −3.17% | < 0.001 |
+| miter default vs miter leaf-wise (earlier default) | 27/32 | −3.17% | < 0.001 |
 
 </div>
 
