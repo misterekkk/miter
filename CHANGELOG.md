@@ -4,6 +4,21 @@ All notable changes to miter. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Changed
+
+- **Faster training on large data:** `oblique_sample_rows=65536` is now the default (symmetric
+  trees).
+  - **How it works:** above 65,536 rows, the oblique directions are chosen on a strided sample of
+    the rows. The winning direction's threshold and gain are then computed exactly on all rows, in
+    parallel and deterministically.
+  - **Speed:** training is about 2.4× faster on 500k rows (100 trees: 19.7 s → 8.3 s on one
+    thread, 4.5 s → 2.2 s on 10 threads, Apple M4) and 2.4× faster on covertype.
+  - **Quality:** the pre-registered quality checks, run with the much more aggressive 4,096-row
+    sample, showed no loss: median 0.00% on 32 held-out OpenML datasets and on 51 TabArena tasks
+    (`benchmarks/results/exp_speedups_e2_*`).
+
 ## [0.1.0] — 2026-11-27
 
 The first public release.

@@ -253,7 +253,7 @@ class _BaseMiterEstimator(_SklearnBase):
         bagging_fraction: float = 1.0,
         extra_trees: bool = False,
         oblique_min_distinct: int = 0,
-        oblique_sample_rows: int = 0,
+        oblique_sample_rows: int = 65536,
         robust: bool = False,
         cat_mode: str = "k1",
         cat_oblique_ts: bool = False,

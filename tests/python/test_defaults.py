@@ -15,6 +15,7 @@ def test_default_is_symmetric_s6_m4(cls) -> None:
     assert (p.min_data_in_leaf, p.lambda_l2, p.m_mult) == (1, 3.0, 4)
     assert p.quantizer_mode == _core.QuantizerMode.Linear
     assert p.max_ctr_complexity == 0
+    assert p.oblique_sample_rows == 65536  # E2, exp_speedups_e2_prereg.md
 
 
 def test_leafwise_keeps_its_defaults() -> None:
