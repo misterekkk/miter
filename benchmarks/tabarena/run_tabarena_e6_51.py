@@ -127,9 +127,13 @@ def cmd_summarize() -> None:
     reg, binary, mc = _tasks()
     names = reg + binary + mc
     new = pd.concat([df for arm in ARMS for name in names if (df := _run(arm, name)) is not None], ignore_index=True)
-    _, per = _leaderboard(new, names, True, "e6_gbdt_only_51")
+    lb, per = _leaderboard(new, names, True, "e6_gbdt_only_51")
+    elo = lb.set_index("method")
     lines = ["# E6-T: tuned TabArena lite, 51 tasks, LEAN (no CTR / quantizer) vs FULL (V12 space)", "",
-             "Pre-registration: `exp_e6_options_prereg.md`. Negative = LEAN better.", ""]
+             "Pre-registration: `exp_e6_options_prereg.md` and `exp_e6_options_prereg_amendment1.md`. "
+             "Negative = LEAN better.", "", "| method | elo | elo+ | elo- | rank |", "|---|---:|---:|---:|---:|"]
+    lines += [f"| {m} | {r['elo']:.0f} | {r['elo+']:.0f} | {r['elo-']:.0f} | {r['rank']:.3f} |"
+              for m, r in elo.iterrows()] + [""]
     for kind in ("tuned + ensemble", "tuned"):
         a, b = f"[New] MITER_E6_LEAN ({kind})", f"[New] MITER_E6_FULL ({kind})"
         st = _paired_stats(per, names, a, b)
@@ -139,8 +143,13 @@ def cmd_summarize() -> None:
         p_worse = float(wilcoxon(rel, alternative="greater").pvalue) if np.any(rel != 0.0) else 1.0
         lines += [_paired_line(st, f"{kind}: LEAN vs FULL") + f"; one-sided p (LEAN worse) = {p_worse:.4g}"]
         if kind == "tuned + ensemble":
-            ok = st["median"] <= 0.25 and p_worse >= 0.05
-            lines += ["", f"**Decision (pre-registered, tuned + ensemble): {'REMOVE CTR and quantizer modes' if ok else 'KEEP'}**", ""]
+            rule1 = st["median"] <= 0.25 and p_worse >= 0.05
+            elo_lean, elo_full = float(elo.loc[a, "elo"]), float(elo.loc[b, "elo"])
+            rule2 = elo_lean >= elo_full
+            ok = rule1 and rule2
+            lines += ["", f"- rule 1 (median / Wilcoxon): {'pass' if rule1 else 'fail'}",
+                      f"- rule 2 (amendment 1, Elo LEAN {elo_lean:.0f} >= FULL {elo_full:.0f}): {'pass' if rule2 else 'fail'}",
+                      "", f"**Decision (pre-registered, tuned + ensemble): {'REMOVE CTR and quantizer modes' if ok else 'KEEP'}**", ""]
             worst = (100.0 * (piv[a] - piv[b]) / piv[b]).sort_values(ascending=False).head(8)
             lines += ["Largest LEAN losses:", ""] + [f"- {d}: {v:+.2f}%" for d, v in worst.items()] + [""]
     SUMMARY_PATH.write_text("\n".join(lines) + "\n")
