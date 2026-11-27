@@ -83,7 +83,10 @@ jobs:
     needs: [wheels, sdist]
     if: github.event_name == 'workflow_dispatch' && github.event.inputs.target != 'none'
     runs-on: ubuntu-latest
-    environment: ${{ github.event.inputs.target }}
+    environment:
+      name: ${{ github.event.inputs.target }}
+      # The deployment entry links to the package page.
+      url: ${{ github.event.inputs.target == 'pypi' && 'https://pypi.org/project/miter/' || 'https://test.pypi.org/project/miter/' }}
     permissions:
       id-token: write  # trusted publishing: no API token stored in the repository
     steps:
