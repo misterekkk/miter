@@ -127,4 +127,15 @@ void expand_efb_member(const SymmetricWorkspace& sym, std::uint32_t f, std::size
                        std::size_t n_leaves, const double* leaf_g, const double* leaf_h,
                        const std::int32_t* leaf_c, HistBin* hist_f) noexcept;
 
+// build_sym_feature_hist for 1..4 features at once (no chunk waves), bit-identical to calling it
+// per feature with allow_wave = false.
+void build_sym_feature_hist_group(std::size_t n_feat, const std::uint8_t* const* cols,
+                                  const std::size_t* strides, HistBin* const* hist_fs,
+                                  HistBin* const* prev_fs, const std::uint32_t* rows,
+                                  std::size_t n_root, bool is_contiguous,
+                                  const std::uint8_t* leaf_ids, const float* g_seq,
+                                  const float* h_seq, std::size_t d, std::size_t depth_limit,
+                                  std::size_t n_leaves, std::size_t n_small,
+                                  const std::uint8_t* small_bit, SymmetricWorkspace& sym) noexcept;
+
 } // namespace miter::sym_detail

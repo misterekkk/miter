@@ -137,6 +137,48 @@ void build_axis_hist_small_pairs(const std::uint8_t* col, const std::uint32_t* s
     }
 }
 
+// G features' histograms in one sweep over the rows (or the small-child rows): each histogram is
+// filled in the same row order as build_axis_hist_feat / build_axis_hist_small_pairs, so the sums
+// are identical; the G independent read-modify-write chains overlap.
+template <std::size_t G>
+void build_axis_hist_multi(const std::uint8_t* const* cols, const std::uint32_t* leaf_rows,
+                           std::size_t n_root, bool is_contiguous, const std::uint8_t* leaf_ids,
+                           const std::size_t* strides, const float* g_seq, const float* h_seq,
+                           HistBin* const* hists) noexcept {
+    for (std::size_t t = 0; t < n_root; ++t) {
+        const std::size_t r = is_contiguous ? t : leaf_rows[t];
+        const std::size_t l = leaf_ids[t];
+        const double gv = static_cast<double>(g_seq[t]);
+        const double hv = static_cast<double>(h_seq[t]);
+        for (std::size_t gi = 0; gi < G; ++gi) {
+            HistBin& dst = hists[gi][l * strides[gi] + cols[gi][r]];
+            dst.g += gv;
+            dst.h += hv;
+            dst.c += 1;
+        }
+    }
+}
+
+template <std::size_t G>
+void build_axis_hist_small_pairs_multi(const std::uint8_t* const* cols,
+                                       const std::uint32_t* small_rows,
+                                       const std::uint8_t* small_pairs, const float* small_g,
+                                       const float* small_h, std::size_t n_small,
+                                       const std::size_t* strides, HistBin* const* hists) noexcept {
+    for (std::size_t s = 0; s < n_small; ++s) {
+        const std::size_t r = small_rows[s];
+        const std::size_t pr = small_pairs[s];
+        const double gv = static_cast<double>(small_g[s]);
+        const double hv = static_cast<double>(small_h[s]);
+        for (std::size_t gi = 0; gi < G; ++gi) {
+            HistBin& dst = hists[gi][pr * strides[gi] + cols[gi][r]];
+            dst.g += gv;
+            dst.h += hv;
+            dst.c += 1;
+        }
+    }
+}
+
 void reconstruct_sym_hist_from_small(HistBin* hist_f, const HistBin* prev_f,
                                      const std::uint8_t* small_bit, std::size_t n_pairs,
                                      std::size_t stride) noexcept {
@@ -737,6 +779,75 @@ void build_sym_feature_hist(const std::uint8_t* col, const std::uint32_t* rows, 
     if (sym.use_axis_sub && (d + 1U < depth_limit)) {
         std::memcpy(static_cast<void*>(prev_f), static_cast<const void*>(hist_f),
                     n_leaves * stride * sizeof(HistBin));
+    }
+}
+
+void build_sym_feature_hist_group(std::size_t n_feat, const std::uint8_t* const* cols,
+                                  const std::size_t* strides, HistBin* const* hist_fs,
+                                  HistBin* const* prev_fs, const std::uint32_t* rows,
+                                  std::size_t n_root, bool is_contiguous,
+                                  const std::uint8_t* leaf_ids, const float* g_seq,
+                                  const float* h_seq, std::size_t d, std::size_t depth_limit,
+                                  std::size_t n_leaves, std::size_t n_small,
+                                  const std::uint8_t* small_bit, SymmetricWorkspace& sym) noexcept {
+    const bool use_sub = sym.use_axis_sub && (d >= 1U);
+    const std::size_t n_pairs = n_leaves / 2U;
+    for (std::size_t gi = 0; gi < n_feat; ++gi) {
+        const std::size_t elems = (use_sub ? n_pairs : n_leaves) * strides[gi];
+        std::memset(static_cast<void*>(hist_fs[gi]), 0, elems * sizeof(HistBin));
+    }
+    if (!use_sub) {
+        switch (n_feat) {
+        case 4U:
+            build_axis_hist_multi<4U>(cols, rows, n_root, is_contiguous, leaf_ids, strides, g_seq,
+                                      h_seq, hist_fs);
+            break;
+        case 3U:
+            build_axis_hist_multi<3U>(cols, rows, n_root, is_contiguous, leaf_ids, strides, g_seq,
+                                      h_seq, hist_fs);
+            break;
+        case 2U:
+            build_axis_hist_multi<2U>(cols, rows, n_root, is_contiguous, leaf_ids, strides, g_seq,
+                                      h_seq, hist_fs);
+            break;
+        default:
+            build_axis_hist_multi<1U>(cols, rows, n_root, is_contiguous, leaf_ids, strides, g_seq,
+                                      h_seq, hist_fs);
+            break;
+        }
+    } else {
+        const std::uint32_t* s_rows = sym.small_rows.data();
+        const std::uint8_t* s_pairs = sym.small_pairs.data();
+        const float* sg = sym.small_g.data();
+        const float* sh = sym.small_h.data();
+        switch (n_feat) {
+        case 4U:
+            build_axis_hist_small_pairs_multi<4U>(cols, s_rows, s_pairs, sg, sh, n_small, strides,
+                                                  hist_fs);
+            break;
+        case 3U:
+            build_axis_hist_small_pairs_multi<3U>(cols, s_rows, s_pairs, sg, sh, n_small, strides,
+                                                  hist_fs);
+            break;
+        case 2U:
+            build_axis_hist_small_pairs_multi<2U>(cols, s_rows, s_pairs, sg, sh, n_small, strides,
+                                                  hist_fs);
+            break;
+        default:
+            build_axis_hist_small_pairs_multi<1U>(cols, s_rows, s_pairs, sg, sh, n_small, strides,
+                                                  hist_fs);
+            break;
+        }
+        for (std::size_t gi = 0; gi < n_feat; ++gi) {
+            reconstruct_sym_hist_from_small(hist_fs[gi], prev_fs[gi], small_bit, n_pairs,
+                                            strides[gi]);
+        }
+    }
+    if (sym.use_axis_sub && (d + 1U < depth_limit)) {
+        for (std::size_t gi = 0; gi < n_feat; ++gi) {
+            std::memcpy(static_cast<void*>(prev_fs[gi]), static_cast<const void*>(hist_fs[gi]),
+                        n_leaves * strides[gi] * sizeof(HistBin));
+        }
     }
 }
 

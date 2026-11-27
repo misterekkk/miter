@@ -27,6 +27,7 @@ namespace miter {
 using sym_detail::add_unique_ctr_proj;
 using sym_detail::build_efb_bundles;
 using sym_detail::build_sym_feature_hist;
+using sym_detail::build_sym_feature_hist_group;
 using sym_detail::collect_small_pair_rows;
 using sym_detail::expand_efb_member;
 using sym_detail::find_sym_ctr_split;
@@ -123,6 +124,10 @@ void SymmetricWorkspace::prepare(const Dataset& ds, const Params& params) {
     axis_thread_hists.resize(max_threads * max_level_leaves * 256U);
     oblique_thread_hists.resize(max_threads * max_level_leaves *
                                 (static_cast<std::size_t>(kObliqueBins) + 1U));
+    // Grouped histograms: 4 per thread (oblique pass2 and axis features).
+    multi_hists.resize(max_threads * 4U * max_level_leaves *
+                       (static_cast<std::size_t>(kObliqueBins) + 1U));
+    axis_multi_hists.resize(max_threads * 4U * max_level_leaves * 256U);
     const std::size_t wave_slots = (max_chunks > 1U) ? std::min(max_chunks, kWaveChunks) : 0U;
     wave_hists.resize(wave_slots * max_level_leaves * 256U);
 
@@ -313,76 +318,120 @@ Tree grow_symmetric_tree(const Dataset& ds, const float* g, const float* h, cons
                                        prev_b);
             }
         }
-        if (n_num_act > 0U) {
-            if (n_threads > 1 && n_num_act >= 2U && n_root * n_num_act >= 20000U) {
-                std::vector<AxisSplitCandidate> cand_res(n_num_act);
+        if (n_num_act == 1U) {
+            HistBin* hist_f = sym.axis_thread_hists.data();
+            const bool allow_wave = (n_num_act == 1U);
+            for (const std::uint32_t f : active_num) {
+                const std::uint16_t nb = ws.layout.num_regular_bins[f];
+                const bool has_nan = ws.layout.has_nan[f] != 0U;
+                const std::size_t stride = static_cast<std::size_t>(nb) + (has_nan ? 1U : 0U);
+                HistBin* prev_f = sym.use_axis_sub
+                                      ? (sym.prev_axis_hists.data() +
+                                         sym.prev_axis_offsets[f] * sym.max_prev_leaves)
+                                      : nullptr;
+                const std::uint8_t* col = bins_base + static_cast<std::size_t>(f) * n;
+                if (!sym.efb_bundle_of.empty() && sym.efb_bundle_of[f] >= 0) {
+                    expand_efb_member(sym, f, stride, n_leaves, leaf_g, leaf_h, leaf_c, hist_f);
+                } else {
+                    build_sym_feature_hist(col, rows, n_root, is_contiguous, leaf_ids, g_seq, h_seq,
+                                           d, depth_limit, n_leaves, stride, allow_wave, n_threads,
+                                           n_small, small_bit, sym, hist_f, prev_f);
+                }
+                const AxisSplitCandidate c = scan_sym_axis_feature(
+                    ds, f, nb, has_nan, n_leaves, hist_f, leaf_g, leaf_h, leaf_c, parent_score,
+                    total_h, lam, min_h, min_c, min_gain, params, tree_index, static_cast<int>(d));
+                if (c.valid && c.gain > choice.axis.gain) {
+                    choice.axis = c;
+                }
+            }
+        } else if (n_num_act > 1U) {
+            // Up to kAxisGroup consecutive regular features share one sweep over the rows
+            // (build_sym_feature_hist_group, identical sums); an EFB member expands from its
+            // bundle on its own. Candidates are compared in feature order, as before.
+            constexpr std::size_t kAxisGroup = 4U;
+            const auto is_efb = [&sym](std::uint32_t f) {
+                return !sym.efb_bundle_of.empty() && sym.efb_bundle_of[f] >= 0;
+            };
+            const bool par = n_threads > 1 && n_root * n_num_act >= 20000U;
+            // In parallel, smaller groups when there are too few features to balance the threads.
+            const auto nt = static_cast<std::size_t>(n_threads);
+            const std::size_t grp = !par                     ? kAxisGroup
+                                    : (n_num_act >= 8U * nt) ? 4U
+                                    : (n_num_act >= 4U * nt) ? 2U
+                                                             : 1U;
+            std::vector<std::pair<std::size_t, std::size_t>> groups;
+            for (std::size_t i = 0; i < n_num_act;) {
+                std::size_t len = 1U;
+                if (!is_efb(active_num[i])) {
+                    while (len < grp && i + len < n_num_act && !is_efb(active_num[i + len])) {
+                        ++len;
+                    }
+                }
+                groups.emplace_back(i, len);
+                i += len;
+            }
+            const std::size_t hist_cap = sym.max_level_leaves * 256U;
+            std::vector<AxisSplitCandidate> cand_res(n_num_act);
+            const auto run_group = [&](std::size_t gidx, HistBin* bufs) noexcept {
+                const std::size_t i0 = groups[gidx].first;
+                const std::size_t len = groups[gidx].second;
+                std::size_t strides[kAxisGroup] = {};
+                const std::uint8_t* cols[kAxisGroup] = {};
+                HistBin* hist_fs[kAxisGroup] = {};
+                HistBin* prev_fs[kAxisGroup] = {};
+                for (std::size_t gi = 0; gi < len; ++gi) {
+                    const std::uint32_t f = active_num[i0 + gi];
+                    const bool has_nan = ws.layout.has_nan[f] != 0U;
+                    strides[gi] = static_cast<std::size_t>(ws.layout.num_regular_bins[f]) +
+                                  (has_nan ? 1U : 0U);
+                    cols[gi] = bins_base + static_cast<std::size_t>(f) * n;
+                    hist_fs[gi] = bufs + gi * hist_cap;
+                    prev_fs[gi] = sym.use_axis_sub
+                                      ? (sym.prev_axis_hists.data() +
+                                         sym.prev_axis_offsets[f] * sym.max_prev_leaves)
+                                      : nullptr;
+                }
+                if (is_efb(active_num[i0])) {
+                    expand_efb_member(sym, active_num[i0], strides[0], n_leaves, leaf_g, leaf_h,
+                                      leaf_c, hist_fs[0]);
+                } else {
+                    build_sym_feature_hist_group(len, cols, strides, hist_fs, prev_fs, rows, n_root,
+                                                 is_contiguous, leaf_ids, g_seq, h_seq, d,
+                                                 depth_limit, n_leaves, n_small, small_bit, sym);
+                }
+                for (std::size_t gi = 0; gi < len; ++gi) {
+                    const std::uint32_t f = active_num[i0 + gi];
+                    cand_res[i0 + gi] = scan_sym_axis_feature(
+                        ds, f, ws.layout.num_regular_bins[f], ws.layout.has_nan[f] != 0U, n_leaves,
+                        hist_fs[gi], leaf_g, leaf_h, leaf_c, parent_score, total_h, lam, min_h,
+                        min_c, min_gain, params, tree_index, static_cast<int>(d));
+                }
+            };
+            if (par) {
 #ifdef _OPENMP
 #pragma omp parallel for schedule(dynamic, 1) num_threads(n_threads)
 #endif
-                for (std::ptrdiff_t idx_s = 0; idx_s < static_cast<std::ptrdiff_t>(n_num_act);
-                     ++idx_s) {
-                    const auto idx = static_cast<std::size_t>(idx_s);
-                    const std::uint32_t f = active_num[idx];
-                    const std::uint16_t nb = ws.layout.num_regular_bins[f];
-                    const bool has_nan = ws.layout.has_nan[f] != 0U;
-                    const std::size_t stride = static_cast<std::size_t>(nb) + (has_nan ? 1U : 0U);
+                for (std::ptrdiff_t gs = 0; gs < static_cast<std::ptrdiff_t>(groups.size()); ++gs) {
 #ifdef _OPENMP
                     const auto tid = static_cast<std::size_t>(omp_get_thread_num());
 #else
                     const std::size_t tid = 0U;
 #endif
-                    HistBin* hist_f =
-                        sym.axis_thread_hists.data() + tid * sym.max_level_leaves * 256U;
-                    HistBin* prev_f = sym.use_axis_sub
-                                          ? (sym.prev_axis_hists.data() +
-                                             sym.prev_axis_offsets[f] * sym.max_prev_leaves)
-                                          : nullptr;
-                    const std::uint8_t* col = bins_base + static_cast<std::size_t>(f) * n;
-                    if (!sym.efb_bundle_of.empty() && sym.efb_bundle_of[f] >= 0) {
-                        expand_efb_member(sym, f, stride, n_leaves, leaf_g, leaf_h, leaf_c, hist_f);
-                    } else {
-                        build_sym_feature_hist(col, rows, n_root, is_contiguous, leaf_ids, g_seq,
-                                               h_seq, d, depth_limit, n_leaves, stride, false, 1,
-                                               n_small, small_bit, sym, hist_f, prev_f);
-                    }
-                    cand_res[idx] =
-                        scan_sym_axis_feature(ds, f, nb, has_nan, n_leaves, hist_f, leaf_g, leaf_h,
-                                              leaf_c, parent_score, total_h, lam, min_h, min_c,
-                                              min_gain, params, tree_index, static_cast<int>(d));
-                }
-                for (const AxisSplitCandidate& c : cand_res) {
-                    if (c.valid && c.gain > choice.axis.gain) {
-                        choice.axis = c;
-                    }
+                    run_group(static_cast<std::size_t>(gs),
+                              sym.axis_multi_hists.data() + tid * kAxisGroup * hist_cap);
                 }
             } else {
-                HistBin* hist_f = sym.axis_thread_hists.data();
-                const bool allow_wave = (n_num_act == 1U);
-                for (const std::uint32_t f : active_num) {
-                    const std::uint16_t nb = ws.layout.num_regular_bins[f];
-                    const bool has_nan = ws.layout.has_nan[f] != 0U;
-                    const std::size_t stride = static_cast<std::size_t>(nb) + (has_nan ? 1U : 0U);
-                    HistBin* prev_f = sym.use_axis_sub
-                                          ? (sym.prev_axis_hists.data() +
-                                             sym.prev_axis_offsets[f] * sym.max_prev_leaves)
-                                          : nullptr;
-                    const std::uint8_t* col = bins_base + static_cast<std::size_t>(f) * n;
-                    if (!sym.efb_bundle_of.empty() && sym.efb_bundle_of[f] >= 0) {
-                        expand_efb_member(sym, f, stride, n_leaves, leaf_g, leaf_h, leaf_c, hist_f);
-                    } else {
-                        build_sym_feature_hist(col, rows, n_root, is_contiguous, leaf_ids, g_seq,
-                                               h_seq, d, depth_limit, n_leaves, stride, allow_wave,
-                                               n_threads, n_small, small_bit, sym, hist_f, prev_f);
-                    }
-                    const AxisSplitCandidate c =
-                        scan_sym_axis_feature(ds, f, nb, has_nan, n_leaves, hist_f, leaf_g, leaf_h,
-                                              leaf_c, parent_score, total_h, lam, min_h, min_c,
-                                              min_gain, params, tree_index, static_cast<int>(d));
-                    if (c.valid && c.gain > choice.axis.gain) {
-                        choice.axis = c;
-                    }
+                for (std::size_t gidx = 0; gidx < groups.size(); ++gidx) {
+                    run_group(gidx, sym.axis_multi_hists.data());
                 }
             }
+            for (const AxisSplitCandidate& c : cand_res) {
+                if (c.valid && c.gain > choice.axis.gain) {
+                    choice.axis = c;
+                }
+            }
+        }
+        if (n_num_act > 0U) {
             if (choice.axis.valid) {
                 choice.kind = NodeKind::Axis;
                 choice.gain = choice.axis.gain;

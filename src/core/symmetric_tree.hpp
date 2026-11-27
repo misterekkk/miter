@@ -58,6 +58,8 @@ struct SymmetricWorkspace {
     std::vector<std::uint8_t> samp_leaf;
     std::vector<HistBin> samp_hist;
     std::vector<std::int64_t> samp_proj;
+    std::vector<HistBin> multi_hists;      // single-threaded grouped oblique pass2
+    std::vector<HistBin> axis_multi_hists; // grouped axis histograms, 4 per thread
     std::vector<std::int32_t> samp_proj32; // k <= 3 refit on contiguous rows
     std::vector<std::int64_t> samp_chunk_min;
     std::vector<std::int64_t> samp_chunk_max;
