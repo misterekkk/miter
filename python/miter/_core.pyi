@@ -54,6 +54,7 @@ class Params:
     feature_fraction: float
     bagging_fraction: float
     extra_trees: bool
+    oblique_min_distinct: int
     max_ctr_complexity: int
     ctr_prior_weight: float
     ctr_n_permutations: int

@@ -583,7 +583,9 @@ void ObliqueScratch::prepare(const Dataset& ds, const Params& params) {
         const std::size_t f = num_indices[j];
         const auto& binner = ds.binner(f);
         num_has_nan[j] = binner.has_nan ? 1U : 0U;
-        if (!ds.quantizer(j).is_constant) {
+        if (!ds.quantizer(j).is_constant &&
+            (params.oblique_min_distinct <= 0 ||
+             binner.n_distinct >= static_cast<std::uint32_t>(params.oblique_min_distinct))) {
             eligible_features.push_back(static_cast<std::uint32_t>(f));
             eligible_num_indices.push_back(static_cast<std::uint32_t>(j));
         }

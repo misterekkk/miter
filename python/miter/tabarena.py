@@ -57,6 +57,7 @@ _FORWARDED = (
     "feature_fraction",
     "bagging_fraction",
     "extra_trees",
+    "oblique_min_distinct",
     "quantizer",
     "max_ctr_complexity",
     "ctr_prior_weight",

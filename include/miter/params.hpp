@@ -58,6 +58,9 @@ struct Params {
     double bagging_fraction = 1.0;
     /// Axis candidates: one random valid threshold per feature instead of the best one.
     bool extra_trees = false;
+    /// Numeric features with fewer distinct training values than this are left out of oblique
+    /// projections (0 = off; 3 excludes binary features such as one-hot columns).
+    int oblique_min_distinct = 0;
     /// CatBoost-style native online ordered CTR max combination complexity
     /// (-1 = auto, 0 = off, 1..3).
     int max_ctr_complexity = 0;

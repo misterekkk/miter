@@ -252,6 +252,7 @@ class _BaseMiterEstimator(_SklearnBase):
         feature_fraction: float = 1.0,
         bagging_fraction: float = 1.0,
         extra_trees: bool = False,
+        oblique_min_distinct: int = 0,
         robust: bool = False,
         cat_mode: str = "k1",
         cat_oblique_ts: bool = False,
@@ -289,6 +290,7 @@ class _BaseMiterEstimator(_SklearnBase):
         self.feature_fraction = feature_fraction
         self.bagging_fraction = bagging_fraction
         self.extra_trees = extra_trees
+        self.oblique_min_distinct = oblique_min_distinct
         self.robust = robust
         self.cat_mode = cat_mode
         self.cat_oblique_ts = cat_oblique_ts
@@ -366,6 +368,13 @@ class _BaseMiterEstimator(_SklearnBase):
         p.feature_fraction = float(self.feature_fraction)
         p.bagging_fraction = float(self.bagging_fraction)
         p.extra_trees = bool(self.extra_trees)
+        if (
+            isinstance(self.oblique_min_distinct, bool)
+            or not isinstance(self.oblique_min_distinct, (int, np.integer))
+            or int(self.oblique_min_distinct) < 0
+        ):
+            raise ValueError(f"oblique_min_distinct must be an int >= 0, got {self.oblique_min_distinct!r}")
+        p.oblique_min_distinct = int(self.oblique_min_distinct)
         if isinstance(self.max_ctr_complexity, str):
             if self.max_ctr_complexity != "auto":
                 raise ValueError(
@@ -635,6 +644,7 @@ class _BaseMiterEstimator(_SklearnBase):
             feature_fraction=p.feature_fraction,
             bagging_fraction=p.bagging_fraction,
             extra_trees=p.extra_trees,
+            oblique_min_distinct=p.oblique_min_distinct,
             max_ctr_complexity=("auto" if p.max_ctr_complexity == -1 else p.max_ctr_complexity),
             ctr_prior_weight=p.ctr_prior_weight,
             ctr_n_permutations=p.ctr_n_permutations,

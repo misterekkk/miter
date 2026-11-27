@@ -21,6 +21,8 @@ struct AxisBinner {
     std::vector<std::uint16_t> edges;
     std::uint16_t num_bins = 1;
     bool has_nan = false;
+    /// Number of distinct non-NaN codes in the training data (training only, not serialized).
+    std::uint32_t n_distinct = 0;
 
     std::uint8_t nan_bin() const noexcept { return static_cast<std::uint8_t>(num_bins); }
 

@@ -515,6 +515,9 @@ std::string model_to_json(const Model& model) {
     if (model.params.extra_trees) {
         os << ", \"extra_trees\": 1";
     }
+    if (model.params.oblique_min_distinct != 0) {
+        os << ", \"oblique_min_distinct\": " << model.params.oblique_min_distinct;
+    }
     if (model.params.grow_policy != GrowPolicy::Leafwise) {
         os << ", \"grow_policy\": \"symmetric\"";
     }
@@ -811,6 +814,9 @@ Model model_from_json(std::string_view json_text) {
         }
         if (const auto et = p.find("extra_trees"); et != p.end()) {
             model.params.extra_trees = (et->second.as_i64() != 0);
+        }
+        if (const auto omb = p.find("oblique_min_distinct"); omb != p.end()) {
+            model.params.oblique_min_distinct = static_cast<int>(omb->second.as_i64());
         }
         if (const auto gp = p.find("grow_policy"); gp != p.end()) {
             const std::string& gpv = gp->second.as_string();
