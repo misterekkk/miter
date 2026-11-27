@@ -14,4 +14,6 @@ VARIANTS: dict[str, dict[str, Any]] = {
     "E1": {"oblique_min_distinct": 3},
     "E2": {"oblique_sample_rows": 4096},  # stress setting for the quality checks
     "E2_64K": {"oblique_sample_rows": 65536},  # the candidate default, for the speed check
+    "DEF2": {},  # the current default (E2 adopted); TabArena baseline for E3
+    "E3": {"efb": True},  # on top of the current default (E2 adopted)
 }

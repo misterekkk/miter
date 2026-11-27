@@ -518,6 +518,9 @@ std::string model_to_json(const Model& model) {
     if (model.params.oblique_min_distinct != 0) {
         os << ", \"oblique_min_distinct\": " << model.params.oblique_min_distinct;
     }
+    if (model.params.efb) {
+        os << ", \"efb\": 1";
+    }
     if (model.params.oblique_sample_rows != 0) {
         os << ", \"oblique_sample_rows\": " << model.params.oblique_sample_rows;
     }
@@ -820,6 +823,9 @@ Model model_from_json(std::string_view json_text) {
         }
         if (const auto omb = p.find("oblique_min_distinct"); omb != p.end()) {
             model.params.oblique_min_distinct = static_cast<int>(omb->second.as_i64());
+        }
+        if (const auto efb = p.find("efb"); efb != p.end()) {
+            model.params.efb = (efb->second.as_i64() != 0);
         }
         if (const auto osr = p.find("oblique_sample_rows"); osr != p.end()) {
             model.params.oblique_sample_rows = static_cast<int>(osr->second.as_i64());

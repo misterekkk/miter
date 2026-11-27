@@ -77,15 +77,19 @@ def _errors(root: Path, prefix: str) -> pd.DataFrame:
     return pd.DataFrame(rows).set_index("dataset")
 
 
-def cmd_summarize(variant: str) -> None:
+def cmd_summarize(variant: str, base_variant: str | None = None) -> None:
     a = _errors(_root(variant), f"MiterSpeedup{variant}")
-    b = _errors(base.EXP_ROOT, "MiterDefaultV1")
+    if base_variant:
+        b = _errors(_root(base_variant), f"MiterSpeedup{base_variant}")
+    else:
+        b = _errors(base.EXP_ROOT, "MiterDefaultV1")
     j = a.join(b, lsuffix="_v", rsuffix="_b", how="inner")
     rel = 100.0 * (j.err_v - j.err_b) / j.err_b
     nz = rel[rel != 0]
     p_worse = float(wilcoxon(nz, alternative="greater").pvalue) if len(nz) else 1.0
     out = HERE.parent / "results" / f"tabarena_speedup_{variant.lower()}_51_summary.md"
-    lines = [f"# TabArena lite, 51 tasks: {variant} {VARIANTS[variant]} vs MITER_DEFAULT_V1", "",
+    ref = f"MITER_SPEEDUP_{base_variant}" if base_variant else "MITER_DEFAULT_V1"
+    lines = [f"# TabArena lite, 51 tasks: {variant} {VARIANTS[variant]} vs {ref}", "",
              f"- tasks: {len(rel)}; wins {int((rel < 0).sum())}, ties {int((rel == 0).sum())}, losses {int((rel > 0).sum())}",
              f"- relative error: median {rel.median():+.3f}%, mean {rel.mean():+.3f}%, worst {rel.max():+.2f}%",
              f"- one-sided Wilcoxon (variant worse): p = {p_worse:.4f}",
@@ -107,8 +111,9 @@ if __name__ == "__main__":
     r.add_argument("--nshards", type=int, default=1)
     s = sp.add_parser("summarize")
     s.add_argument("variant")
+    s.add_argument("--base", default=None)
     a = ap.parse_args()
     if a.cmd == "run":
         cmd_run(a.variant, a.shard, a.nshards)
     else:
-        cmd_summarize(a.variant)
+        cmd_summarize(a.variant, a.base)

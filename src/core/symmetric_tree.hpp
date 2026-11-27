@@ -60,6 +60,19 @@ struct SymmetricWorkspace {
     std::vector<std::int64_t> samp_proj;
     std::vector<std::int64_t> samp_chunk_min;
     std::vector<std::int64_t> samp_chunk_max;
+    // efb: bundles of mutually exclusive numeric features. A bundle column holds 0 where every
+    // member is at its default (most frequent) bin, else 1 + member offset + the member's bin slot.
+    struct EfbBundle {
+        std::vector<std::uint32_t> members;
+        std::uint16_t n_bins = 0;
+        std::size_t prev_offset = 0;
+    };
+    std::vector<EfbBundle> efb_bundles;
+    std::vector<std::int32_t> efb_bundle_of;    // per feature: bundle index or -1
+    std::vector<std::uint16_t> efb_offset_of;   // per feature: first bundle bin of its slots
+    std::vector<std::uint8_t> efb_default_code; // per feature: its default bin code
+    AlignedBuffer<std::uint8_t> efb_cols;       // n_bundles x n rows
+    AlignedBuffer<HistBin> efb_hists;           // n_bundles x max_level_leaves x 256
 
     void prepare(const Dataset& ds, const Params& params);
 };

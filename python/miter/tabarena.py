@@ -59,6 +59,7 @@ _FORWARDED = (
     "extra_trees",
     "oblique_min_distinct",
     "oblique_sample_rows",
+    "efb",
     "quantizer",
     "max_ctr_complexity",
     "ctr_prior_weight",

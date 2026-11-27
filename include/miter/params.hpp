@@ -65,6 +65,9 @@ struct Params {
     /// deterministic strided sample of this many rows; the winner's threshold and gain are then
     /// computed exactly on all rows (0 = off).
     int oblique_sample_rows = 0;
+    /// Symmetric trees: bundle mutually exclusive sparse numeric features (e.g. one-hot columns)
+    /// into one histogram pass per bundle; splits stay on the original features (false = off).
+    bool efb = false;
     /// CatBoost-style native online ordered CTR max combination complexity
     /// (-1 = auto, 0 = off, 1..3).
     int max_ctr_complexity = 0;

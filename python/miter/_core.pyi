@@ -56,6 +56,7 @@ class Params:
     extra_trees: bool
     oblique_min_distinct: int
     oblique_sample_rows: int
+    efb: bool
     max_ctr_complexity: int
     ctr_prior_weight: float
     ctr_n_permutations: int

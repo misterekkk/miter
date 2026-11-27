@@ -558,6 +558,7 @@ NB_MODULE(_core, m) {
         .def_rw("extra_trees", &miter::Params::extra_trees)
         .def_rw("oblique_min_distinct", &miter::Params::oblique_min_distinct)
         .def_rw("oblique_sample_rows", &miter::Params::oblique_sample_rows)
+        .def_rw("efb", &miter::Params::efb)
         .def_rw("max_ctr_complexity", &miter::Params::max_ctr_complexity)
         .def_rw("ctr_prior_weight", &miter::Params::ctr_prior_weight)
         .def_rw("ctr_n_permutations", &miter::Params::ctr_n_permutations)
