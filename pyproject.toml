@@ -42,17 +42,7 @@ wheel.packages = ["python/miter"]
 wheel.py-api = "cp312"
 metadata.version.provider = "scikit_build_core.metadata.regex"
 metadata.version.input = "python/miter/__init__.py"
-# extern/lignum (gitignored, patched in place) is shipped so the sdist builds on its own.
-sdist.include = [
-    "extern/lignum/CMakeLists.txt",
-    "extern/lignum/LICENSE",
-    "extern/lignum/NOTICE",
-    "extern/lignum/include/**",
-    "extern/lignum/src/**",
-    "extern/lignum/extern/simdjson/**",
-    "extern/lignum/python/lignum/__init__.py",
-]
-sdist.exclude = ["benchmarks", "docs", ".github", "tests", "lignum_patches", ".venv*", "build*", "catboost_info", "GEMINI.md", "CLAUDE.md"]
+sdist.exclude = ["benchmarks", "docs", ".github", "tests", ".venv*", "build*", "catboost_info", "GEMINI.md", "CLAUDE.md"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests/python"]

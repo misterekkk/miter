@@ -135,7 +135,7 @@ TEST(MulticlassTest, BitwiseExactnessConvergenceAndJsonRoundtripMixed) {
         ASSERT_EQ(res.model.n_classes, 3U);
         ASSERT_EQ(res.model.trees.size(), 36U);
         ASSERT_LT(res.train_loss.back(), res.train_loss.front() * 0.4);
-        EXPECT_THROW(miter::export_raw_forest(res.model), std::invalid_argument);
+        EXPECT_EQ(miter::export_raw_forest(res.model).trees.size(), 36U);
 
         std::vector<double> eval_raw(kN * 3U);
         miter::Evaluator::predict_raw_mixed(res.model, kN, num_views, cat_views, eval_raw.data());

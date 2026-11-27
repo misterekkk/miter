@@ -6,7 +6,8 @@ option(MITER_WARNINGS_AS_ERRORS "Compile miter with strict warnings as errors" O
 option(MITER_SANITIZE "Build with sanitizers (tests, not releases)" OFF)
 set(MITER_SANITIZERS "address,undefined" CACHE STRING "Sanitizers for MITER_SANITIZE")
 option(MITER_NATIVE "Tune for the build machine (-march/-mcpu=native); never enable for distributed wheels" OFF)
-set(MITER_LIGNUM_DIR "${CMAKE_CURRENT_SOURCE_DIR}/extern/lignum" CACHE PATH "Path to the local lignum clone")
+set(MITER_LIGNUM_DIR "" CACHE PATH "Optional path to a local lignum checkout (overrides extern/lignum and FetchContent)")
+set(MITER_LIGNUM_TAG "v0.5.0" CACHE STRING "Git tag or ref of lignum fetched when no local checkout is provided")
 option(MITER_BUNDLE_OPENMP "macOS: ship libomp in the wheel as a fallback for Homebrew's" OFF)
 
 set(CMAKE_CXX_STANDARD 20)
@@ -25,15 +26,6 @@ if(NOT MITER_VERSION_LINE)
 endif()
 string(REGEX REPLACE "^__version__ = \"([^\"]+)\".*$" "\\1" MITER_VERSION "${MITER_VERSION_LINE}")
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/python/miter/__init__.py")
-
-# Verify the local lignum working copy exists before configuring.
-if(NOT EXISTS "${MITER_LIGNUM_DIR}/CMakeLists.txt")
-    message(FATAL_ERROR
-        "Local lignum clone not found at '${MITER_LIGNUM_DIR}'.\n"
-        "Clone it per docs/LIGNUM_INTEGRATION.md:\n"
-        "  git clone --branch v0.4.3 https://github.com/misterekkk/lignum extern/lignum\n"
-        "  git -C extern/lignum checkout -b miter-integration")
-endif()
 
 # Homebrew's libomp is keg-only, so help AppleClang find it before configuring lignum and OpenMP.
 if(APPLE AND NOT OpenMP_ROOT AND NOT DEFINED ENV{OpenMP_ROOT})
@@ -62,7 +54,28 @@ if(MITER_SANITIZE)
 else()
     set(LIGNUM_SANITIZE OFF CACHE BOOL "" FORCE)
 endif()
-add_subdirectory("${MITER_LIGNUM_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/extern/lignum" EXCLUDE_FROM_ALL)
+
+if(MITER_LIGNUM_DIR)
+    if(NOT EXISTS "${MITER_LIGNUM_DIR}/CMakeLists.txt")
+        message(FATAL_ERROR "MITER_LIGNUM_DIR='${MITER_LIGNUM_DIR}' does not contain a CMakeLists.txt")
+    endif()
+    message(STATUS "miter: using local lignum from MITER_LIGNUM_DIR=${MITER_LIGNUM_DIR}")
+    add_subdirectory("${MITER_LIGNUM_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/extern/lignum" EXCLUDE_FROM_ALL)
+elseif(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/extern/lignum/CMakeLists.txt")
+    message(STATUS "miter: using local lignum from extern/lignum")
+    add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/extern/lignum" "${CMAKE_CURRENT_BINARY_DIR}/extern/lignum" EXCLUDE_FROM_ALL)
+else()
+    message(STATUS "miter: fetching lignum ${MITER_LIGNUM_TAG} via FetchContent")
+    include(FetchContent)
+    FetchContent_Declare(
+        lignum
+        GIT_REPOSITORY https://github.com/misterekkk/lignum.git
+        GIT_TAG "${MITER_LIGNUM_TAG}"
+        GIT_SHALLOW TRUE
+    )
+    FetchContent_MakeAvailable(lignum)
+endif()
+
 unset(SKBUILD)
 if(_miter_had_skbuild)
     set(SKBUILD "${_miter_saved_skbuild}")

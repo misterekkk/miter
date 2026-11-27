@@ -263,7 +263,7 @@ TEST(QuantizerTest, QuantileBoosterJsonRoundTripAndEvaluatorBitExact) {
     const miter::RawForest rf = miter::export_raw_forest(rax.model);
     EXPECT_EQ(rf.trees.size(), 10U);
 
-    // 2. Oblique + Quantile: JSON round-trip & 1 vs 4 threads bit-exact, raw export throws.
+    // 2. Oblique + Quantile: JSON round-trip & 1 vs 4 threads bit-exact, raw export succeeds.
     miter::Params pob = pax;
     pob.m_mult = 8;
     pob.grow_policy = miter::GrowPolicy::Symmetric;
@@ -282,7 +282,7 @@ TEST(QuantizerTest, QuantileBoosterJsonRoundTripAndEvaluatorBitExact) {
 
     const miter::Model loaded = miter::model_from_json(j1);
     EXPECT_EQ(miter::model_to_json(loaded), j1);
-    EXPECT_THROW(miter::export_raw_forest(rob1.model), std::invalid_argument);
+    EXPECT_EQ(miter::export_raw_forest(rob1.model).trees.size(), 10U);
 
     std::vector<double> pred_orig(n), pred_load(n);
     miter::Evaluator::predict_raw(rob1.model, X.data(), n, p, false, pred_orig.data());

@@ -14,20 +14,21 @@ namespace miter {
  * Numeric:     go right iff isnan(x) ? default_right : x >= threshold   (raw double input)
  * Categorical: go right iff the row's miter category code is NOT in `cat_left_codes`
  * Oblique:     go right iff any of the k inputs is NaN ? default_right : P >= oblique_threshold,
- *              P = sum_q weights[q] * (u(x_{features[q]}) - 32768) in int32, u = Q16r code.
+ *              P = sum_q weights[q] * (u(x_{features[q]}) - 32768) in int32, u = Q16 code.
+ * Ctr:         go right iff ctr_value >= float(threshold) (feature is CTR table index)
  *
  * Axis splits need no quantization: miter's `u >= t` is exactly `x >= axis_raw_threshold(q, t)`.
  * A NaN-vs-rest split (t = 65535: every non-NaN value left) is exported with threshold -inf and
  * swapped children / flipped default direction, which routes every input identically.
  */
 struct RawNode {
-    enum class Kind : std::uint8_t { Leaf = 0, Numeric = 1, Categorical = 2, Oblique = 3 };
+    enum class Kind : std::uint8_t { Leaf = 0, Numeric = 1, Categorical = 2, Oblique = 3, Ctr = 4 };
     Kind kind = Kind::Leaf;
     bool default_right = false;
     std::uint32_t left = 0;
     std::uint32_t right = 0;
-    std::uint32_t feature = 0;                 // Numeric / Categorical: input column
-    double threshold = 0.0;                    // Numeric
+    std::uint32_t feature = 0;                 // Numeric / Categorical: input column; Ctr: table id
+    double threshold = 0.0;                    // Numeric / Ctr
     double value = 0.0;                        // Leaf (already scaled by the learning rate)
     std::vector<std::uint16_t> cat_left_codes; // Categorical: sorted codes going left
     std::uint8_t k = 0;                        // Oblique: 2 or 3
@@ -42,6 +43,9 @@ struct RawTree {
 
 struct RawForest {
     double init_score = 0.0;
+    std::uint32_t n_classes = 1;
+    std::vector<double> init_scores;         // K entries when Multiclass
+    std::vector<std::uint16_t> tree_outputs; // output class index per tree when Multiclass
     Objective objective = Objective::Regression;
     std::vector<QuantizerInfo> quantizers; // per input column (used by oblique splits)
     std::vector<RawTree> trees;            // model order, truncated to the iteration count

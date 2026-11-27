@@ -207,7 +207,7 @@ TEST(CtrTest, DynamicPairDiscoveryRecoversXor) {
         }
     }
     EXPECT_TRUE(found_pair_ab);
-    EXPECT_THROW(miter::export_raw_forest(res_ctr.model), std::invalid_argument);
+    EXPECT_FALSE(miter::export_raw_forest(res_ctr.model).trees.empty());
 
     auto eval_acc = [&](const miter::Model& model) {
         std::vector<double> raw(kTe);

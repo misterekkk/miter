@@ -59,29 +59,29 @@ double axis_raw_threshold(const QuantizerInfo& q, std::uint16_t t) {
 }
 
 RawForest export_raw_forest(const Model& model, std::size_t num_iteration) {
-    if (model.objective == Objective::Multiclass || model.n_classes > 1U) {
-        throw std::invalid_argument(
-            "export_raw_forest: multiclass models use miter Evaluator in v1.1");
-    }
-    if (!model.ctr_tables.empty()) {
-        throw std::invalid_argument(
-            "export_raw_forest: models with native CTR splits use miter Evaluator");
+    const std::uint32_t K =
+        (model.objective == Objective::Multiclass && model.n_classes > 1U) ? model.n_classes : 1U;
+    if (K > 1U && model.init_scores.size() != K) {
+        throw std::invalid_argument("export_raw_forest: multiclass init_scores size mismatch");
     }
     RawForest out;
     out.init_score = model.init_score;
+    out.n_classes = K;
+    out.init_scores = model.init_scores;
     out.objective = model.objective;
     out.quantizers = model.quantizers;
-    bool any_quantile = false;
-    for (const auto& q : model.quantizers) {
-        if (!q.knots.empty()) {
-            any_quantile = true;
-            break;
+    const std::size_t max_rounds_avail = model.trees.size() / K;
+    const std::size_t n_rounds = (num_iteration == 0U)
+                                     ? std::min(model.best_iteration, max_rounds_avail)
+                                     : std::min(num_iteration, max_rounds_avail);
+    const std::size_t n_trees = n_rounds * K;
+    out.trees.resize(n_trees);
+    if (K > 1U) {
+        out.tree_outputs.resize(n_trees);
+        for (std::size_t t = 0; t < n_trees; ++t) {
+            out.tree_outputs[t] = static_cast<std::uint16_t>(t % K);
         }
     }
-    const std::size_t n_trees = (num_iteration == 0U)
-                                    ? std::min(model.best_iteration, model.trees.size())
-                                    : std::min(num_iteration, model.trees.size());
-    out.trees.resize(n_trees);
     for (std::size_t t = 0; t < n_trees; ++t) {
         const Tree& tree = model.trees[t];
         RawTree& rt = out.trees[t];
@@ -127,11 +127,6 @@ RawForest export_raw_forest(const Model& model, std::size_t num_iteration) {
                 break;
             }
             case NodeKind::Oblique:
-                if (any_quantile) {
-                    throw std::invalid_argument(
-                        "export_raw_forest: models with quantile quantizer and oblique splits "
-                        "use miter Evaluator");
-                }
                 if (n.oblique_k > 3U) {
                     throw std::invalid_argument(
                         "export_raw_forest: oblique split with k = " + std::to_string(n.oblique_k) +
@@ -150,8 +145,11 @@ RawForest export_raw_forest(const Model& model, std::size_t num_iteration) {
                 r.oblique_threshold = n.threshold_i32;
                 break;
             case NodeKind::Ctr:
-                throw std::invalid_argument(
-                    "export_raw_forest: models with native CTR splits use miter Evaluator");
+                r.kind = RawNode::Kind::Ctr;
+                r.feature = n.feature;
+                r.threshold = static_cast<double>(n.ctr_threshold);
+                r.default_right = false;
+                break;
             }
         }
     }

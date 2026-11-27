@@ -26,14 +26,6 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Clone local lignum dependency
-        shell: bash
-        run: |
-          git clone --branch v0.4.3 https://github.com/misterekkk/lignum extern/lignum
-          git -C extern/lignum checkout -b miter-integration
-          if compgen -G "lignum_patches/*.patch" > /dev/null; then
-            git -C extern/lignum -c user.name="CI" -c user.email="ci@example.invalid" am "$PWD"/lignum_patches/*.patch
-          fi
 
       - name: Build and test wheels
         shell: bash
@@ -61,14 +53,6 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Clone local lignum dependency
-        shell: bash
-        run: |
-          git clone --branch v0.4.3 https://github.com/misterekkk/lignum extern/lignum
-          git -C extern/lignum checkout -b miter-integration
-          if compgen -G "lignum_patches/*.patch" > /dev/null; then
-            git -C extern/lignum -c user.name="CI" -c user.email="ci@example.invalid" am "$PWD"/lignum_patches/*.patch
-          fi
 
       - name: Build sdist
         run: |

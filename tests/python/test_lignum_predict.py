@@ -97,3 +97,68 @@ def test_refit_rebuilds_the_lignum_model() -> None:
     second = est.predict(X[:50])
     _same_bits(second, _core.predict_raw_f64(est._model, np.ascontiguousarray(X[:50]), 0))
     assert not np.array_equal(first, second)
+
+
+def test_multiclass_lignum_equals_evaluator() -> None:
+    X, y_cont = _data(n=3000, p=6, seed=13)
+    bins = np.quantile(y_cont, [0.33, 0.66])
+    y = np.digitize(y_cont, bins).astype(np.int64)
+    est = MiterClassifier(
+        n_estimators=25, early_stopping_rounds=None, n_jobs=2, quantizer="quantile", random_state=4
+    ).fit(X, y)
+    predictor = est._lignum(0)
+    assert predictor is not None and predictor.binned and predictor.n_oblique > 0
+    rows = np.ascontiguousarray(_test_rows(X))
+    _same_bits(est._predict_raw(rows), _core.predict_raw_f64(est._model, rows, 0))
+    _same_bits(est.predict_proba(rows), _core.predict_proba_f64(est._model, rows, 0))
+    np.testing.assert_array_equal(est.predict(rows), np.argmax(_core.predict_proba_f64(est._model, rows, 0), axis=1))
+    _same_bits(est._predict_raw(rows, num_iteration=5), _core.predict_raw_f64(est._model, rows, 5))
+
+
+def test_ctr_and_symmetric_multiclass_lignum_equals_evaluator() -> None:
+    rng = np.random.default_rng(21)
+    n = 4000
+    c0 = rng.integers(0, 6, size=n)
+    c1 = rng.integers(0, 6, size=n)
+    x0 = np.exp(rng.normal(size=n))
+    x1 = rng.normal(size=n)
+    y = ((c0 + c1) % 3).astype(np.int64)
+    df = pd.DataFrame(
+        {
+            "c0": pd.Categorical(np.where(rng.random(n) < 0.02, None, c0.astype(str))),
+            "c1": pd.Categorical(np.where(rng.random(n) < 0.02, None, c1.astype(str))),
+            "x0": x0,
+            "x1": x1,
+            "x2": rng.normal(size=n),
+        }
+    )
+    for grow_policy in ("leafwise", "symmetric"):
+        est = MiterClassifier(
+            n_estimators=20,
+            max_depth=6,
+            learning_rate=0.2,
+            grow_policy=grow_policy,
+            quantizer="quantile",
+            max_ctr_complexity=2,
+            ctr_prior_weight=2.0,
+            min_data_per_group=10,
+            early_stopping_rounds=None,
+            n_jobs=2,
+            random_state=7,
+        ).fit(df, y)
+        predictor = est._lignum(0)
+        assert predictor is not None and predictor.binned
+        if grow_policy == "symmetric":
+            assert predictor.n_ctr_tables > 0
+        test = df.iloc[:400].copy()
+        test["c0"] = test["c0"].cat.add_categories(["unseen_cat"])
+        test.loc[test.index[:25], "c0"] = "unseen_cat"
+        test.loc[test.index[25:45], "c1"] = None
+        from miter.booster import _extract_mixed_predict_inputs
+
+        n_rows, num_cols, vocabs, indices = _extract_mixed_predict_inputs(test, est._model, fitted_on_dataframe=True)
+        ref_raw = _core.predict_raw_mixed(est._model, n_rows, num_cols, vocabs, indices, 0)
+        ref_proba = _core.predict_proba_mixed(est._model, n_rows, num_cols, vocabs, indices, 0)
+        _same_bits(est._predict_raw(test), ref_raw)
+        _same_bits(est.predict_proba(test), ref_proba)
+        np.testing.assert_array_equal(est.predict(test), np.argmax(ref_proba, axis=1))

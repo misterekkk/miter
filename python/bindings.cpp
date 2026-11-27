@@ -443,36 +443,38 @@ struct LignumPredictor {
 };
 
 template <typename FloatT>
-nb::ndarray<nb::numpy, double, nb::ndim<1>>
+nb::ndarray<nb::numpy, double>
 lignum_predict_raw_py(const LignumPredictor& lp,
                       const nb::ndarray<const FloatT, nb::ndim<2>, nb::device::cpu>& arr) {
     const std::size_t n_rows = arr.shape(0);
     if (arr.shape(1) != lp.model.n_features) {
         throw std::invalid_argument("Feature count mismatch in predict");
     }
+    const std::uint32_t k_out = model_output_width(lp.model);
     auto views = views_from_2d(arr);
-    std::vector<double> out(n_rows);
+    std::vector<double> out(n_rows * static_cast<std::size_t>(k_out));
     {
         nb::gil_scoped_release release;
         miter::lignum_predict_raw(lp.lm, lp.model, n_rows, views, {}, out.data(), lp.n_jobs);
     }
-    return vec_to_ndarray_1d(std::move(out));
+    return vec_to_ndarray_outputs(std::move(out), n_rows, k_out);
 }
 
-nb::ndarray<nb::numpy, double, nb::ndim<1>> lignum_predict_raw_mixed_py(
+nb::ndarray<nb::numpy, double> lignum_predict_raw_mixed_py(
     const LignumPredictor& lp, std::size_t n_rows, const nb::list& num_cols,
     std::vector<std::vector<std::string>> cat_vocabs,
     const std::vector<nb::ndarray<const std::int32_t, nb::ndim<1>, nb::c_contig, nb::device::cpu>>&
         cat_indices) {
     auto num_views = extract_num_col_views(num_cols, n_rows);
     auto cat_views = extract_cat_col_views(std::move(cat_vocabs), cat_indices, n_rows);
-    std::vector<double> out(n_rows);
+    const std::uint32_t k_out = model_output_width(lp.model);
+    std::vector<double> out(n_rows * static_cast<std::size_t>(k_out));
     {
         nb::gil_scoped_release release;
         miter::lignum_predict_raw(lp.lm, lp.model, n_rows, num_views, cat_views, out.data(),
                                   lp.n_jobs);
     }
-    return vec_to_ndarray_1d(std::move(out));
+    return vec_to_ndarray_outputs(std::move(out), n_rows, k_out);
 }
 
 nb::ndarray<nb::numpy, double, nb::ndim<2>> proba_from_raw_py(
@@ -747,6 +749,7 @@ NB_MODULE(_core, m) {
             nb::arg("model"), nb::arg("num_iteration") = 0)
         .def_prop_ro("binned", [](const LignumPredictor& lp) { return lp.lm.binned != nullptr; })
         .def_prop_ro("n_oblique", [](const LignumPredictor& lp) { return lp.lm.n_oblique; })
+        .def_prop_ro("n_ctr_tables", [](const LignumPredictor& lp) { return lp.lm.n_ctr_tables; })
         .def(
             "save", [](const LignumPredictor& lp, const std::string& path) { lp.lm.save(path); },
             nb::arg("path"))

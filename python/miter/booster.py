@@ -515,8 +515,6 @@ class _BaseMiterEstimator(_SklearnBase):
         evaluator predicts it then, with the same results.
         """
         model = self._check_fitted()
-        if model.objective == _core.Objective.Multiclass:
-            return None
         cache: dict[int, _core.LignumPredictor | None] | None = getattr(self, "_lignum_cache", None)
         if cache is None:
             cache = {}
@@ -775,7 +773,7 @@ class MiterClassifier(_ClassifierMixin, _BaseMiterEstimator):
         return self
 
     def predict_proba(self, X: Any, num_iteration: int | None = None) -> NDArray[np.float64]:
-        # Binary: lignum raw scores + miter sigmoid; Multiclass: miter Evaluator + softmax.
+        # Raw scores through lignum; transformed via miter sigmoid or softmax.
         model = self._check_fitted()
         raw = self._predict_raw(X, num_iteration=num_iteration)
         if model.objective == _core.Objective.Multiclass:

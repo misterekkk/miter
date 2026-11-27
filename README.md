@@ -151,20 +151,17 @@ parity checks with the research prototype and the training-speed measurements.
   | covertype 566k × 10 | 12.5 | 117 | — |
 
   On large datasets, use `preset="fast"` or several threads.
-- Models using multiclass softmax, native CTR splits (`max_ctr_complexity`), `quantizer="quantile"`
-  (or `"auto"` quantile features) with oblique splits, or `k_proj > 3` predict via miter's own exact
-  evaluator instead of lignum until those extensions are added to lignum. The results are bit-identical,
-  but inference is slower than lignum's binned kernel.
+- Models with oblique splits using `k_proj > 3` predict via miter's own exact evaluator instead of
+  lignum. The results are bit-identical, but inference is slower than lignum's binned kernel.
 
 ## Building from source
 
-miter builds against a patched local copy of lignum in `extern/lignum/` (gitignored). The sdist
-already contains it. From a git checkout:
+CMake fetches [lignum](https://github.com/misterekkk/lignum) (`v0.5.0`) automatically via
+`FetchContent`. To build against a local checkout instead (e.g. while hacking on lignum), pass
+`-DMITER_LIGNUM_DIR=/path/to/lignum` (or place a checkout at `extern/lignum/`):
 
 ```bash
-git clone --branch v0.4.3 https://github.com/misterekkk/lignum extern/lignum
-git -C extern/lignum checkout -b miter-integration
-git -C extern/lignum am "$PWD"/lignum_patches/*.patch
+CMAKE_ARGS="-DMITER_LIGNUM_DIR=../lignum" pip install ".[test]"
 ```
 
 macOS needs `brew install libomp` for multithreading.
