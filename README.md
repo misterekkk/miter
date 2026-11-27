@@ -36,13 +36,13 @@ Wheels for Linux (x86_64, aarch64), macOS (arm64) and Windows (x64); Python 3.10
   combinations `w₁·x₁ + w₂·x₂ (+ w₃·x₃) ≥ t`. A diagonal boundary takes one split instead of a
   staircase. Directions are random, not optimised, so the extra cost stays small.
 - **Accurate.** On TabArena (51 tasks), miter is ahead of LightGBM and XGBoost at every tuning
-  level. It is level with CatBoost after tuning, and the same holds on held-out OpenML data
+  level and level with CatBoost. On held-out OpenML data, its default also beats CatBoost's
   ([benchmarks](#benchmarks)).
 - **Deterministic to the bit.** Splits are integer arithmetic on 16-bit feature codes, and the
   randomness is counter-based. The same seed gives the same model on any machine and thread count,
   and prediction follows exactly the path training took.
-- **Two tree shapes.** Leaf-wise trees like LightGBM, or symmetric (oblivious) trees like CatBoost
-  (`grow_policy="symmetric"`), both with oblique splits.
+- **Two tree shapes.** Symmetric (oblivious) trees like CatBoost, which are the default, or
+  leaf-wise trees like LightGBM (`grow_policy="leafwise"`), both with oblique splits.
 - **Native categories and missing values.** LightGBM-style set splits and CatBoost-style ordered
   CTRs with feature combinations; NaN and unseen categories need no preprocessing.
 - **Fits in.** scikit-learn estimators (they pass `check_estimator`), exact pickling and JSON
@@ -56,29 +56,41 @@ Wheels for Linux (x86_64, aarch64), macOS (arm64) and Windows (x64); Python 3.10
 task:
 - **Training:** only miter was trained. The other results are TabArena's published runs, with up to
   200 configurations each against miter's 25.
-- **Elo:** computed in the GBDT pool.
 - **Paired comparison:** wins over the 51 tasks, median relative error (negative = miter better),
   and Wilcoxon p.
 
-| | Elo: miter | CatBoost | LightGBM | XGBoost | miter vs CatBoost | miter vs LightGBM |
-|---|---:|---:|---:|---:|---|---|
-| **tuned + ensemble** | **1218** | 1081 | 1111 | 1048 | 35/51, −0.78%, p = 0.14 | 37/51, −0.62%, p = 0.01 |
-| **tuned** | **1176** | 1076 | 1007 | 995 | 31/51, −0.44%, p = 0.44 | 39/51, −0.99%, p = 0.003 |
-| **default** | 897 | **967** | 685 | 740 | 22/51, +0.88%, p = 0.06 | 42/51, −1.72%, p < 0.001 |
+| miter vs | CatBoost | LightGBM | XGBoost |
+|---|---|---|---|
+| **default** | 24/51, +0.31%, p = 0.40 | 41/51, −3.23%, p < 0.001 | 37/51, −1.50%, p = 0.01 |
+| **tuned** | 31/51, −0.44%, p = 0.44 | 39/51, −0.99%, p = 0.003 | 37/51, −1.11%, p = 0.003 |
+| **tuned + ensemble** | 35/51, −0.78%, p = 0.14 | 37/51, −0.62%, p = 0.01 | 38/51, −1.27%, p < 0.001 |
 
+- **Elo in the GBDT pool:**
+  - tuned + ensemble: miter **1218**, LightGBM 1111, CatBoost 1081;
+  - default: miter **998**, CatBoost 996, XGBoost 788, LightGBM 722.
 - **LightGBM and XGBoost:** miter is ahead at every level.
-- **CatBoost:** miter is level after tuning (higher Elo, but the per-task differences are not
-  significant) and slightly behind with default parameters.
-- **Single configurations:** symmetric trees with the auto quantizer and CTRs
-  (`grow_policy="symmetric", quantizer="auto", max_ctr_complexity="auto"`) are the strongest single
-  configuration, with Elo 1065 without any tuning, above CatBoost's default (994).
-- **Generalisation:** on 16 OpenML datasets with no overlap with TabArena, this configuration is
-  level with CatBoost's default (9/16 wins, median −0.39%). So the TabArena result is
-  generalisation, not tuning to the benchmark.
+- **CatBoost:** miter is level at every level (no difference is statistically significant).
+- **Held-out data.** On 32 OpenML datasets with no overlap with TabArena (5-fold CV), the default
+  beat CatBoost's default on 23 (median −1.6%, p = 0.005) and LightGBM's on 28 (median −7.0%).
+  So the results generalise beyond the benchmark the configurations were developed on.
 
-Training is slower than LightGBM because of the oblique candidates, about 1.5–9× per tree on one
-thread; use `preset="fast"` on large data. Details, the held-out experiments and the
-pre-registered protocols:
+**Training time.** With early stopping on those 32 datasets (one thread), the default trained in
+1.7 s per dataset (median):
+- about 2.4× faster than CatBoost in total (3.3 s median);
+- about 8× slower than LightGBM in total (0.2 s median).
+
+At a fixed 100 trees (Apple M4, seconds):
+
+| data | threads | LightGBM | CatBoost | miter | miter `fast` |
+|---|---:|---:|---:|---:|---:|
+| 20k × 100 | 1 | 0.84 | 1.44 | 1.26 | 0.91 |
+| 20k × 100 | 10 | 0.61 | 0.33 | 0.34 | 0.25 |
+| 500k × 50 | 1 | 6.3 | 6.1 | 19.8 | 10.0 |
+| 500k × 50 | 10 | 1.9 | 1.5 | 4.2 | 2.3 |
+
+About 70% of miter's training time goes into the oblique candidates; with axis splits alone it is as
+fast as LightGBM. Data with many binary (one-hot) columns is the slow case: covertype (44 of 54
+columns binary) trains 4–7× slower than CatBoost. Details and protocols:
 **[misterekkk.github.io/miter/benchmarks](https://misterekkk.github.io/miter/benchmarks/)** and
 [benchmarks/results/](benchmarks/results/).
 

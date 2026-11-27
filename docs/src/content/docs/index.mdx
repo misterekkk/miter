@@ -35,8 +35,8 @@ proba = clf.predict_proba(X_test)
     <span class="lg-stat-label">GBDT on TabArena lite (51 tasks), tuned + ensemble: Elo 1218 vs LightGBM 1111 and CatBoost 1081</span>
   </div>
   <div class="lg-stat">
-    <span class="lg-stat-value">42/51</span>
-    <span class="lg-stat-label">tasks where miter's default beats LightGBM's default (median −1.7% error, p &lt; 0.001)</span>
+    <span class="lg-stat-value">23/32</span>
+    <span class="lg-stat-label">held-out OpenML datasets where miter's default beats CatBoost's default (median −1.6% error, p = 0.005)</span>
   </div>
   <div class="lg-stat">
     <span class="lg-stat-value">0 bits</span>
@@ -61,7 +61,7 @@ proba = clf.predict_proba(X_test)
   unit=""
   digits={0}
   min={600}
-  note="Against CatBoost the per-task differences are not statistically significant: level after tuning, slightly behind with defaults. See Benchmarks."
+  note="Against CatBoost no per-task difference is statistically significant: level at every tuning level. The default row comes from a separate comparison, so it is not on the same Elo scale. See Benchmarks."
 />
 
 <div class="lg-features not-content">

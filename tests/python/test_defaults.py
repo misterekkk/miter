@@ -4,9 +4,7 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
-
-from miter import MiterClassifier, MiterRegressor
-from miter import _core
+from miter import MiterClassifier, MiterRegressor, _core
 
 
 @pytest.mark.parametrize("cls", [MiterRegressor, MiterClassifier])

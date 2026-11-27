@@ -17,8 +17,14 @@ Versions follow [Semantic Versioning](https://semver.org/). Install a specific v
     `m_mult · ceil(sqrt(p))` random 2–3-feature projections `w·x ≥ t`.
   - Projections use int16 weights on 16-bit feature codes with 64 equal-width bins on the node's
     own range, so training and prediction agree bit for bit.
-- **Two tree shapes:** leaf-wise (`grow_policy="leafwise"`, default) and symmetric / oblivious
-  (`grow_policy="symmetric"`, `max_depth` 1–8). Oblique and categorical splits work in both.
+- **Two tree shapes:** symmetric / oblivious (`grow_policy="symmetric"`, `max_depth` 1–8) and
+  leaf-wise (`grow_policy="leafwise"`). Oblique and categorical splits work in both.
+- **Default: symmetric trees of depth 6** with `min_data_in_leaf=1`, `lambda_l2=3` and `m_mult=4`.
+  - **Why:** on 32 OpenML datasets with no overlap with TabArena, this beat the earlier leaf-wise
+    default on 27 (median −3.2% error, p < 0.0001). It also beat CatBoost's default on 23 (median
+    −1.6%, p = 0.005), in about 0.4× CatBoost's training time.
+  - **Leaf-wise defaults:** `min_data_in_leaf`, `lambda_l2` and `m_mult` default to `None` and
+    resolve per tree shape, so leaf-wise trees keep 20 / 1.0 / 2.
 - **Objectives:** L2 regression, binary log-loss and multiclass softmax, all with sample weights.
 - **Inputs:**
   - Native missing values.

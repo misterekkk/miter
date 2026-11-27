@@ -4,7 +4,7 @@ description: miter against LightGBM, CatBoost and XGBoost on TabArena and on hel
 ---
 
 import BarChart from '../../components/BarChart.astro';
-import { eloByTuning, singleConfigs, singleConfigRefs } from '../../data/benchmarks';
+import { eloByTuning, singleConfigs, singleConfigRefs, speed1, speed10 } from '../../data/benchmarks';
 
 All numbers come from summaries in
 [`benchmarks/results/`](https://github.com/misterekkk/miter/tree/main/benchmarks/results). There
@@ -36,6 +36,7 @@ one outer split per task, 8-fold bagging and AutoGluon preprocessing.
   unit=""
   digits={0}
   min={600}
+  note="The default row comes from a separate comparison of default configurations only, so its Elo values are not on the same scale as the tuned rows."
 />
 
 Per-task paired comparison on the same 51 tasks. Wins count tasks where miter's error is lower,
@@ -46,17 +47,17 @@ Wilcoxon signed-rank test:
 
 | miter vs | default | tuned | tuned + ensemble |
 |---|---|---|---|
-| CatBoost | 22/51, +0.88%, p = 0.06 | 31/51, −0.44%, p = 0.44 | 35/51, −0.78%, p = 0.14 |
-| LightGBM | 42/51, −1.72%, p < 0.001 | 39/51, −0.99%, p = 0.003 | 37/51, −0.62%, p = 0.01 |
-| XGBoost | 35/51, −1.35%, p = 0.02 | 37/51, −1.11%, p = 0.003 | 38/51, −1.27%, p < 0.001 |
+| CatBoost | 24/51, +0.31%, p = 0.40 | 31/51, −0.44%, p = 0.44 | 35/51, −0.78%, p = 0.14 |
+| LightGBM | 41/51, −3.23%, p < 0.001 | 39/51, −0.99%, p = 0.003 | 37/51, −0.62%, p = 0.01 |
+| XGBoost | 37/51, −1.50%, p = 0.01 | 37/51, −1.11%, p = 0.003 | 38/51, −1.27%, p < 0.001 |
 
 </div>
 
 What this shows:
 - **LightGBM and XGBoost.** miter is ahead of both at every level, and the per-task tests are
   significant.
-- **CatBoost.** miter has the higher Elo once tuned, but the per-task differences are not
-  statistically significant. With default parameters CatBoost is slightly ahead.
+- **CatBoost.** miter is level at every level. It has the higher Elo once tuned, but no per-task
+  difference is statistically significant.
 - **Tuned miter without the ensemble** (Elo 1176) is above CatBoost and LightGBM *with* their
   ensembles.
 
@@ -65,9 +66,10 @@ GBDT variant, but below the tabular foundation models and the deep-learning ense
 
 ## Single configurations
 
-miter's current default uses leaf-wise trees. Symmetric trees with the auto quantizer and CTRs are
-much stronger as a single, untuned configuration. Each bar below is one configuration with no
-tuning, scored the same way as the `default` rows above:
+Each bar is one configuration with no tuning, scored the same way as the `default` rows above.
+Symmetric trees are clearly stronger than the leaf-wise default miter used before v1.0. On TabArena,
+adding CTRs helps further, mostly in binary classification with categorical features. On held-out
+data CTRs were neutral, so they stay an option (`max_ctr_complexity="auto"`).
 
 <BarChart
   title="Elo of single miter configurations, GBDT pool, 51 tasks"
@@ -78,7 +80,7 @@ tuning, scored the same way as the `default` rows above:
   digits={0}
   min={600}
   reference={{ value: singleConfigRefs.catDefault, label: 'CatBoost default' }}
-  note={`CatBoost tuned (best of up to 200 configurations) has Elo ${singleConfigRefs.catTuned}. These configurations were written after earlier TabArena runs, so this comparison is exploratory; the held-out check below is the out-of-sample one.`}
+  note={`CatBoost tuned (best of up to 200 configurations) has Elo ${singleConfigRefs.catTuned} in this pool. The configurations were written after earlier TabArena runs, so this comparison is exploratory; the held-out check below is the out-of-sample one.`}
 />
 
 ## Held-out OpenML data
@@ -86,38 +88,68 @@ tuning, scored the same way as the `default` rows above:
 The configurations above were developed while looking at TabArena. To check that they generalise
 rather than fit the benchmark, we ran them on OpenML datasets with **no overlap** with TabArena or
 with any earlier experiment. The protocol was 5-fold cross-validation with early stopping.
+These are the results that made symmetric trees the default.
 
 <div class="lg-table">
 
-| comparison | datasets | wins | median | p |
-|---|---:|---:|---:|---:|
-| miter S6 + auto quantizer + CTR vs CatBoost default | 16 | 9/16 | −0.39% | 0.74 |
-| miter S6 vs CatBoost default | 16 | 9/16 | −0.50% | 0.67 |
+| comparison (32 datasets, 5-fold CV) | wins | median | p |
+|---|---:|---:|---:|
+| miter default vs CatBoost default | 23/32 | −1.59% | 0.005 |
+| miter default vs LightGBM default | 28/32 | −6.99% | < 0.001 |
+| miter default vs miter leaf-wise (default before v1.0) | 27/32 | −3.17% | < 0.001 |
 
 </div>
 
-On learning curves of 8 further held-out datasets, miter S6 had a 4–8% lower median error than
-LightGBM at every training size from 300 to 16,000 rows. It also beat CatBoost on 5–6 of 8
-datasets from 3,000 rows up. The level with CatBoost on held-out data matches what TabArena shows,
-so we read the TabArena results as generalisation, not as tuning to the benchmark.
+On learning curves of 8 further held-out datasets, symmetric miter had a 3–8% lower median error
+than LightGBM at every training size from 300 to 16,000 rows. It also beat CatBoost on 5–6 of 8
+datasets from 3,000 rows up.
 
 ## Training and prediction speed
 
-Oblique candidates make training slower than LightGBM. One thread, ms per tree:
+**With early stopping**, on the 32 held-out datasets (one thread, Apple M4), the default trained in
+a median 1.7 s per dataset:
+- CatBoost took 3.3 s, so miter was 0.41× CatBoost's total time;
+- LightGBM took 0.2 s, so miter was 7.7× LightGBM's total time.
 
-<div class="lg-table">
+miter stops after about 580 trees (median), CatBoost after 1130 and LightGBM after 165.
 
-| data | LightGBM | miter default | miter `fast` |
-|---|---:|---:|---:|
-| 20k × 16 | 1.5 | 3.6 | 1.8 |
-| 20k × 100 | 8.9 | 13.5 | 7.9 |
-| 500k × 50 | 47 | 240 | — |
-| covertype 566k × 10 | 12.5 | 117 | — |
+**At a fixed 100 trees** (seconds, Apple M4, data construction included):
 
-</div>
+<BarChart
+  title="One thread: seconds for 100 trees"
+  subtitle="Synthetic regression. Lower is better."
+  series={[
+    { name: 'LightGBM (31 leaves)', tone: 'third' },
+    { name: 'CatBoost (depth 6)', tone: 'other' },
+    { name: 'miter default', tone: 'miter' },
+    { name: 'miter fast', tone: 'miter-alt' },
+  ]}
+  groups={speed1}
+  unit=" s"
+  digits={2}
+/>
 
-Prediction runs on lignum's binned kernel. On one thread of an Apple M4 with 300 trees, it takes
-15.8 ns per row and tree. LightGBM's own `predict` takes 19.3 ns, and lignum's compiled mode 4.3 ns.
+<BarChart
+  title="10 threads: seconds for 100 trees"
+  subtitle="Synthetic regression. Lower is better."
+  series={[
+    { name: 'LightGBM (31 leaves)', tone: 'third' },
+    { name: 'CatBoost (depth 6)', tone: 'other' },
+    { name: 'miter default', tone: 'miter' },
+    { name: 'miter fast', tone: 'miter-alt' },
+  ]}
+  groups={speed10}
+  unit=" s"
+  digits={2}
+/>
 
-Timings come from leaf-wise models, before CTRs and symmetric trees were added; they will be
-re-measured for the release.
+**Where the time goes.**
+- **Oblique candidates.** About 70% of miter's training time goes into them; with axis splits alone,
+  miter trains as fast as LightGBM. `preset="fast"` keeps oblique splits near the root only and
+  halves the time.
+- **Binary columns.** Data with many binary (one-hot) columns is the slow case, because every column
+  enters the oblique pool. covertype (581k rows, 44 of 54 columns binary) takes 57 s for 100 trees
+  on one thread, compared with CatBoost's 8.2 s and LightGBM's 1.6 s.
+
+**Prediction** runs on lignum's binned kernel. On one thread of an Apple M4 with 300 trees, it takes
+15.8 ns per row and tree; LightGBM's own `predict` takes 19.3 ns, and lignum's compiled mode 4.3 ns.
