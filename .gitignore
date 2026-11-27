@@ -31,3 +31,6 @@ benchmarks/results/*
 .clangd/
 .cache/
 catboost_info/
+
+# Internal design docs and agent instructions (kept local, not in the repo)
+docs/

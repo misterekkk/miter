@@ -64,8 +64,8 @@ proba = clf.predict_proba(X_test)                     # shape (n, 2)
 | `extra_trees` | False | one random valid threshold per feature instead of the best one |
 
 All parameters, including the categorical ones (`max_cat_to_onehot`, `min_data_per_group`,
-`cat_smooth`, `cat_l2`, `max_cat_threshold`, `max_categories`), are documented in
-[docs/IMPLEMENTATION_PLAN.md](docs/IMPLEMENTATION_PLAN.md) §5.2.
+`cat_smooth`, `cat_l2`, `max_cat_threshold`, `max_categories`), are keyword
+arguments of both estimators.
 
 ### scikit-learn
 
@@ -180,6 +180,3 @@ cmake -S . -B build -DMITER_BUILD_TESTS=ON -DMITER_WARNINGS_AS_ERRORS=ON -DCMAKE
 cmake --build build --parallel
 ctest --test-dir build --output-on-failure
 ```
-
-Design and decisions: [docs/IMPLEMENTATION_PLAN.md](docs/IMPLEMENTATION_PLAN.md),
-[docs/DECISIONS.md](docs/DECISIONS.md), [docs/LIGNUM_INTEGRATION.md](docs/LIGNUM_INTEGRATION.md).
