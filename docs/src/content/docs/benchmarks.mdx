@@ -1,0 +1,123 @@
+---
+title: Benchmarks
+description: miter against LightGBM, CatBoost and XGBoost on TabArena and on held-out OpenML data.
+---
+
+import BarChart from '../../components/BarChart.astro';
+import { eloByTuning, singleConfigs, singleConfigRefs } from '../../data/benchmarks';
+
+All numbers come from summaries in
+[`benchmarks/results/`](https://github.com/misterekkk/miter/tree/main/benchmarks/results). There
+you can also find the pre-registrations: the decision rules were committed with their SHA-256
+*before* each confirmatory run, and failed experiments are reported too.
+
+## TabArena
+
+[TabArena](https://tabarena.ai) v0.1 `lite`: all 51 tasks (13 regression, 30 binary, 8 multiclass),
+one outer split per task, 8-fold bagging and AutoGluon preprocessing.
+
+- **Who was trained:** only miter. The LightGBM, CatBoost and XGBoost results are TabArena's own
+  published runs, with up to 200 configurations each; miter used 25.
+- **What is compared:** each method at three levels:
+  - default parameters;
+  - tuned, meaning the best configuration on validation;
+  - tuned + ensemble, meaning a weighted ensemble of configurations.
+
+<BarChart
+  title="Elo in the GBDT pool, 51 tasks"
+  subtitle="TabArena lite, one split per task. Higher is better. The axis starts at 600."
+  series={[
+    { name: 'miter', tone: 'miter' },
+    { name: 'CatBoost', tone: 'other' },
+    { name: 'LightGBM', tone: 'third' },
+    { name: 'XGBoost', tone: 'fourth' },
+  ]}
+  groups={eloByTuning}
+  unit=""
+  digits={0}
+  min={600}
+/>
+
+Per-task paired comparison on the same 51 tasks. Wins count tasks where miter's error is lower,
+the median is miter's relative error difference (negative = miter better), and p is from a
+Wilcoxon signed-rank test:
+
+<div class="lg-table">
+
+| miter vs | default | tuned | tuned + ensemble |
+|---|---|---|---|
+| CatBoost | 22/51, +0.88%, p = 0.06 | 31/51, −0.44%, p = 0.44 | 35/51, −0.78%, p = 0.14 |
+| LightGBM | 42/51, −1.72%, p < 0.001 | 39/51, −0.99%, p = 0.003 | 37/51, −0.62%, p = 0.01 |
+| XGBoost | 35/51, −1.35%, p = 0.02 | 37/51, −1.11%, p = 0.003 | 38/51, −1.27%, p < 0.001 |
+
+</div>
+
+What this shows:
+- **LightGBM and XGBoost.** miter is ahead of both at every level, and the per-task tests are
+  significant.
+- **CatBoost.** miter has the higher Elo once tuned, but the per-task differences are not
+  statistically significant. With default parameters CatBoost is slightly ahead.
+- **Tuned miter without the ensemble** (Elo 1176) is above CatBoost and LightGBM *with* their
+  ensembles.
+
+On the full TabArena leaderboard (121 methods), miter tuned + ensemble is #35. That is above every
+GBDT variant, but below the tabular foundation models and the deep-learning ensembles at the top.
+
+## Single configurations
+
+miter's current default uses leaf-wise trees. Symmetric trees with the auto quantizer and CTRs are
+much stronger as a single, untuned configuration. Each bar below is one configuration with no
+tuning, scored the same way as the `default` rows above:
+
+<BarChart
+  title="Elo of single miter configurations, GBDT pool, 51 tasks"
+  subtitle="No tuning. Higher is better. The axis starts at 600."
+  series={[{ name: 'miter', tone: 'miter' }]}
+  groups={singleConfigs}
+  unit=""
+  digits={0}
+  min={600}
+  reference={{ value: singleConfigRefs.catDefault, label: 'CatBoost default' }}
+  note={`CatBoost tuned (best of up to 200 configurations) has Elo ${singleConfigRefs.catTuned}. These configurations were written after earlier TabArena runs, so this comparison is exploratory; the held-out check below is the out-of-sample one.`}
+/>
+
+## Held-out OpenML data
+
+The configurations above were developed while looking at TabArena. To check that they generalise
+rather than fit the benchmark, we ran them on OpenML datasets with **no overlap** with TabArena or
+with any earlier experiment. The protocol was 5-fold cross-validation with early stopping.
+
+<div class="lg-table">
+
+| comparison | datasets | wins | median | p |
+|---|---:|---:|---:|---:|
+| miter S6 + auto quantizer + CTR vs CatBoost default | 16 | 9/16 | −0.39% | 0.74 |
+| miter S6 vs CatBoost default | 16 | 9/16 | −0.50% | 0.67 |
+
+</div>
+
+On learning curves of 8 further held-out datasets, miter S6 had a 4–8% lower median error than
+LightGBM at every training size from 300 to 16,000 rows. It also beat CatBoost on 5–6 of 8
+datasets from 3,000 rows up. The level with CatBoost on held-out data matches what TabArena shows,
+so we read the TabArena results as generalisation, not as tuning to the benchmark.
+
+## Training and prediction speed
+
+Oblique candidates make training slower than LightGBM. One thread, ms per tree:
+
+<div class="lg-table">
+
+| data | LightGBM | miter default | miter `fast` |
+|---|---:|---:|---:|
+| 20k × 16 | 1.5 | 3.6 | 1.8 |
+| 20k × 100 | 8.9 | 13.5 | 7.9 |
+| 500k × 50 | 47 | 240 | — |
+| covertype 566k × 10 | 12.5 | 117 | — |
+
+</div>
+
+Prediction runs on lignum's binned kernel. On one thread of an Apple M4 with 300 trees, it takes
+15.8 ns per row and tree. LightGBM's own `predict` takes 19.3 ns, and lignum's compiled mode 4.3 ns.
+
+Timings come from leaf-wise models, before CTRs and symmetric trees were added; they will be
+re-measured for the release.

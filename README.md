@@ -1,182 +1,121 @@
-# miter
+<p align="center"><img src="docs/assets/logo.svg" width="112" alt="miter logo"></p>
 
-Gradient-boosted decision trees with **random sparse oblique splits**. Besides the usual axis-aligned
-thresholds, every tree node also tries a few random 2–3-feature linear combinations
-(`w₁·x₁ + w₂·x₂ (+ w₃·x₃) ≥ t`). These are computed in integer arithmetic, so training and prediction
-agree **bit for bit** on every platform. The core is C++20 and the estimators are scikit-learn
-compatible. Predictions run on the [lignum](https://github.com/misterekkk/lignum) inference engine.
+<h1 align="center">miter</h1>
 
-- Native missing values (NaN) and native categorical features (pandas `category`, LightGBM-style K1 splits).
-- Deterministic: the same `random_state` gives the same model for any number of threads.
-- Regression (L2), binary classification (log-loss), and multiclass classification (native softmax).
+<p align="center">
+  Gradient-boosted decision trees with <b>random oblique splits</b>,<br>
+  deterministic to the bit and scikit-learn compatible.
+</p>
 
-## Installation
+<p align="center">
+  <a href="https://github.com/misterekkk/miter/actions/workflows/tests.yml"><img src="https://github.com/misterekkk/miter/actions/workflows/tests.yml/badge.svg" alt="Tests"></a>
+  <a href="https://github.com/misterekkk/miter/actions/workflows/wheels.yml"><img src="https://github.com/misterekkk/miter/actions/workflows/wheels.yml/badge.svg" alt="Wheels"></a>
+  <a href="https://misterekkk.github.io/miter/"><img src="https://github.com/misterekkk/miter/actions/workflows/docs.yml/badge.svg" alt="Documentation"></a>
+  <br>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-blue" alt="License: Apache 2.0"></a>
+  <a href="#installation"><img src="https://img.shields.io/badge/platforms-Linux%20%7C%20macOS%20%7C%20Windows-lightgrey" alt="Platforms: Linux, macOS, Windows"></a>
+  <a href="https://misterekkk.github.io/miter/benchmarks/"><img src="https://img.shields.io/badge/TabArena-%231%20GBDT-d9480f" alt="TabArena: #1 GBDT"></a>
+</p>
 
 ```bash
-# not on PyPI yet; once released:
-pip install miter                 # wheels: Linux x86_64/aarch64, macOS arm64, Windows x64; Python ≥ 3.10
-pip install "miter[sklearn,pandas]"
+pip install miter
 ```
-
-To build from source, see [Building from source](#building-from-source).
-
-## Quick start
 
 ```python
-from miter import MiterRegressor, MiterClassifier
+from miter import MiterClassifier
 
-reg = MiterRegressor()                                # 5000 trees max, early stopping after 50 rounds
-reg.fit(X_train, y_train, eval_set=[(X_val, y_val)])  # without eval_set: no early stopping
-pred = reg.predict(X_test)
-reg.best_iteration_, reg.feature_importances_
-
-clf = MiterClassifier(preset="accurate").fit(X_train, y_train, eval_set=[(X_val, y_val)])
-proba = clf.predict_proba(X_test)                     # shape (n, 2)
+clf = MiterClassifier().fit(X_train, y_train, eval_set=[(X_val, y_val)])
+proba = clf.predict_proba(X_test)
 ```
 
-- `X` can be a NumPy array (float32/float64, C or Fortran order) or a pandas DataFrame.
-- `category` columns are treated as categorical automatically; you can also pass
-  `categorical_feature=[...]` (indices or names) to `fit`.
-- Unseen categories and NaN at prediction time are handled the same way as during training.
-- When `X` is a DataFrame, feature names are checked at prediction time.
+Wheels for Linux (x86_64, aarch64), macOS (arm64) and Windows (x64); Python 3.10+.
 
-### Main parameters
+## Why miter
 
-| parameter | default | meaning |
-|---|---|---|
-| `learning_rate` | 0.05 | shrinkage |
-| `num_leaves` | 31 | leaves per tree (leaf-wise growth) |
-| `grow_policy` | `"leafwise"` | tree growth policy (`"leafwise"` or `"symmetric"` oblivious trees) |
-| `max_depth` | -1 | max depth (`-1` = unlimited for leafwise; `1..8` with default `6` for symmetric) |
-| `min_data_in_leaf` | 20 | minimum rows per leaf |
-| `lambda_l2` | 1.0 | L2 regularisation of leaf values |
-| `preset` | `"default"` | `"accurate"` tries 2× more oblique candidates (`m_mult=4`), about 2× the oblique cost; `"fast"` uses oblique splits only at depth 0–1 |
-| `m_mult` | 2 | oblique candidates per node = `m_mult · ceil(sqrt(p))` |
-| `k_proj` | 0 | features per oblique candidate (0 = random 2 or 3) |
-| `quantizer` | `"linear"` | feature bin quantizer (`"linear"` Q16r, `"quantile"`, or `"auto"` per-feature skewed) |
-| `max_ctr_complexity` | 0 | native C++20 online ordered CTR combinations for `symmetric` trees (`0` = off, `1..3`, or `"auto"`) |
-| `early_stopping_rounds` | 50 | patience on `eval_set` (`None` = off) |
-| `time_limit` | `None` | stop adding trees after this many seconds |
-| `n_jobs` | -1 | threads (the result does not depend on it) |
-| `random_state` | 0 | seed |
-| `feature_fraction` | 1.0 | fraction of features per tree (also the pool for oblique splits) |
-| `bagging_fraction` | 1.0 | fraction of rows per tree (sampled without replacement) |
-| `extra_trees` | False | one random valid threshold per feature instead of the best one |
-
-All parameters, including the categorical ones (`max_cat_to_onehot`, `min_data_per_group`,
-`cat_smooth`, `cat_l2`, `max_cat_threshold`, `max_categories`), are keyword
-arguments of both estimators.
-
-### scikit-learn
-
-With scikit-learn installed, `MiterRegressor` and `MiterClassifier` are regular sklearn estimators.
-They pass `sklearn.utils.estimator_checks` and work with `clone`, `Pipeline`, `GridSearchCV` and
-`cross_val_score(n_jobs=...)`.
-
-### Saving models
-
-```python
-import pickle
-blob = pickle.dumps(reg)                 # exact: predictions after loading are bit-identical
-reg.save_model("model.json")             # miter's JSON format, also exact
-reg2 = MiterRegressor.load_model("model.json")
-```
-
-`load_model` restores the model and its parameters. It does not restore the class labels of a
-classifier: they come back as 0/1. If you need the original labels, use pickle.
-
-### Prediction speed
-
-`predict` runs on lignum's binned kernel. It gives the same bits as miter's own evaluator and is
-about 3× faster than it was before lignum.
-
-The table shows one thread on an Apple M4, 300 trees, in ns per row and tree:
-
-| | ns |
-|---|---|
-| LightGBM's own `Booster.predict` | 19.3 |
-| miter `predict` (lignum, binned) | 15.8 |
-| miter in lignum's compiled mode (C++ only for now) | 4.3 |
-
-A LightGBM model of the same size, also run through lignum, is about 2× faster than miter. It has
-only axis splits, while miter's oblique nodes cost more to evaluate.
-
-### TabArena / AutoGluon
-
-```python
-from miter.tabarena import MiterModel, generate_configs_miter_v12   # needs autogluon.tabular
-```
-
-`MiterModel` is an AutoGluon model for regression, binary classification, and native softmax
-multiclass. `generate_configs_miter` / `generate_configs_miter_v12` return random search spaces
-for TabArena's "tuned" and "tuned + ensemble" settings.
+- **Oblique splits.** Every node tries axis thresholds and, alongside them, a few random 2–3-feature
+  combinations `w₁·x₁ + w₂·x₂ (+ w₃·x₃) ≥ t`. A diagonal boundary takes one split instead of a
+  staircase. Directions are random, not optimised, so the extra cost stays small.
+- **Accurate.** On TabArena (51 tasks), miter is ahead of LightGBM and XGBoost at every tuning
+  level. It is level with CatBoost after tuning, and the same holds on held-out OpenML data
+  ([benchmarks](#benchmarks)).
+- **Deterministic to the bit.** Splits are integer arithmetic on 16-bit feature codes, and the
+  randomness is counter-based. The same seed gives the same model on any machine and thread count,
+  and prediction follows exactly the path training took.
+- **Two tree shapes.** Leaf-wise trees like LightGBM, or symmetric (oblivious) trees like CatBoost
+  (`grow_policy="symmetric"`), both with oblique splits.
+- **Native categories and missing values.** LightGBM-style set splits and CatBoost-style ordered
+  CTRs with feature combinations; NaN and unseen categories need no preprocessing.
+- **Fits in.** scikit-learn estimators (they pass `check_estimator`), exact pickling and JSON
+  models, and an AutoGluon / TabArena model. Predictions run on
+  [lignum](https://github.com/misterekkk/lignum): 16 ns per row and tree on one Apple M4 core,
+  compared with LightGBM's 19.
 
 ## Benchmarks
 
-The results below come from the TabArena protocol on 13 regression datasets (8-fold bagging, all
-TabArena splits). Only miter was trained; the other methods' results are TabArena's own published
-runs. miter was run with its **default** configuration only.
+[TabArena](https://tabarena.ai) `lite`, all 51 tasks (regression, binary, multiclass), one split per
+task:
+- **Training:** only miter was trained. The other results are TabArena's published runs, with up to
+  200 configurations each against miter's 25.
+- **Elo:** computed in the GBDT pool.
+- **Paired comparison:** wins over the 51 tasks, median relative error (negative = miter better),
+  and Wilcoxon p.
 
-Relative RMSE of miter's default configuration against other methods, computed per dataset
-(positive = miter is better):
+| | Elo: miter | CatBoost | LightGBM | XGBoost | miter vs CatBoost | miter vs LightGBM |
+|---|---:|---:|---:|---:|---|---|
+| **tuned + ensemble** | **1218** | 1081 | 1111 | 1048 | 35/51, −0.78%, p = 0.14 | 37/51, −0.62%, p = 0.01 |
+| **tuned** | **1176** | 1076 | 1007 | 995 | 31/51, −0.44%, p = 0.44 | 39/51, −0.99%, p = 0.003 |
+| **default** | 897 | **967** | 685 | 740 | 22/51, +0.88%, p = 0.06 | 42/51, −1.72%, p < 0.001 |
 
-| miter default vs | mean | median | wins | Wilcoxon p |
-|---|---|---|---|---|
-| LightGBM default | +2.36% | +1.87% | 13/13 | 0.0002 |
-| XGBoost default | +3.10% | +2.20% | 13/13 | 0.0002 |
-| CatBoost default | +0.42% | −0.03% | 5/13 | 0.74 |
-| CatBoost tuned + ensemble | −1.67% | −0.63% | 2/13 | 0.008 |
+- **LightGBM and XGBoost:** miter is ahead at every level.
+- **CatBoost:** miter is level after tuning (higher Elo, but the per-task differences are not
+  significant) and slightly behind with default parameters.
+- **Single configurations:** symmetric trees with the auto quantizer and CTRs
+  (`grow_policy="symmetric", quantizer="auto", max_ctr_complexity="auto"`) are the strongest single
+  configuration, with Elo 1065 without any tuning, above CatBoost's default (994).
+- **Generalisation:** on 16 OpenML datasets with no overlap with TabArena, this configuration is
+  level with CatBoost's default (9/16 wins, median −0.39%). So the TabArena result is
+  generalisation, not tuning to the benchmark.
 
-So miter's default config:
-- beats the LightGBM and XGBoost defaults on every dataset;
-- is level with CatBoost's default;
-- trails CatBoost after TabArena's tuning plus ensembling, a setting miter has not been run in yet.
+Training is slower than LightGBM because of the oblique candidates, about 1.5–9× per tree on one
+thread; use `preset="fast"` on large data. Details, the held-out experiments and the
+pre-registered protocols:
+**[misterekkk.github.io/miter/benchmarks](https://misterekkk.github.io/miter/benchmarks/)** and
+[benchmarks/results/](benchmarks/results/).
 
-Classification and tuned miter runs are not part of this table yet. See
-[benchmarks/results/](benchmarks/results/) for the full protocols, including the Elo tables, the
-parity checks with the research prototype and the training-speed measurements.
+## Documentation
 
-## Limitations
+**[misterekkk.github.io/miter](https://misterekkk.github.io/miter/)**:
+- getting started and all parameters;
+- categorical features, scikit-learn, saving models and TabArena;
+- how oblique splits and determinism work;
+- the Python reference.
 
-- No sparse input; convert with `X.toarray()`.
-- `robust=True` is not available yet.
-- Training is slower than LightGBM because of the oblique candidates. The table shows one thread,
-  in ms per tree:
+Release notes are in [CHANGELOG.md](CHANGELOG.md).
 
-  | data | LightGBM | miter default | miter `fast` |
-  |---|---|---|---|
-  | 20k × 16 | 1.5 | 3.6 | 1.8 |
-  | 20k × 100 | 8.9 | 13.5 | 7.9 |
-  | 500k × 50 | 47 | 240 | — |
-  | covertype 566k × 10 | 12.5 | 117 | — |
+## Contributing
 
-  On large datasets, use `preset="fast"` or several threads.
-- Models with oblique splits using `k_proj > 3` predict via miter's own exact evaluator instead of
-  lignum. The results are bit-identical, but inference is slower than lignum's binned kernel.
+Bug reports, datasets where miter does clearly worse than LightGBM or CatBoost, and benchmark
+results are all welcome. [CONTRIBUTING.md](CONTRIBUTING.md) explains the setup and the rules every
+change keeps:
+- determinism;
+- pre-registered accuracy claims;
+- measured performance;
+- tests on three platforms.
 
-## Building from source
-
-CMake fetches [lignum](https://github.com/misterekkk/lignum) (`v0.5.0`) automatically via
-`FetchContent`. To build against a local checkout instead (e.g. while hacking on lignum), pass
-`-DMITER_LIGNUM_DIR=/path/to/lignum` (or place a checkout at `extern/lignum/`):
-
-```bash
-CMAKE_ARGS="-DMITER_LIGNUM_DIR=../lignum" pip install ".[test]"
-```
-
-macOS needs `brew install libomp` for multithreading.
-
-Python package and tests:
+[ARCHITECTURE.md](ARCHITECTURE.md) describes the engine. Security problems: see
+[SECURITY.md](SECURITY.md).
 
 ```bash
-pip install ".[test]"
-pytest tests/python -v
+make venv && make py-build && make test   # C++ (GoogleTest) + Python tests
 ```
 
-C++ library and tests:
+## Acknowledgments
 
-```bash
-cmake -S . -B build -DMITER_BUILD_TESTS=ON -DMITER_WARNINGS_AS_ERRORS=ON -DCMAKE_BUILD_TYPE=Release
-cmake --build build --parallel
-ctest --test-dir build --output-on-failure
-```
+miter predicts with [lignum](https://github.com/misterekkk/lignum). Its categorical handling follows
+ideas from [LightGBM](https://github.com/microsoft/LightGBM) (set splits) and
+[CatBoost](https://github.com/catboost/catboost) (ordered target statistics, symmetric trees).
+
+## License
+
+[Apache License 2.0](LICENSE). If you use miter in research, [CITATION.cff](CITATION.cff) has the
+citation.

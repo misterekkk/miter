@@ -1,0 +1,92 @@
+---
+title: miter
+description: Gradient-boosted decision trees with random oblique splits.
+template: splash
+hero:
+  tagline: Gradient-boosted decision trees with random oblique splits. Deterministic to the bit, scikit-learn compatible, and ahead of LightGBM and XGBoost on TabArena.
+  image:
+    file: ../../../assets/logo.svg
+  actions:
+    - text: Get started
+      link: guides/getting-started/
+      icon: right-arrow
+    - text: Benchmarks
+      link: benchmarks/
+      variant: minimal
+---
+
+import BarChart from '../../components/BarChart.astro';
+import { eloByTuning } from '../../data/benchmarks';
+
+```bash
+pip install miter
+```
+
+```python
+from miter import MiterClassifier
+
+clf = MiterClassifier().fit(X_train, y_train, eval_set=[(X_val, y_val)])
+proba = clf.predict_proba(X_test)
+```
+
+<div class="lg-stats not-content">
+  <div class="lg-stat">
+    <span class="lg-stat-value">#1</span>
+    <span class="lg-stat-label">GBDT on TabArena lite (51 tasks), tuned + ensemble: Elo 1218 vs LightGBM 1111 and CatBoost 1081</span>
+  </div>
+  <div class="lg-stat">
+    <span class="lg-stat-value">42/51</span>
+    <span class="lg-stat-label">tasks where miter's default beats LightGBM's default (median −1.7% error, p &lt; 0.001)</span>
+  </div>
+  <div class="lg-stat">
+    <span class="lg-stat-value">0 bits</span>
+    <span class="lg-stat-label">of difference between models trained on 1, 2 or 8 threads (tested), and between training and prediction</span>
+  </div>
+  <div class="lg-stat">
+    <span class="lg-stat-value">16 ns</span>
+    <span class="lg-stat-label">per row and tree, predicting through lignum on one Apple M4 core; LightGBM takes 19</span>
+  </div>
+</div>
+
+<BarChart
+  title="Elo in the GBDT pool, TabArena lite, 51 tasks"
+  subtitle="Only miter was trained; the others are TabArena's published runs. Higher is better. The axis starts at 600."
+  series={[
+    { name: 'miter', tone: 'miter' },
+    { name: 'CatBoost', tone: 'other' },
+    { name: 'LightGBM', tone: 'third' },
+    { name: 'XGBoost', tone: 'fourth' },
+  ]}
+  groups={eloByTuning}
+  unit=""
+  digits={0}
+  min={600}
+  note="Against CatBoost the per-task differences are not statistically significant: level after tuning, slightly behind with defaults. See Benchmarks."
+/>
+
+<div class="lg-features not-content">
+  <div class="lg-feature">
+    <h3>Oblique splits</h3>
+    <p>Every node also tries random 2–3-feature combinations <code>w·x ≥ t</code>, so diagonal structure takes one split instead of a staircase.</p>
+  </div>
+  <div class="lg-feature">
+    <h3>Deterministic to the bit</h3>
+    <p>Integer arithmetic on 16-bit feature codes and counter-based randomness: the same seed gives the same model on any machine and thread count.</p>
+  </div>
+  <div class="lg-feature">
+    <h3>Two tree shapes</h3>
+    <p>Leaf-wise trees like LightGBM, or symmetric (oblivious) trees like CatBoost, both with oblique splits.</p>
+  </div>
+  <div class="lg-feature">
+    <h3>Native categories</h3>
+    <p>LightGBM-style set splits and CatBoost-style ordered CTRs with feature combinations. Unseen categories and NaN handled the same way at prediction time.</p>
+  </div>
+  <div class="lg-feature">
+    <h3>scikit-learn compatible</h3>
+    <p>Passes <code>check_estimator</code>; works with pipelines, grid search and cross-validation. Exact pickling and JSON models.</p>
+  </div>
+  <div class="lg-feature">
+    <h3>Fast prediction</h3>
+    <p>Predictions run on <a href="https://misterekkk.github.io/lignum/">lignum</a>'s binned kernel, bit-identical to miter's own evaluator.</p>
+  </div>
+</div>
