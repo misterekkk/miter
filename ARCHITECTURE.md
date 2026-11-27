@@ -18,6 +18,7 @@ fit(X, y)
   │
   │    tree      leaf-wise (best-first)            src/core/tree_learner.cpp
   │              or symmetric (oblivious)           src/core/symmetric_tree.cpp
+  │                level-wise split searches:       src/core/symmetric_{axis,oblique,ctr,efb}.cpp
   │      node    best of: axis (histograms)         src/core/histogram.cpp
   │                       categorical (K1)          src/core/categorical.cpp
   │                       oblique (m random candidates, 64 local bins)  src/core/oblique.cpp
