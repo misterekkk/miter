@@ -1,6 +1,7 @@
 """Interleaved A/B training-speed comparison of two miter builds.
 
     python benchmarks/ci/speed_ab.py --build base=DIR_A --build head=DIR_B --reps 5 --out ab.md
+    python benchmarks/ci/speed_ab.py --build def=DIR --build fast=DIR --params fast='{"preset": "fast"}' ...
 
 Each build is an installed copy of miter (`pip install --target DIR .`). Every measurement runs in
 a fresh process, and the builds alternate run by run, so drifts in machine speed (other load,
@@ -11,6 +12,7 @@ first build.
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import statistics
 import subprocess
@@ -23,7 +25,8 @@ sys.path.insert(0, sys.argv[1])
 import numpy as np
 import miter
 assert miter.__file__.startswith(sys.argv[1]), miter.__file__
-which, threads = sys.argv[2], int(sys.argv[3])
+import json
+which, threads, params = sys.argv[2], int(sys.argv[3]), json.loads(sys.argv[4])
 if which == "covertype":
     from sklearn.datasets import fetch_covtype
     X, y = fetch_covtype(return_X_y=True)
@@ -36,7 +39,7 @@ else:
     y = np.sin(X[:, : len(w)] @ w) + 0.5 * X[:, 0] * X[:, 1] + 0.1 * rng.standard_normal(n)
     cls = miter.MiterRegressor
 t = time.perf_counter()
-cls(n_estimators=100, early_stopping_rounds=None, n_jobs=threads).fit(X, y)
+cls(n_estimators=100, early_stopping_rounds=None, n_jobs=threads, **params).fit(X, y)
 print(f"{time.perf_counter() - t:.4f}")
 """
 
@@ -44,19 +47,22 @@ print(f"{time.perf_counter() - t:.4f}")
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--build", action="append", required=True, help="label=DIR (first one is the reference)")
+    ap.add_argument("--params", action="append", default=[], help="label=JSON constructor arguments")
     ap.add_argument("--data", nargs="+", default=["covertype", "500000x50", "100000x20"])
     ap.add_argument("--threads", nargs="+", type=int, default=[1, os.cpu_count() or 1])
     ap.add_argument("--reps", type=int, default=5)
     ap.add_argument("--out", type=Path, required=True)
     a = ap.parse_args()
     builds = [tuple(b.split("=", 1)) for b in a.build]
+    params = {lbl: json.loads(js) for lbl, js in (p.split("=", 1) for p in a.params)}
     times: dict[tuple[str, int, str], list[float]] = {}
     for data in a.data:
         for threads in a.threads:
             for rep in range(a.reps):
                 order = builds if rep % 2 == 0 else builds[::-1]
                 for label, path in order:
-                    r = subprocess.run([sys.executable, "-I", "-c", ONE_RUN, str(Path(path).resolve()), data, str(threads)],
+                    r = subprocess.run([sys.executable, "-I", "-c", ONE_RUN, str(Path(path).resolve()), data, str(threads),
+                                        json.dumps(params.get(label, {}))],
                                        capture_output=True, text=True, check=True)
                     t = float(r.stdout.strip().splitlines()[-1])
                     times.setdefault((data, threads, label), []).append(t)

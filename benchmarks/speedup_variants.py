@@ -11,6 +11,7 @@ from typing import Any
 BASE: dict[str, Any] = {}  # the library defaults
 VARIANTS: dict[str, dict[str, Any]] = {
     "BASE": BASE,
+    # E1 and E4 options were removed in 0.1.1; their runs need a commit before that.
     "E1": {"oblique_min_distinct": 3},
     "E2": {"oblique_sample_rows": 4096},  # stress setting for the quality checks
     "E2_64K": {"oblique_sample_rows": 65536},  # the candidate default, for the speed check
@@ -19,6 +20,9 @@ VARIANTS: dict[str, dict[str, Any]] = {
     # E4: oblique gain penalties (exp_speedups_e4_prereg.md).
     "E4A": {"oblique_binary_penalty": 0.25},
     "E4B": {"oblique_gain_margin": 0.05},
+    # E6: presets (exp_e6_options_prereg.md).
+    "E6_ACC": {"preset": "accurate"},
+    "E6_FAST": {"preset": "fast"},
     # Exploratory ablation of the method's components (relative to the current default).
     "AB_NO_OBLIQUE": {"m_mult": 0},
     "AB_LEAFWISE": {"grow_policy": "leafwise"},
