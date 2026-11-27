@@ -16,6 +16,7 @@
   <br>
   <a href="https://github.com/misterekkk/miter/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-blue" alt="License: Apache 2.0"></a>
   <a href="https://pypi.org/project/miter/#files"><img src="https://img.shields.io/badge/platforms-Linux%20%7C%20macOS%20%7C%20Windows-lightgrey" alt="Platforms: Linux, macOS, Windows"></a>
+  <a href="https://pepy.tech/projects/miter"><img src="https://img.shields.io/pypi/dm/miter" alt="Downloads per month"></a>
   <a href="https://misterekkk.github.io/miter/benchmarks/"><img src="https://img.shields.io/badge/TabArena-%231%20GBDT-d9480f" alt="TabArena: #1 GBDT"></a>
 </p>
 
