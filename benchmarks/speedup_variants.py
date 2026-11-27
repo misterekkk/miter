@@ -16,4 +16,16 @@ VARIANTS: dict[str, dict[str, Any]] = {
     "E2_64K": {"oblique_sample_rows": 65536},  # the candidate default, for the speed check
     "DEF2": {},  # the current default (E2 adopted); TabArena baseline for E3
     "E3": {"efb": True},  # on top of the current default (E2 adopted)
+    # Exploratory ablation of the method's components (relative to the current default).
+    "AB_NO_OBLIQUE": {"m_mult": 0},
+    "AB_LEAFWISE": {"grow_policy": "leafwise"},
+    "AB_M2": {"m_mult": 2},
+    "AB_DEPTH4": {"max_depth": 4},
+    "AB_K2": {"k_proj": 2},
+    "AB_CTR": {"max_ctr_complexity": "auto", "ctr_n_permutations": 4},
+    "AB_QAUTO": {"quantizer": "auto"},
+    # Ablation of the training-time optimisations (models identical to the default except E2).
+    "SP_NONE": {"oblique_sample_rows": 0, "efb": False},
+    "SP_E2_ONLY": {"efb": False},
+    "SP_EFB_ONLY": {"oblique_sample_rows": 0},
 }
