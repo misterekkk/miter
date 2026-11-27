@@ -61,6 +61,10 @@ struct Params {
     /// Numeric features with fewer distinct training values than this are left out of oblique
     /// projections (0 = off; 3 excludes binary features such as one-hot columns).
     int oblique_min_distinct = 0;
+    /// Symmetric trees: when a level has more rows than this, oblique directions are chosen on a
+    /// deterministic strided sample of this many rows; the winner's threshold and gain are then
+    /// computed exactly on all rows (0 = off).
+    int oblique_sample_rows = 0;
     /// CatBoost-style native online ordered CTR max combination complexity
     /// (-1 = auto, 0 = off, 1..3).
     int max_ctr_complexity = 0;

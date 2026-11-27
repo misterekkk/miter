@@ -51,6 +51,12 @@ struct SymmetricWorkspace {
     std::vector<double> chunk_leaf_g;
     std::vector<double> chunk_leaf_h;
     std::vector<std::int32_t> chunk_leaf_c;
+    // oblique_sample_rows: the strided sample and the exact refit of the winning direction.
+    std::vector<std::uint32_t> samp_rows;
+    std::vector<float> samp_g;
+    std::vector<float> samp_h;
+    std::vector<std::uint8_t> samp_leaf;
+    std::vector<HistBin> samp_hist;
 
     void prepare(const Dataset& ds, const Params& params);
 };
