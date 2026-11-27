@@ -63,6 +63,14 @@ Up to `max_bin = 255` quantile bins per feature, built on the codes, plus a NaN 
 subtraction from the parent. NaN is tried on both sides and the better side is stored as the
 default direction.
 
+**Exclusive feature bundling** (`efb`, symmetric trees, on by default; Ke et al., 2017):
+- **Which features are bundled.** Sparse numeric features are grouped greedily: at most 25% of a
+  feature's rows may be off its most frequent bin, and its non-default rows may not overlap those of
+  any other feature in the group. One-hot columns are the typical case.
+- **How a bundle is histogrammed.** Each bundle is histogrammed in one pass, and every member's
+  histogram is recovered from it. Its default bin is the leaf total minus its other bins.
+- **What stays the same.** Split search, projections and the model are unchanged.
+
 ### Oblique (src/core/oblique.*)
 
 At each node, `m = m_mult · ceil(sqrt(p))` candidates (`m_mult = 2`; 4 with `preset="accurate"`):
@@ -81,6 +89,16 @@ threshold, exactly the prediction rule. Training and prediction therefore cannot
 the node's own range keep thresholds available in the tails. In measurements they were both better
 and cheaper than global or quantile bins. All projections of a node are computed in one pass over
 its rows.
+
+Two optimisations keep large data fast, both for symmetric trees and on by default:
+- **`oblique_sample_rows` (65,536).** On a level with more rows, the oblique candidates are scored
+  on a strided sample of that size. Only the best direction is then evaluated on all rows: its
+  histogram is rebuilt and scanned exactly as in the full search, in parallel over fixed row chunks
+  reduced in chunk order. The split itself, and its comparison with the other split types, use
+  exact statistics.
+- **Bias penalties (options, off by default).** `oblique_binary_penalty` and
+  `oblique_gain_margin` multiply a candidate's gain. The first penalises binary features inside a
+  projection, the second requires a margin over the other split types.
 
 ### Categorical: K1 (src/data/cat_encoder.*, src/core/categorical.*)
 
@@ -181,3 +199,18 @@ prediction is rebuilt from it after loading.
 - No ranking or custom objectives, and no `robust=True`.
 - Training is slower than LightGBM because of the oblique candidates; see the
   [benchmarks](README.md#benchmarks).
+
+## References
+
+- G. Ke, Q. Meng, T. Finley, T. Wang, W. Chen, W. Ma, Q. Ye, T.-Y. Liu. *LightGBM: A Highly Efficient
+  Gradient Boosting Decision Tree.* NeurIPS 2017.
+  - Used here: exclusive feature bundling, histogram subtraction.
+  - The K1 categorical splits follow LightGBM's implementation.
+- L. Prokhorenkova, G. Gusev, A. Vorobev, A. V. Dorogush, A. Gulin. *CatBoost: unbiased boosting with
+  categorical features.* NeurIPS 2018. Used here: ordered target statistics (CTRs), feature
+  combinations, oblivious (symmetric) trees.
+- L. Breiman, J. Friedman, R. Olshen, C. Stone. *Classification and Regression Trees.* 1984. The
+  origin of oblique (linear-combination) splits; miter draws sparse random directions instead of
+  optimising them.
+- T. Chen, C. Guestrin. *XGBoost: A Scalable Tree Boosting System.* KDD 2016. The second-order gain
+  and L2-regularised leaf values.

@@ -2238,8 +2238,9 @@ ObliqueSplitCandidate find_sym_oblique_split_sampled(
     return best;
 }
 
-// efb: greedy exclusive feature bundling of sparse numeric features (largest first). A feature
-// joins the first bundle where none of its non-default rows is taken and the bins still fit.
+// efb: greedy exclusive feature bundling of sparse numeric features, largest first (the idea is
+// from Ke et al., "LightGBM", NeurIPS 2017; this implementation is miter's own). A feature joins
+// the first bundle where none of its non-default rows is taken and the bins still fit.
 void build_efb_bundles(const Dataset& ds, const Params& params, SymmetricWorkspace& sym,
                        std::size_t& total_bins) {
     sym.efb_bundles.clear();

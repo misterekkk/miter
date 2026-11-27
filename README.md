@@ -126,9 +126,12 @@ make venv && make py-build && make test   # C++ (GoogleTest) + Python tests
 
 ## Acknowledgments
 
-miter predicts with [lignum](https://github.com/misterekkk/lignum). Its categorical handling follows
-ideas from [LightGBM](https://github.com/microsoft/LightGBM) (set splits) and
-[CatBoost](https://github.com/catboost/catboost) (ordered target statistics, symmetric trees).
+miter predicts with [lignum](https://github.com/misterekkk/lignum). It builds on ideas from
+[LightGBM](https://github.com/microsoft/LightGBM) (categorical set splits; exclusive feature bundling,
+Ke et al., NeurIPS 2017) and [CatBoost](https://github.com/catboost/catboost) (ordered target
+statistics and symmetric trees, Prokhorenkova et al., NeurIPS 2018). The implementations are
+miter's own; the references are listed in
+[ARCHITECTURE.md](https://github.com/misterekkk/miter/blob/main/ARCHITECTURE.md#references).
 
 ## License
 
