@@ -2077,14 +2077,12 @@ void build_sym_feature_hist(const std::uint8_t* col, const std::uint32_t* rows, 
 // oblique_sample_rows: choose the oblique direction on a strided sample of the level's rows, then
 // rebuild that direction's 64-bin histogram on all rows and scan it exactly as the full search
 // would. Sequential sums in row order keep the result independent of the thread count.
-ObliqueSplitCandidate
-find_sym_oblique_split_sampled(const Dataset& ds, const std::uint32_t* rows, std::size_t n_root,
-                               bool is_contiguous, const std::uint8_t* leaf_ids,
-                               std::size_t n_leaves, const float* g_seq, const float* h_seq,
-                               const double* leaf_g, const double* leaf_h,
-                               const std::int32_t* leaf_c, const double* parent_score,
-                               std::size_t tree_index, int level, const Params& params,
-                               ObliqueScratch& scratch, SymmetricWorkspace& sym) noexcept {
+ObliqueSplitCandidate find_sym_oblique_split_sampled(
+    const Dataset& ds, const std::uint32_t* rows, std::size_t n_root, bool is_contiguous,
+    const std::uint8_t* leaf_ids, std::size_t n_leaves, const float* g_seq, const float* h_seq,
+    const double* leaf_g, const double* leaf_h, const std::int32_t* leaf_c,
+    const double* parent_score, std::size_t tree_index, int level, const Params& params,
+    ObliqueScratch& scratch, SymmetricWorkspace& sym) {
     const auto target = static_cast<std::size_t>(params.oblique_sample_rows);
     const std::size_t stride = (n_root + target - 1U) / target;
     const std::size_t n_s = (n_root + stride - 1U) / stride;
@@ -2132,7 +2130,8 @@ find_sym_oblique_split_sampled(const Dataset& ds, const std::uint32_t* rows, std
     const auto proj = [&](std::size_t r, std::int64_t& p) noexcept {
         p = 0;
         for (int q = 0; q < k; ++q) {
-            const std::int16_t c = codes[static_cast<std::size_t>(pick.num_indices[q]) * n_rows + r];
+            const std::int16_t c =
+                codes[static_cast<std::size_t>(pick.num_indices[q]) * n_rows + r];
             if (c == kQ16SignedNanCode) {
                 return false;
             }
@@ -2160,8 +2159,8 @@ find_sym_oblique_split_sampled(const Dataset& ds, const std::uint32_t* rows, std
     for (std::size_t i = 0; i < n_root; ++i) {
         const std::size_t r = is_contiguous ? i : rows[i];
         std::int64_t p = 0;
-        const std::size_t b = proj(r, p) ? oblique_bin_index(p, pmin, range)
-                                         : static_cast<std::size_t>(kObliqueBins);
+        const std::size_t b =
+            proj(r, p) ? oblique_bin_index(p, pmin, range) : static_cast<std::size_t>(kObliqueBins);
         HistBin& hb = hist[static_cast<std::size_t>(leaf_ids[i]) * kStride + b];
         hb.g += static_cast<double>(g_seq[i]);
         hb.h += static_cast<double>(h_seq[i]);
@@ -2509,14 +2508,15 @@ Tree grow_symmetric_tree(const Dataset& ds, const float* g, const float* h, cons
             const bool sampled = params.oblique_sample_rows > 0 &&
                                  n_root > static_cast<std::size_t>(params.oblique_sample_rows);
             choice.oblique =
-                sampled ? find_sym_oblique_split_sampled(
-                              ds, rows, n_root, is_contiguous, leaf_ids, n_leaves, g_seq, h_seq,
-                              leaf_g, leaf_h, leaf_c, parent_score, tree_index,
-                              static_cast<int>(d), params, ws.oblique, sym)
-                        : find_sym_oblique_split(ds, rows, n_root, is_contiguous, leaf_ids,
-                                                 n_leaves, g_seq, h_seq, leaf_g, leaf_h, leaf_c,
-                                                 parent_score, tree_index, static_cast<int>(d),
-                                                 params, ws.oblique, sym);
+                sampled
+                    ? find_sym_oblique_split_sampled(ds, rows, n_root, is_contiguous, leaf_ids,
+                                                     n_leaves, g_seq, h_seq, leaf_g, leaf_h, leaf_c,
+                                                     parent_score, tree_index, static_cast<int>(d),
+                                                     params, ws.oblique, sym)
+                    : find_sym_oblique_split(ds, rows, n_root, is_contiguous, leaf_ids, n_leaves,
+                                             g_seq, h_seq, leaf_g, leaf_h, leaf_c, parent_score,
+                                             tree_index, static_cast<int>(d), params, ws.oblique,
+                                             sym);
             if (choice.oblique.valid && (!choice.valid || choice.oblique.gain > choice.gain)) {
                 choice.kind = NodeKind::Oblique;
                 choice.gain = choice.oblique.gain;

@@ -34,7 +34,14 @@ from tabarena.utils.config_utils import CustomAGConfigGenerator
 
 
 def _model(variant: str) -> Any:
-    return type(f"MiterSpeedup{variant}", (MiterModel,), {"ag_key": f"MITER_SPEEDUP_{variant}", "ag_name": f"MiterSpeedup{variant}"})
+    """A module-level subclass per variant (AutoGluon pickles the model, so it must be importable)."""
+    name = f"MiterSpeedup{variant}"
+    if name not in globals():
+        cls = type(name, (MiterModel,), {"ag_key": f"MITER_SPEEDUP_{variant}", "ag_name": name})
+        cls.__module__ = __name__
+        cls.__qualname__ = name
+        globals()[name] = cls
+    return globals()[name]
 
 
 def _spec(variant: str) -> Any:
