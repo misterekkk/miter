@@ -26,7 +26,7 @@ inline constexpr int kCtrComplexityAuto = -1;
 /**
  * @brief Training and model hyperparameters for miter.
  *
- * Default values match the frozen research protocol in docs/IMPLEMENTATION_PLAN.md (Section 2.6).
+ * Default values are the research protocol defaults (see ARCHITECTURE.md).
  */
 struct Params {
     int n_estimators = 5000;

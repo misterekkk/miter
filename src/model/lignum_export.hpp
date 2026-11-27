@@ -9,7 +9,7 @@
 namespace miter {
 
 /**
- * @brief A miter tree in lignum's normalised split semantics (docs/M6_DESIGN.md §1).
+ * @brief A miter tree in lignum's normalised split semantics (ARCHITECTURE.md, "Prediction").
  *
  * Numeric:     go right iff isnan(x) ? default_right : x >= threshold   (raw double input)
  * Categorical: go right iff the row's miter category code is NOT in `cat_left_codes`

@@ -23,7 +23,7 @@ struct TransparentStringHash {
 };
 
 /**
- * @brief K1 categorical encoder (docs/IMPLEMENTATION_PLAN.md Section 2.5).
+ * @brief K1 categorical encoder (ARCHITECTURE.md, "Categorical: K1").
  *
  * Ranks categories with frequency >= min_data_per_group descending (ties broken by ascending name)
  * up to max_categories (default 253), assigning codes 0..K-1.

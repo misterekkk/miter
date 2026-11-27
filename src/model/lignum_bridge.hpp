@@ -12,7 +12,7 @@
 namespace miter {
 
 /**
- * @brief Builds a lignum model from a miter model (docs/M6_DESIGN.md).
+ * @brief Builds a lignum model from a miter model (ARCHITECTURE.md, "Prediction").
  *
  * Numeric columns are passed to lignum as raw values; categorical columns are passed as
  * miter's category codes (0..K-1, OTHER = K, MISSING = K + 1), with 32-bit string hashes appended

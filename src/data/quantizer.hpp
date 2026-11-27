@@ -24,7 +24,7 @@ inline constexpr std::size_t kQ16AutoMinSliceSpan = 32U;
 double quantile_type7_sorted(std::span<const double> sorted, double q);
 
 /**
- * @brief Q16r input quantizer (docs/IMPLEMENTATION_PLAN.md Section 2.2).
+ * @brief Q16r input quantizer (ARCHITECTURE.md, "Input quantization").
  *
  * Maps non-NaN numeric values to 16-bit codes u in [0, 65534] via:
  *   u = clamp(floor((double(x) - lo) * scale + 0.5), 0, 65534)
