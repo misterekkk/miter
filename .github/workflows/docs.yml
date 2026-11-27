@@ -17,7 +17,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  docs:
+  build:
     # GitHub Pages needs a public repository on the free plan; skip while the repo is private.
     if: ${{ !github.event.repository.private }}
     runs-on: ubuntu-latest
@@ -49,4 +49,14 @@ jobs:
         with:
           path: docs/dist
 
-      - uses: actions/deploy-pages@v5
+  # A separate job, as in GitHub's Pages template: deploying in the uploading job can query the
+  # artifact before it is listed ("Found 0 artifact(s)").
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v5
