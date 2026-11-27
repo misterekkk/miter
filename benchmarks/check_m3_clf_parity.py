@@ -19,7 +19,7 @@ os.environ.setdefault("OMP_NUM_THREADS", "1")
 os.environ.setdefault("NUMBA_NUM_THREADS", "1")
 import numpy as np
 
-HISTREE_SRC = "/Users/kacperpiotrowski/Studia/Projekt/histree/src"
+HISTREE_SRC = (str(Path(os.environ.get("HISTREE_DIR", Path(__file__).resolve().parents[2] / "histree"))) + "/src")
 sys.path.insert(0, HISTREE_SRC)
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from bench_m3_oblique import CLF_DATASETS  # noqa: E402

@@ -11,7 +11,7 @@ from pathlib import Path
 
 import numpy as np
 
-HISTREE_SRC = Path("/Users/kacperpiotrowski/Studia/Projekt/histree/src")
+HISTREE_SRC = Path((str(Path(os.environ.get("HISTREE_DIR", Path(__file__).resolve().parents[2] / "histree"))) + "/src"))
 
 
 def _median_runs(fn, runs: int = 5) -> tuple[float, object]:

@@ -2,10 +2,11 @@
 
 import os
 import time
+from pathlib import Path
 
 os.environ.setdefault(
     "TABARENA_CACHE",
-    "/Users/kacperpiotrowski/Studia/Projekt/histree/research/results/tabarena_cache",
+    (str(Path(os.environ.get("HISTREE_DIR", Path(__file__).resolve().parents[3] / "histree"))) + "/research/results/tabarena_cache"),
 )
 from tabarena.contexts import TabArenaContext
 

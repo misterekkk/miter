@@ -12,7 +12,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 os.environ.setdefault("NUMBA_NUM_THREADS", "1")
-sys.path.insert(0, "/Users/kacperpiotrowski/Studia/Projekt/histree/src")
+sys.path.insert(0, (str(Path(os.environ.get("HISTREE_DIR", Path(__file__).resolve().parents[2] / "histree"))) + "/src"))
 import check_m3_parity_brazil_pol as c
 import miter
 import numpy as np

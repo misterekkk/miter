@@ -1,12 +1,14 @@
 """Compare miter C++ with cached GBMs and the numba prototype from per-split CSVs. Usage: analyze_tabarena.py <miter_eval_per_split.csv> <out.json>"""
 
 import json
+import os
 import sys
+from pathlib import Path
 
 import pandas as pd
 from scipy.stats import wilcoxon
 
-H = "/Users/kacperpiotrowski/Studia/Projekt/histree/research/results/t2/"
+H = (str(Path(os.environ.get("HISTREE_DIR", Path(__file__).resolve().parents[3] / "histree"))) + "/research/results/t2/")
 a = pd.read_csv(sys.argv[1])
 a = a[a.method != "x"]
 proto = pd.concat(

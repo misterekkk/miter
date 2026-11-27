@@ -15,7 +15,7 @@ import pandas as pd
 from scipy.stats import wilcoxon
 from sklearn.model_selection import KFold, train_test_split
 
-HISTREE_SRC = Path("/Users/kacperpiotrowski/Studia/Projekt/histree/src")
+HISTREE_SRC = Path((str(Path(os.environ.get("HISTREE_DIR", Path(__file__).resolve().parents[2] / "histree"))) + "/src"))
 
 TABARENA_CAT_DATASETS = [
     ("airfoil_self_noise", 46904),

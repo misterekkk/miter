@@ -21,8 +21,8 @@ from pathlib import Path
 import numpy as np
 from sklearn.model_selection import train_test_split
 
-HISTREE_SRC = Path("/Users/kacperpiotrowski/Studia/Projekt/histree/src")
-T7_DIR = Path("/Users/kacperpiotrowski/Studia/Projekt/histree/research/results/t7")
+HISTREE_SRC = Path((str(Path(os.environ.get("HISTREE_DIR", Path(__file__).resolve().parents[2] / "histree"))) + "/src"))
+T7_DIR = Path((str(Path(os.environ.get("HISTREE_DIR", Path(__file__).resolve().parents[2] / "histree"))) + "/research/results/t7"))
 RAW = Path(__file__).resolve().parent / "results" / "raw"
 DATASETS = {"Brazilian_houses": 44141, "pol": 44133}
 CFG = dict(max_leaves=31, min_data_in_leaf=20, reg_lambda=1.0, learning_rate=0.05,

@@ -30,7 +30,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 os.environ.setdefault("OMP_NUM_THREADS", "1")
 os.environ.setdefault("NUMBA_NUM_THREADS", "1")
-HISTREE_SRC = Path("/Users/kacperpiotrowski/Studia/Projekt/histree/src")
+HISTREE_SRC = Path((str(Path(os.environ.get("HISTREE_DIR", Path(__file__).resolve().parents[2] / "histree"))) + "/src"))
 sys.path.insert(0, str(HISTREE_SRC))
 
 import check_m3_parity_brazil_pol as c  # noqa: E402

@@ -7,12 +7,13 @@ Raw output: benchmarks/results/raw/tabarena/<exp> (gitignored)."""
 import os
 import sys
 import time
+from pathlib import Path
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.abspath(HERE + "/../results/raw/tabarena")
 os.environ.setdefault(
     "TABARENA_CACHE",
-    "/Users/kacperpiotrowski/Studia/Projekt/histree/research/results/tabarena_cache",
+    (str(Path(os.environ.get("HISTREE_DIR", Path(__file__).resolve().parents[3] / "histree"))) + "/research/results/tabarena_cache"),
 )
 sys.path.insert(0, HERE)
 # private OpenML cache: the shared ~/.openml holds pickles written by pandas 3 (other agents), unreadable with TabArena's pandas 2.3.3
