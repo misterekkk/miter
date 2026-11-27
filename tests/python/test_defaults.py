@@ -16,6 +16,7 @@ def test_default_is_symmetric_s6_m4(cls) -> None:
     assert p.quantizer_mode == _core.QuantizerMode.Linear
     assert p.max_ctr_complexity == 0
     assert p.oblique_sample_rows == 65536  # E2, exp_speedups_e2_prereg.md
+    assert p.efb is True  # E3, exp_speedups_e3_prereg.md
 
 
 def test_leafwise_keeps_its_defaults() -> None:

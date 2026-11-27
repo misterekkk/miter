@@ -19,6 +19,15 @@ All notable changes to miter. The format follows
     sample, showed no loss: median 0.00% on 32 held-out OpenML datasets and on 51 TabArena tasks
     (`benchmarks/results/exp_speedups_e2_*`).
 
+- **Faster training on one-hot and sparse columns:** `efb=True` is now the default (symmetric
+  trees).
+  - **How it works:** numeric features that are never non-default in the same row (e.g. one-hot
+    columns) share one axis-histogram pass. Each feature's histogram is recovered exactly, so the
+    models are unchanged (bit-identical on all 160 held-out folds and 51 TabArena tasks).
+  - **Speed:** covertype (44 of 54 columns one-hot), 100 trees, trains 2.1× faster on one thread
+    (22.5 s → 10.5 s). Together with the row sampling above, that is 5.4× faster than 0.1.0
+    (57 s → 10.5 s).
+
 ## [0.1.0] — 2026-11-27
 
 The first public release.

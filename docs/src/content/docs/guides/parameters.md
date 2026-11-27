@@ -41,6 +41,7 @@ leaf-wise trees take 20, 1.0 and 2.
 | `m_mult` | `None` | oblique candidates per node = `m_mult · ceil(sqrt(p))` (symmetric 4, leaf-wise 2) |
 | `k_proj` | 0 | features per candidate (0 = random 2 or 3; above 3 predicts via miter's own evaluator) |
 | `oblique_sample_rows` | 65536 | symmetric trees: above this many rows, oblique directions are chosen on a strided sample of this size, and the winner's threshold and gain are computed exactly on all rows (0 = off). About 2.5× faster training on 500k rows. |
+| `efb` | True | symmetric trees: mutually exclusive sparse numeric features (e.g. one-hot columns) share one histogram pass; models are unchanged, training on one-hot-heavy data is ~2× faster |
 | `oblique_min_distinct` | 0 | features with fewer distinct values stay out of oblique projections (0 = off) |
 
 See [Oblique splits](../../concepts/oblique-splits/) for how candidates are drawn and scored.

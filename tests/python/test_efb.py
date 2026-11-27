@@ -24,7 +24,7 @@ def _onehot_data(n: int = 6000, seed: int = 0) -> tuple[np.ndarray, np.ndarray]:
 @pytest.mark.parametrize("n_jobs", [1, 4])
 def test_efb_gives_the_same_model(n_jobs) -> None:
     X, y = _onehot_data()
-    a = MiterRegressor(n_estimators=40, n_jobs=n_jobs).fit(X, y).predict(X)
+    a = MiterRegressor(n_estimators=40, n_jobs=n_jobs, efb=False).fit(X, y).predict(X)
     b = MiterRegressor(n_estimators=40, n_jobs=n_jobs, efb=True).fit(X, y).predict(X)
     np.testing.assert_allclose(a, b, rtol=1e-9, atol=1e-9)
 
@@ -46,7 +46,7 @@ def test_efb_noop_without_sparse_features() -> None:
     rng = np.random.default_rng(3)
     X = rng.standard_normal((3000, 6))
     y = X[:, 0] - X[:, 1]
-    a = MiterRegressor(n_estimators=20).fit(X, y).predict(X)
+    a = MiterRegressor(n_estimators=20, efb=False).fit(X, y).predict(X)
     b = MiterRegressor(n_estimators=20, efb=True).fit(X, y).predict(X)
     np.testing.assert_array_equal(a, b)
 
