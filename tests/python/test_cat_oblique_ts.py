@@ -180,3 +180,38 @@ def test_cat_oblique_ts_classifier_and_validation_errors() -> None:
         clf.save_model("unused.json")
     with pytest.raises(ValueError, match="cat_ts_smooth"):
         MiterRegressor(cat_oblique_ts=True, cat_ts_smooth=0.0).fit(X_np[:50], y[:50], categorical_feature=[1])
+
+
+@pytest.mark.parametrize("n_classes,expected_targets", [(4, 4), (10, 8)])
+def test_multiclass_cat_oblique_ts_cap_and_numpy_end_to_end(
+    n_classes: int, expected_targets: int
+) -> None:
+    rng = np.random.default_rng(77 + n_classes)
+    n = 700
+    c0 = rng.choice([f"g{k}" for k in range(n_classes)], size=n)
+    c1 = rng.choice(["m0", "m1", "m2"], size=n)
+    y = (
+        (np.array([int(s[1:]) for s in c0]) + np.array([int(s[1:]) for s in c1])) % n_classes
+    ).astype(np.int64)
+    X = np.column_stack([rng.normal(size=n), c0, c1]).astype(object)
+
+    clf = MiterClassifier(
+        n_estimators=20,
+        learning_rate=0.1,
+        cat_oblique_ts=True,
+        min_data_per_group=5,
+        early_stopping_rounds=None,
+        n_jobs=1,
+        random_state=5,
+    ).fit(X[:500], y[:500], categorical_feature=[1, 2])
+
+    enc = clf._cat_ts_encoder
+    assert enc is not None
+    assert len(enc.single_bundles_[0].stats) == expected_targets
+
+    proba = clf.predict_proba(X[500:])
+    assert proba.shape == (200, n_classes)
+    np.testing.assert_allclose(proba.sum(axis=1), 1.0, atol=1e-12)
+
+    unpickled = pickle.loads(pickle.dumps(clf))
+    np.testing.assert_array_equal(proba, unpickled.predict_proba(X[500:]))

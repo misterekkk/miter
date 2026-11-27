@@ -1,18 +1,17 @@
-"""miter as an AutoGluon / TabArena model (regression, binary and one-vs-rest multiclass).
+"""miter as an AutoGluon / TabArena model (regression, binary, and native softmax multiclass).
 
 Requires ``autogluon.tabular`` (and ``tabarena`` plus ``ConfigSpace`` for the config generators);
 neither is a dependency of miter. Usage inside a TabArena experiment::
 
-    from miter.tabarena import MiterModel, generate_configs_miter
+    from miter.tabarena import MiterModel, generate_configs_miter_v12
 
 The wrapper adds nothing to miter's own behaviour: categorical columns (pandas ``category``, as
 AutoGluon produces them; ``object`` columns are cast to ``category``) go to miter's native K1
-handling, NaN stays NaN (miter handles it natively), and TabArena's ``time_limit`` is forwarded to
-miter's ``time_limit``. Early stopping (50 rounds) uses the bagging fold's validation set.
+handling (and optional C++20 online ordered CTRs when configured), NaN stays NaN (miter handles
+it natively), and TabArena's ``time_limit`` is forwarded to miter's ``time_limit``. Early stopping
+(50 rounds) uses the bagging fold's validation set.
 
-Multiclass (miter v1.0 is binary only) is handled one-vs-rest: one binary miter model per class
-(each with its own early stopping, ``time_limit`` split evenly), probabilities normalised to sum
-to 1. This is a stop-gap until native softmax (v1.1) and is reported as "miter OvR".
+Multiclass uses miter's native C++20 softmax objective (vector leaves).
 """
 
 from __future__ import annotations
@@ -56,9 +55,6 @@ _FORWARDED = (
     "max_cat_threshold",
     "cat_oblique_ts",
     "cat_ts_smooth",
-    "cat_ctr_mode",
-    "cat_ctr_pairs",
-    "cat_ctr_counter",
     "m_mult",
     "k_proj",
     "preset",
@@ -226,63 +222,6 @@ def generate_configs_miter(num_random_configs: int = 200, seed: int = 1234) -> l
         seed=seed,
     )
     space.add([EqualsCondition(nl, gp, "leafwise"), EqualsCondition(md, gp, "symmetric")])
-    configs = space.sample_configuration(num_random_configs)
-    if num_random_configs == 1:
-        configs = [configs]
-    out = []
-    for config in configs:
-        out.append({k: v.item() if isinstance(v, np.generic) else v for k, v in dict(config).items() if v is not None})
-    return out
-
-
-def generate_configs_miter_v11(num_random_configs: int = 7, seed: int = 1234) -> list[dict[str, Any]]:
-    """v1.1 search space extending ``generate_configs_miter`` with CatBoost-style CTRs."""
-    from ConfigSpace import (
-        Categorical,
-        ConfigurationSpace,
-        EqualsCondition,
-        Float,
-        Integer,
-    )
-
-    gp = Categorical("grow_policy", ["leafwise", "symmetric"])
-    nl = Integer("num_leaves", (4, 128), log=True)
-    md = Integer("max_depth", (4, 8))
-    cat_ts = Categorical("cat_oblique_ts", [False, True])
-    ctr_mode = Categorical("cat_ctr_mode", ["oof", "ordered"])
-    ctr_pairs = Categorical("cat_ctr_pairs", [0, 8, 16])
-    ctr_counter = Categorical("cat_ctr_counter", [False, True])
-    space = ConfigurationSpace(
-        space=[
-            Float("learning_rate", (1e-2, 1e-1), log=True),
-            gp,
-            nl,
-            md,
-            Integer("min_data_in_leaf", (1, 64), log=True),
-            Float("lambda_l2", (1e-3, 10.0), log=True),
-            Categorical("m_mult", [1, 2, 4]),
-            Float("feature_fraction", (0.5, 1.0)),
-            Categorical("extra_trees", [False, True]),
-            cat_ts,
-            ctr_mode,
-            ctr_pairs,
-            ctr_counter,
-            Integer("min_data_per_group", (2, 100), log=True),
-            Float("cat_l2", (5e-3, 10.0), log=True),
-            Float("cat_smooth", (1e-3, 100.0), log=True),
-            Integer("max_cat_to_onehot", (4, 64), log=True),
-        ],
-        seed=seed,
-    )
-    space.add(
-        [
-            EqualsCondition(nl, gp, "leafwise"),
-            EqualsCondition(md, gp, "symmetric"),
-            EqualsCondition(ctr_mode, cat_ts, True),
-            EqualsCondition(ctr_pairs, cat_ts, True),
-            EqualsCondition(ctr_counter, cat_ts, True),
-        ]
-    )
     configs = space.sample_configuration(num_random_configs)
     if num_random_configs == 1:
         configs = [configs]

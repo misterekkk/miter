@@ -8,7 +8,7 @@ compatible. Predictions run on the [lignum](https://github.com/misterekkk/lignum
 
 - Native missing values (NaN) and native categorical features (pandas `category`, LightGBM-style K1 splits).
 - Deterministic: the same `random_state` gives the same model for any number of threads.
-- Regression (L2) and binary classification (log-loss) in v1.0. Multiclass is planned for v1.1.
+- Regression (L2), binary classification (log-loss), and multiclass classification (native softmax).
 
 ## Installation
 
@@ -46,11 +46,15 @@ proba = clf.predict_proba(X_test)                     # shape (n, 2)
 |---|---|---|
 | `learning_rate` | 0.05 | shrinkage |
 | `num_leaves` | 31 | leaves per tree (leaf-wise growth) |
+| `grow_policy` | `"leafwise"` | tree growth policy (`"leafwise"` or `"symmetric"` oblivious trees) |
+| `max_depth` | -1 | max depth (`-1` = unlimited for leafwise; `1..8` with default `6` for symmetric) |
 | `min_data_in_leaf` | 20 | minimum rows per leaf |
 | `lambda_l2` | 1.0 | L2 regularisation of leaf values |
 | `preset` | `"default"` | `"accurate"` tries 2× more oblique candidates (`m_mult=4`), about 2× the oblique cost; `"fast"` uses oblique splits only at depth 0–1 |
 | `m_mult` | 2 | oblique candidates per node = `m_mult · ceil(sqrt(p))` |
 | `k_proj` | 0 | features per oblique candidate (0 = random 2 or 3) |
+| `quantizer` | `"linear"` | feature bin quantizer (`"linear"` Q16r, `"quantile"`, or `"auto"` per-feature skewed) |
+| `max_ctr_complexity` | 0 | native C++20 online ordered CTR combinations for `symmetric` trees (`0` = off, `1..3`, or `"auto"`) |
 | `early_stopping_rounds` | 50 | patience on `eval_set` (`None` = off) |
 | `time_limit` | `None` | stop adding trees after this many seconds |
 | `n_jobs` | -1 | threads (the result does not depend on it) |
@@ -100,11 +104,12 @@ only axis splits, while miter's oblique nodes cost more to evaluate.
 ### TabArena / AutoGluon
 
 ```python
-from miter.tabarena import MiterModel, generate_configs_miter   # needs autogluon.tabular
+from miter.tabarena import MiterModel, generate_configs_miter_v12   # needs autogluon.tabular
 ```
 
-`MiterModel` is an AutoGluon model for regression and binary classification. `generate_configs_miter`
-returns a random search space for TabArena's "tuned" and "tuned + ensemble" settings.
+`MiterModel` is an AutoGluon model for regression, binary classification, and native softmax
+multiclass. `generate_configs_miter` / `generate_configs_miter_v12` return random search spaces
+for TabArena's "tuned" and "tuned + ensemble" settings.
 
 ## Benchmarks
 
@@ -131,11 +136,10 @@ Classification and tuned miter runs are not part of this table yet. See
 [benchmarks/results/](benchmarks/results/) for the full protocols, including the Elo tables, the
 parity checks with the research prototype and the training-speed measurements.
 
-## Limitations (v1.0)
+## Limitations
 
-- Binary classification only; multiclass (softmax) is planned for v1.1.
 - No sparse input; convert with `X.toarray()`.
-- `robust=True` is not available.
+- `robust=True` is not available yet.
 - Training is slower than LightGBM because of the oblique candidates. The table shows one thread,
   in ms per tree:
 
@@ -147,8 +151,10 @@ parity checks with the research prototype and the training-speed measurements.
   | covertype 566k × 10 | 12.5 | 117 | — |
 
   On large datasets, use `preset="fast"` or several threads.
-- Oblique splits with `k_proj > 3` are predicted by miter's own evaluator instead of lignum. The
-  results are the same, but prediction is slower.
+- Models using multiclass softmax, native CTR splits (`max_ctr_complexity`), `quantizer="quantile"`
+  (or `"auto"` quantile features) with oblique splits, or `k_proj > 3` predict via miter's own exact
+  evaluator instead of lignum until those extensions are added to lignum. The results are bit-identical,
+  but inference is slower than lignum's binned kernel.
 
 ## Building from source
 

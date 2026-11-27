@@ -256,9 +256,6 @@ class _BaseMiterEstimator(_SklearnBase):
         cat_mode: str = "k1",
         cat_oblique_ts: bool = False,
         cat_ts_smooth: float = 10.0,
-        cat_ctr_mode: str = "oof",
-        cat_ctr_pairs: int = 0,
-        cat_ctr_counter: bool = False,
         max_ctr_complexity: int | str = 0,
         ctr_prior_weight: float = 1.0,
         ctr_n_permutations: int = 1,
@@ -296,9 +293,6 @@ class _BaseMiterEstimator(_SklearnBase):
         self.cat_mode = cat_mode
         self.cat_oblique_ts = cat_oblique_ts
         self.cat_ts_smooth = cat_ts_smooth
-        self.cat_ctr_mode = cat_ctr_mode
-        self.cat_ctr_pairs = cat_ctr_pairs
-        self.cat_ctr_counter = cat_ctr_counter
         self.max_ctr_complexity = max_ctr_complexity
         self.ctr_prior_weight = ctr_prior_weight
         self.ctr_n_permutations = ctr_n_permutations
@@ -326,22 +320,6 @@ class _BaseMiterEstimator(_SklearnBase):
         smooth = float(self.cat_ts_smooth)
         if not np.isfinite(smooth) or smooth <= 0.0:
             raise ValueError(f"cat_ts_smooth must be finite and > 0, got {self.cat_ts_smooth!r}")
-        if self.cat_ctr_mode not in ("oof", "ordered"):
-            raise ValueError(
-                f"cat_ctr_mode must be 'oof' or 'ordered', got {self.cat_ctr_mode!r}"
-            )
-        if (
-            isinstance(self.cat_ctr_pairs, bool)
-            or not isinstance(self.cat_ctr_pairs, (int, np.integer))
-            or int(self.cat_ctr_pairs) < 0
-        ):
-            raise ValueError(
-                f"cat_ctr_pairs must be an int >= 0, got {self.cat_ctr_pairs!r}"
-            )
-        if not isinstance(self.cat_ctr_counter, bool):
-            raise ValueError(
-                f"cat_ctr_counter must be a bool, got {self.cat_ctr_counter!r}"
-            )
         p = _core.Params()
         p.n_estimators = int(self.n_estimators)
         p.learning_rate = float(self.learning_rate)
@@ -470,9 +448,6 @@ class _BaseMiterEstimator(_SklearnBase):
                     smooth=float(self.cat_ts_smooth),
                     n_folds=5,
                     random_state=int(self.random_state),
-                    mode=str(self.cat_ctr_mode),
-                    max_pairs=int(self.cat_ctr_pairs),
-                    include_counter=bool(self.cat_ctr_counter),
                 )
                 X_fit = encoder.fit_transform(
                     X,
