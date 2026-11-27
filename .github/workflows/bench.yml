@@ -28,9 +28,10 @@ on:
         required: false
         default: "5"
 
+# Pushes cancel the previous run of their branch; manual runs only collide with the same base/head.
 concurrency:
-  group: bench-${{ github.ref }}
-  cancel-in-progress: true
+  group: bench-${{ github.ref }}-${{ inputs.base }}-${{ inputs.head }}
+  cancel-in-progress: ${{ github.event_name == 'push' }}
 
 permissions:
   contents: read
