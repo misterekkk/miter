@@ -6,7 +6,6 @@ import pickle
 
 import numpy as np
 import pytest
-
 from miter import MiterClassifier, MiterRegressor
 
 
