@@ -515,15 +515,6 @@ std::string model_to_json(const Model& model) {
     if (model.params.extra_trees) {
         os << ", \"extra_trees\": 1";
     }
-    if (model.params.oblique_min_distinct != 0) {
-        os << ", \"oblique_min_distinct\": " << model.params.oblique_min_distinct;
-    }
-    if (model.params.oblique_binary_penalty != 0.0) {
-        os << ", \"oblique_binary_penalty\": " << model.params.oblique_binary_penalty;
-    }
-    if (model.params.oblique_gain_margin != 0.0) {
-        os << ", \"oblique_gain_margin\": " << model.params.oblique_gain_margin;
-    }
     if (model.params.efb) {
         os << ", \"efb\": 1";
     }
@@ -827,15 +818,8 @@ Model model_from_json(std::string_view json_text) {
         if (const auto et = p.find("extra_trees"); et != p.end()) {
             model.params.extra_trees = (et->second.as_i64() != 0);
         }
-        if (const auto omb = p.find("oblique_min_distinct"); omb != p.end()) {
-            model.params.oblique_min_distinct = static_cast<int>(omb->second.as_i64());
-        }
-        if (const auto obp = p.find("oblique_binary_penalty"); obp != p.end()) {
-            model.params.oblique_binary_penalty = obp->second.as_double();
-        }
-        if (const auto ogm = p.find("oblique_gain_margin"); ogm != p.end()) {
-            model.params.oblique_gain_margin = ogm->second.as_double();
-        }
+        // oblique_min_distinct, oblique_binary_penalty, oblique_gain_margin (removed in 0.1.1)
+        // were training-only and are ignored when present in older files.
         if (const auto efb = p.find("efb"); efb != p.end()) {
             model.params.efb = (efb->second.as_i64() != 0);
         }

@@ -577,17 +577,13 @@ void ObliqueScratch::prepare(const Dataset& ds, const Params& params) {
     eligible_features.clear();
     eligible_num_indices.clear();
     num_has_nan.assign(ds.n_num_features(), 0U);
-    num_is_binary.assign(ds.n_num_features(), 0U);
 
     const auto& num_indices = ds.num_feature_indices();
     for (std::size_t j = 0; j < num_indices.size(); ++j) {
         const std::size_t f = num_indices[j];
         const auto& binner = ds.binner(f);
         num_has_nan[j] = binner.has_nan ? 1U : 0U;
-        num_is_binary[j] = (binner.n_distinct <= 2U) ? 1U : 0U;
-        if (!ds.quantizer(j).is_constant &&
-            (params.oblique_min_distinct <= 0 ||
-             binner.n_distinct >= static_cast<std::uint32_t>(params.oblique_min_distinct))) {
+        if (!ds.quantizer(j).is_constant) {
             eligible_features.push_back(static_cast<std::uint32_t>(f));
             eligible_num_indices.push_back(static_cast<std::uint32_t>(j));
         }
@@ -625,7 +621,6 @@ void ObliqueScratch::prepare(const Dataset& ds, const Params& params) {
     cand_feat.resize(max_m * kObliqueMaxK);
     cand_w.resize(max_m * kObliqueMaxK);
     cand_has_nan.resize(max_m);
-    cand_scale.assign(max_m, 1.0);
     used_num_feats.resize(max_used_feats);
     num_to_used.assign(ds.n_num_features(), -1);
 

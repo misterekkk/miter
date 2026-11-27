@@ -97,9 +97,6 @@ Two optimisations keep large data fast, both for symmetric trees and on by defau
   histogram is rebuilt and scanned exactly as in the full search, in parallel over fixed row chunks
   reduced in chunk order. The split itself, and its comparison with the other split types, use
   exact statistics.
-- **Bias penalties (options, off by default).** `oblique_binary_penalty` and
-  `oblique_gain_margin` multiply a candidate's gain. The first penalises binary features inside a
-  projection, the second requires a margin over the other split types.
 
 ### Categorical: K1 (src/data/cat_encoder.*, src/core/categorical.*)
 
@@ -171,7 +168,8 @@ predicted with lignum's binned kernel:
 - **Categorical columns:** passed as miter's category codes.
 - **Equality:** raw scores equal miter's own evaluator (`src/model/evaluator.cpp`) bit for bit, and
   the test suites check this on every model shape.
-- **Fallback:** models with `k_proj > 3` (int64 projections) are predicted by the own evaluator.
+- **Fallback:** a model lignum cannot hold is predicted by the own evaluator (`k_proj` is limited
+  to 2 or 3 features, which lignum always holds).
 
 ## Model format (src/model/json_io.*)
 
@@ -197,7 +195,7 @@ prediction is rebuilt from it after loading.
 ## Known limitations
 
 - No sparse input.
-- No ranking or custom objectives, and no `robust=True`.
+- No ranking or custom objectives.
 - Training is slower than LightGBM because of the oblique candidates; see the
   [benchmarks](README.md#benchmarks).
 

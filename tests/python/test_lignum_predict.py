@@ -77,16 +77,6 @@ def test_categorical_dataframe_lignum_equals_evaluator() -> None:
     _same_bits(est.predict(test), ref)
 
 
-def test_models_lignum_cannot_hold_fall_back_to_the_evaluator() -> None:
-    X, y = _data(n=1500, seed=5)
-    est = MiterRegressor(n_estimators=15, k_proj=4, early_stopping_rounds=None, n_jobs=1, random_state=0).fit(
-        np.nan_to_num(X), y
-    )
-    rows = np.ascontiguousarray(np.nan_to_num(X[:200]))
-    assert est._lignum(0) is None  # oblique splits with k = 4: miter's evaluator predicts
-    _same_bits(est.predict(rows), _core.predict_raw_f64(est._model, rows, 0))
-
-
 def test_refit_rebuilds_the_lignum_model() -> None:
     X, y = _data(n=1500, seed=8)
     est = MiterRegressor(n_estimators=10, early_stopping_rounds=None, n_jobs=1, random_state=0)

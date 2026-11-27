@@ -52,6 +52,5 @@ TabArena, adding them to symmetric trees improved binary classification the most
 
 ## Categorical features and oblique splits
 
-Oblique projections use numeric features only. `cat_oblique_ts=True` (experimental, off by
-default) lets out-of-fold target statistics of categorical features enter projections. It did not
-pass its pre-registered test, so it stays opt-in.
+Oblique projections use numeric features only. Interactions between categories are covered by
+the CTR splits below (`max_ctr_complexity`).

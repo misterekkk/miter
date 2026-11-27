@@ -58,9 +58,6 @@ struct Params {
     double bagging_fraction = 1.0;
     /// Axis candidates: one random valid threshold per feature instead of the best one.
     bool extra_trees = false;
-    /// Numeric features with fewer distinct training values than this are left out of oblique
-    /// projections (0 = off; 3 excludes binary features such as one-hot columns).
-    int oblique_min_distinct = 0;
     /// Symmetric trees: when a level has more rows than this, oblique directions are chosen on a
     /// deterministic strided sample of this many rows; the winner's threshold and gain are then
     /// computed exactly on all rows (0 = off).
@@ -68,12 +65,6 @@ struct Params {
     /// Symmetric trees: bundle mutually exclusive sparse numeric features (e.g. one-hot columns)
     /// into one histogram pass per bundle; splits stay on the original features (false = off).
     bool efb = false;
-    /// Symmetric trees: an oblique candidate's gain is multiplied by
-    /// max(0, 1 - oblique_binary_penalty * (binary features in its projection)) (0 = off).
-    double oblique_binary_penalty = 0.0;
-    /// Symmetric trees: oblique gains are divided by (1 + oblique_gain_margin), so an oblique split
-    /// must beat axis / categorical / CTR splits by that margin (0 = off).
-    double oblique_gain_margin = 0.0;
     /// CatBoost-style native online ordered CTR max combination complexity
     /// (-1 = auto, 0 = off, 1..3).
     int max_ctr_complexity = 0;

@@ -41,7 +41,6 @@ except ImportError:  # pragma: no cover
         pass
 
 
-from miter.cat_ts import CatObliqueTSEncoder, resolve_categorical_indices_for_X
 from miter.data import (
     Dataset,
     _factorize_categorical_values,
@@ -252,15 +251,8 @@ class _BaseMiterEstimator(_SklearnBase):
         feature_fraction: float = 1.0,
         bagging_fraction: float = 1.0,
         extra_trees: bool = False,
-        oblique_min_distinct: int = 0,
         oblique_sample_rows: int = 65536,
         efb: bool = True,
-        oblique_binary_penalty: float = 0.0,
-        oblique_gain_margin: float = 0.0,
-        robust: bool = False,
-        cat_mode: str = "k1",
-        cat_oblique_ts: bool = False,
-        cat_ts_smooth: float = 10.0,
         max_ctr_complexity: int | str = 0,
         ctr_prior_weight: float = 1.0,
         ctr_n_permutations: int = 1,
@@ -294,15 +286,8 @@ class _BaseMiterEstimator(_SklearnBase):
         self.feature_fraction = feature_fraction
         self.bagging_fraction = bagging_fraction
         self.extra_trees = extra_trees
-        self.oblique_min_distinct = oblique_min_distinct
         self.oblique_sample_rows = oblique_sample_rows
         self.efb = efb
-        self.oblique_binary_penalty = oblique_binary_penalty
-        self.oblique_gain_margin = oblique_gain_margin
-        self.robust = robust
-        self.cat_mode = cat_mode
-        self.cat_oblique_ts = cat_oblique_ts
-        self.cat_ts_smooth = cat_ts_smooth
         self.max_ctr_complexity = max_ctr_complexity
         self.ctr_prior_weight = ctr_prior_weight
         self.ctr_n_permutations = ctr_n_permutations
@@ -317,19 +302,10 @@ class _BaseMiterEstimator(_SklearnBase):
     def _build_params(self) -> _core.Params:
         if self.preset not in ("default", "fast", "accurate"):
             raise ValueError(f"Unknown preset: {self.preset!r}")
-        if self.cat_mode != "k1":
-            raise ValueError(
-                f"Unsupported cat_mode={self.cat_mode!r}; only 'k1' is supported"
-            )
-        if self.robust:
-            raise ValueError("robust=True is not available yet")
         for name in ("feature_fraction", "bagging_fraction"):
             value = float(getattr(self, name))
             if not (0.0 < value <= 1.0):  # also rejects NaN
                 raise ValueError(f"{name} must be in (0, 1], got {getattr(self, name)!r}")
-        smooth = float(self.cat_ts_smooth)
-        if not np.isfinite(smooth) or smooth <= 0.0:
-            raise ValueError(f"cat_ts_smooth must be finite and > 0, got {self.cat_ts_smooth!r}")
         p = _core.Params()
         p.n_estimators = int(self.n_estimators)
         p.learning_rate = float(self.learning_rate)
@@ -368,6 +344,8 @@ class _BaseMiterEstimator(_SklearnBase):
         else:
             p.m_mult = base_m_mult
             p.oblique_max_depth = -1
+        if isinstance(self.k_proj, bool) or int(self.k_proj) not in (0, 2, 3):
+            raise ValueError(f"k_proj must be 0 (2 or 3 at random), 2 or 3, got {self.k_proj!r}")
         p.k_proj = int(self.k_proj)
         p.early_stopping_rounds = 0 if self.early_stopping_rounds is None else int(self.early_stopping_rounds)
         p.time_limit = 0.0 if self.time_limit is None else float(self.time_limit)
@@ -376,13 +354,6 @@ class _BaseMiterEstimator(_SklearnBase):
         p.feature_fraction = float(self.feature_fraction)
         p.bagging_fraction = float(self.bagging_fraction)
         p.extra_trees = bool(self.extra_trees)
-        if (
-            isinstance(self.oblique_min_distinct, bool)
-            or not isinstance(self.oblique_min_distinct, (int, np.integer))
-            or int(self.oblique_min_distinct) < 0
-        ):
-            raise ValueError(f"oblique_min_distinct must be an int >= 0, got {self.oblique_min_distinct!r}")
-        p.oblique_min_distinct = int(self.oblique_min_distinct)
         if (
             isinstance(self.oblique_sample_rows, bool)
             or not isinstance(self.oblique_sample_rows, (int, np.integer))
@@ -393,12 +364,6 @@ class _BaseMiterEstimator(_SklearnBase):
         if not isinstance(self.efb, (bool, np.bool_)):
             raise ValueError(f"efb must be a bool, got {self.efb!r}")
         p.efb = bool(self.efb)
-        for name in ("oblique_binary_penalty", "oblique_gain_margin"):
-            v = float(getattr(self, name))
-            if not np.isfinite(v) or v < 0.0:
-                raise ValueError(f"{name} must be finite and >= 0, got {getattr(self, name)!r}")
-        p.oblique_binary_penalty = float(self.oblique_binary_penalty)
-        p.oblique_gain_margin = float(self.oblique_gain_margin)
         if isinstance(self.max_ctr_complexity, str):
             if self.max_ctr_complexity != "auto":
                 raise ValueError(
@@ -471,35 +436,9 @@ class _BaseMiterEstimator(_SklearnBase):
         self._fitted_on_dataframe = _is_pandas_dataframe(X)
         y_arr = self._encode_targets(y, is_fit=True)
 
-        encoder: CatObliqueTSEncoder | None = None
-        X_fit: Any = X
-        ds_cat_arg: str | Sequence[int | str] | None = categorical_feature
-        if self.cat_oblique_ts:
-            cat_idx = resolve_categorical_indices_for_X(X, categorical_feature)
-            if cat_idx:
-                n_classes = (
-                    int(len(self.classes_))
-                    if self._objective == _core.Objective.Multiclass
-                    else (2 if self._objective == _core.Objective.Binary else 1)
-                )
-                encoder = CatObliqueTSEncoder(
-                    smooth=float(self.cat_ts_smooth),
-                    n_folds=5,
-                    random_state=int(self.random_state),
-                )
-                X_fit = encoder.fit_transform(
-                    X,
-                    y_arr,
-                    sw_arr,
-                    cat_idx,
-                    is_binary=(self._objective == _core.Objective.Binary),
-                    n_classes=n_classes,
-                )
-                ds_cat_arg = cat_idx
-
         ds = Dataset(
-            X_fit,
-            categorical_feature=ds_cat_arg,
+            X,
+            categorical_feature=categorical_feature,
             max_bin=self.max_bin,
             min_data_per_group=self.min_data_per_group,
             max_categories=self.max_categories,
@@ -515,8 +454,7 @@ class _BaseMiterEstimator(_SklearnBase):
             X_val, y_val = eval_set[0]
             n_val, _ = _check_input_X(X_val, name=name)
             y_val = _check_target(y_val, n_val, name=name)
-            X_val_fit = encoder.transform(X_val) if encoder is not None else X_val
-            valid_ds_inner = ds.transform(X_val_fit)._inner
+            valid_ds_inner = ds.transform(X_val)._inner
             y_val_arr = self._encode_targets(y_val, is_fit=False)
 
         result = _core.fit_booster(
@@ -530,15 +468,10 @@ class _BaseMiterEstimator(_SklearnBase):
             params,
         )
         self._model = result.model
-        self._cat_ts_encoder = encoder
         self._lignum_cache: dict[int, _core.LignumPredictor | None] = {}
         self.best_iteration_ = result.model.best_iteration
-        if encoder is not None:
-            self.n_features_in_ = encoder.n_input_features_
-            self.feature_names_in_ = np.array(encoder.input_feature_names_, dtype=object)
-        else:
-            self.n_features_in_ = result.model.n_features
-            self.feature_names_in_ = np.array(result.model.feature_names, dtype=object)
+        self.n_features_in_ = result.model.n_features
+        self.feature_names_in_ = np.array(result.model.feature_names, dtype=object)
         self.feature_importances_ = result.model.feature_importances_split()
         self.feature_importances_gain_ = result.model.feature_importances_gain()
         self.train_loss_ = list(result.train_loss)
@@ -549,7 +482,7 @@ class _BaseMiterEstimator(_SklearnBase):
     def _lignum(self, n_iter: int) -> _core.LignumPredictor | None:
         """The lignum model for `n_iter` trees (0 = best iteration), built once per fitted model.
 
-        None when lignum cannot hold the model (oblique splits with k_proj > 3): miter's own
+        None when lignum cannot hold the model: miter's own
         evaluator predicts it then, with the same results.
         """
         model = self._check_fitted()
@@ -568,11 +501,7 @@ class _BaseMiterEstimator(_SklearnBase):
         """Raw scores through lignum (M6); bitwise equal to miter's own evaluator."""
         model = self._check_fitted()
         _, n_features = _check_input_X(X, name=type(self).__name__)
-        enc: CatObliqueTSEncoder | None = getattr(self, "_cat_ts_encoder", None)
-        if enc is not None:
-            X = enc.transform(X)
-            n_features = model.n_features
-        elif n_features != model.n_features:
+        if n_features != model.n_features:
             raise ValueError(
                 f"X has {n_features} features, but {type(self).__name__} is expecting "
                 f"{model.n_features} features as input."
@@ -635,8 +564,6 @@ class _BaseMiterEstimator(_SklearnBase):
 
     def save_model(self, path: str) -> None:
         model = self._check_fitted()
-        if getattr(self, "_cat_ts_encoder", None) is not None:
-            raise NotImplementedError("save_model JSON does not yet support cat_oblique_ts=True; use pickle")
         _core.save_model_json(model, str(path))
 
     @classmethod
@@ -668,11 +595,8 @@ class _BaseMiterEstimator(_SklearnBase):
             feature_fraction=p.feature_fraction,
             bagging_fraction=p.bagging_fraction,
             extra_trees=p.extra_trees,
-            oblique_min_distinct=p.oblique_min_distinct,
             oblique_sample_rows=p.oblique_sample_rows,
             efb=p.efb,
-            oblique_binary_penalty=p.oblique_binary_penalty,
-            oblique_gain_margin=p.oblique_gain_margin,
             max_ctr_complexity=("auto" if p.max_ctr_complexity == -1 else p.max_ctr_complexity),
             ctr_prior_weight=p.ctr_prior_weight,
             ctr_n_permutations=p.ctr_n_permutations,

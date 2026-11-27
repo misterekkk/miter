@@ -3,7 +3,7 @@ title: Python API
 description: The public classes and functions of the miter package.
 ---
 
-Generated from miter 0.1.0.dev0 by `docs/scripts/api_reference.py`.
+Generated from miter 0.1.0 by `docs/scripts/api_reference.py`.
 
 ## `miter.MiterRegressor`
 
@@ -34,10 +34,8 @@ miter.MiterRegressor(
     feature_fraction: float = 1.0,
     bagging_fraction: float = 1.0,
     extra_trees: bool = False,
-    robust: bool = False,
-    cat_mode: str = 'k1',
-    cat_oblique_ts: bool = False,
-    cat_ts_smooth: float = 10.0,
+    oblique_sample_rows: int = 65536,
+    efb: bool = True,
     max_ctr_complexity: int | str = 0,
     ctr_prior_weight: float = 1.0,
     ctr_n_permutations: int = 1,
@@ -157,10 +155,8 @@ miter.MiterClassifier(
     feature_fraction: float = 1.0,
     bagging_fraction: float = 1.0,
     extra_trees: bool = False,
-    robust: bool = False,
-    cat_mode: str = 'k1',
-    cat_oblique_ts: bool = False,
-    cat_ts_smooth: float = 10.0,
+    oblique_sample_rows: int = 65536,
+    efb: bool = True,
     max_ctr_complexity: int | str = 0,
     ctr_prior_weight: float = 1.0,
     ctr_n_permutations: int = 1,

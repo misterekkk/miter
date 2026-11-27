@@ -31,7 +31,7 @@ def test_oblique_presets_kproj_nan_determinism_and_roundtrip(tmp_path: Path) -> 
     X[::12, 3] = np.nan
     y = 2.0 * (X[:, 0] - 0.5 * X[:, 1] + 0.25 * X[:, 2]) + 0.1 * rng.normal(size=240)
 
-    for preset, k_proj in [("default", 0), ("fast", 0), ("accurate", 4)]:
+    for preset, k_proj in [("default", 0), ("fast", 0), ("accurate", 3)]:
         reg1 = MiterRegressor(
             n_estimators=15,
             learning_rate=0.1,

@@ -39,10 +39,9 @@ leaf-wise trees take 20, 1.0 and 2.
 |---|---|---|
 | `preset` | `"default"` | `"accurate"` doubles the default `m_mult`; `"fast"` uses oblique splits only at depth 0–1 |
 | `m_mult` | `None` | oblique candidates per node = `m_mult · ceil(sqrt(p))` (symmetric 4, leaf-wise 2) |
-| `k_proj` | 0 | features per candidate (0 = random 2 or 3; above 3 predicts via miter's own evaluator) |
+| `k_proj` | 0 | features per candidate: 0 (random 2 or 3), 2 or 3 |
 | `oblique_sample_rows` | 65536 | symmetric trees: above this many rows, oblique directions are chosen on a strided sample of this size, and the winner's threshold and gain are computed exactly on all rows (0 = off). About 2.5× faster training on 500k rows. |
 | `efb` | True | symmetric trees: mutually exclusive sparse numeric features (e.g. one-hot columns) share one histogram pass; models are unchanged, training on one-hot-heavy data is ~2× faster |
-| `oblique_min_distinct` | 0 | features with fewer distinct values stay out of oblique projections (0 = off) |
 
 See [Oblique splits](../../concepts/oblique-splits/) for how candidates are drawn and scored.
 
@@ -67,15 +66,8 @@ See [Oblique splits](../../concepts/oblique-splits/) for how candidates are draw
 | `ctr_prior_weight` | 1.0 | prior weight of the CTR smoothing |
 | `ctr_max_borders` | 15 | thresholds tried per CTR |
 | `ctr_model_size_reg` | 0.5 | penalty on larger combinations |
-| `cat_oblique_ts` | False | experimental: out-of-fold target statistics of categorical features may enter oblique projections |
-| `cat_ts_smooth` | 10.0 | smoothing of those statistics |
-| `cat_mode` | `"k1"` | categorical split mode (only `"k1"` for now) |
 
 See [Categorical features](../categorical/).
-
-## Reserved
-
-`robust` (default False) is reserved for a robust-scaling mode; `True` raises `ValueError` for now.
 
 ## Sampling (all off by default)
 

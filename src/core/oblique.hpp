@@ -59,8 +59,6 @@ struct ObliqueScratch {
     std::vector<std::uint32_t> eligible_features;
     std::vector<std::uint32_t> eligible_num_indices;
     std::vector<std::uint8_t> num_has_nan;
-    std::vector<std::uint8_t> num_is_binary; // per numeric feature: at most 2 distinct values
-    std::vector<double> cand_scale;          // per candidate: gain multiplier (penalties)
     std::size_t max_m = 0;
     // Candidates drawn per node in the current tree (== max_m unless feature_fraction < 1).
     std::size_t cur_m = 0;
@@ -111,23 +109,6 @@ struct ObliqueScratch {
     /// (m_mult * ceil(sqrt(p_eligible))), as the plan's p_eligible "after feature_fraction".
     void restrict_pool(const std::vector<std::uint8_t>& selected, const Params& params);
 };
-
-/// Gain multiplier of an oblique candidate: the binary-feature penalty and the oblique margin.
-inline double oblique_gain_scale(const Params& params, const ObliqueScratch& scratch,
-                                 const std::uint32_t* num_indices, int k) noexcept {
-    double scale = 1.0;
-    if (params.oblique_binary_penalty > 0.0) {
-        int n_bin = 0;
-        for (int q = 0; q < k; ++q) {
-            n_bin += (scratch.num_is_binary[num_indices[q]] != 0U) ? 1 : 0;
-        }
-        scale = std::max(0.0, 1.0 - params.oblique_binary_penalty * n_bin);
-    }
-    if (params.oblique_gain_margin > 0.0) {
-        scale /= (1.0 + params.oblique_gain_margin);
-    }
-    return scale;
-}
 
 ObliqueSplitCandidate find_best_oblique_split(const Dataset& ds, const std::int16_t* codes_base,
                                               std::size_t leaf_code_offset, bool is_contiguous_leaf,

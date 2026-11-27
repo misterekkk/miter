@@ -27,6 +27,24 @@ All notable changes to miter. The format follows
   - **Speed:** covertype (44 of 54 columns one-hot), 100 trees, trains 2.1× faster on one thread
     (22.5 s → 10.5 s). Together with the row sampling above, that is 5.4× faster than 0.1.0
     (57 s → 10.5 s).
+- **Faster histograms, models unchanged:** up to four histograms are filled per sweep over the
+  rows, the oblique row sample is gathered once per fit, and its refit is vectorized. Saved models
+  and predictions are bit-identical to before. 100 trees, one thread: 30% faster on covertype and
+  13–19% on 500k × 50 (x86_64 and aarch64 Linux, Apple M4).
+
+### Removed
+
+Options that did nothing, or that failed their pre-registered test and stayed off by default.
+Models saved with them by 0.1.0 still load (the options only affected training).
+
+- `robust` (raised for `True`) and `cat_mode` (accepted only `"k1"`).
+- `cat_oblique_ts` and `cat_ts_smooth`: out-of-fold target statistics in oblique projections
+  (median −0.04%, p = 0.52; `benchmarks/results/exp_cat_oblique_ts_summary.md`). Interactions
+  between categories are covered by the CTR splits (`max_ctr_complexity`).
+- `oblique_min_distinct` (E1), `oblique_binary_penalty` and `oblique_gain_margin` (E4): no
+  effect on held-out quality (`benchmarks/results/exp_speedups_e{1,4}_summary.md`).
+- `k_proj` above 3: never tested; `k_proj` is now 0 (2 or 3 at random), 2 or 3, which lignum
+  always holds.
 
 ## [0.1.0] — 2026-11-27
 

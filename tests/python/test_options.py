@@ -1,6 +1,8 @@
-"""Tests for the optional feature_fraction / bagging_fraction / extra_trees / robust switches."""
+"""Tests for the optional feature_fraction / bagging_fraction / extra_trees switches and k_proj."""
 
 from __future__ import annotations
+
+from typing import Any
 
 import numpy as np
 import pytest
@@ -97,11 +99,28 @@ def test_fraction_ranges_validated(name: str, bad: float) -> None:
         _fit(X, y, **{name: bad})
 
 
-def test_robust_not_available() -> None:
+@pytest.mark.parametrize("bad", [1, 4, 5, 8, -1, True])
+def test_k_proj_is_0_2_or_3(bad: object) -> None:
     X, y = _data(n=200)
-    with pytest.raises(ValueError, match="robust=True is not available yet"):
-        _fit(X, y, robust=True)
-    _fit(X, y, robust=False)
+    with pytest.raises(ValueError, match="k_proj"):
+        _fit(X, y, k_proj=bad)
+    for ok in (0, 2, 3):
+        _fit(X, y, k_proj=ok)
+
+
+def test_models_saved_with_removed_options_still_load(tmp_path: Any) -> None:
+    """0.1.0 wrote oblique_min_distinct / oblique_binary_penalty / oblique_gain_margin when set."""
+    X, y = _data(n=300)
+    m = _fit(X, y)
+    path = tmp_path / "m.json"
+    m.save_model(str(path))
+    text = path.read_text()
+    old = text.replace('"efb": 1', '"oblique_min_distinct": 3, "oblique_binary_penalty": 0.25, '
+                       '"oblique_gain_margin": 0.05, "efb": 1', 1)
+    assert old != text
+    path.write_text(old)
+    loaded = type(m).load_model(str(path))
+    np.testing.assert_array_equal(loaded.predict(X), m.predict(X))
 
 
 def test_options_survive_pickle() -> None:

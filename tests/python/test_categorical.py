@@ -2,7 +2,6 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
-import pytest
 from miter import MiterClassifier, MiterRegressor
 
 
@@ -141,5 +140,3 @@ def test_native_nan_informative_and_validation() -> None:
     rmse = float(np.sqrt(np.mean((reg.predict(X[300:]) - y[300:]) ** 2)))
     assert rmse < 0.6
 
-    with pytest.raises(ValueError, match="cat_mode"):
-        MiterRegressor(cat_mode="k2").fit(X[:50], y[:50])

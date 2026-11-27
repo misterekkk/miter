@@ -66,7 +66,6 @@ AxisBinner AxisBinner::fit(std::span<const std::uint16_t> codes, int max_bin) {
 
     AxisBinner binner;
     binner.has_nan = (nan_count > 0);
-    binner.n_distinct = static_cast<std::uint32_t>(n_distinct);
     if (n_distinct <= 1U) {
         binner.num_bins = 1;
         return binner;
