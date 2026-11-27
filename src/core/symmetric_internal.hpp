@@ -138,4 +138,25 @@ void build_sym_feature_hist_group(std::size_t n_feat, const std::uint8_t* const*
                                   std::size_t n_leaves, std::size_t n_small,
                                   const std::uint8_t* small_bit, SymmetricWorkspace& sym) noexcept;
 
+// Histograms per task (4, 2 or 1) when n_tasks histograms are spread over nt threads: the largest
+// group that does not raise the per-thread work, i.e. rounds(g) * g <= rounds(1), where
+// rounds(g) = ceil(ceil(n_tasks / g) / nt). Grouping then only adds the gain of filling several
+// histograms per sweep. Scheduling only: it never changes the results.
+inline std::size_t hist_group_size(std::size_t n_tasks, std::size_t nt) noexcept {
+    if (nt <= 1U) {
+        return 4U;
+    }
+    const auto rounds = [n_tasks, nt](std::size_t g) {
+        const std::size_t groups = (n_tasks + g - 1U) / g;
+        return (groups + nt - 1U) / nt;
+    };
+    const std::size_t base = rounds(1U);
+    for (const std::size_t g : {std::size_t{4}, std::size_t{2}}) {
+        if (rounds(g) * g <= base) {
+            return g;
+        }
+    }
+    return 1U;
+}
+
 } // namespace miter::sym_detail

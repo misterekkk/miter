@@ -82,7 +82,7 @@ jobs:
           PYTHONPATH=../build-base python benchmarks/ci/model_hashes.py out/hash-base.txt > /dev/null
           PYTHONPATH=../build-head python benchmarks/ci/model_hashes.py out/hash-head.txt > /dev/null
           {
-            echo "## Model hashes ($(nproc) CPUs, $(uname -m))"
+            echo "## Model hashes ($(nproc) CPUs, $(uname -m), $(lscpu | sed -n 's/^Model name: *//p' | head -1))"
             if diff -q out/hash-base.txt out/hash-head.txt > /dev/null; then
               echo "Identical: $(wc -l < out/hash-head.txt) models and predictions."
             else
@@ -94,6 +94,7 @@ jobs:
       - name: Speed (interleaved)
         run: |
           python benchmarks/ci/speed_ab.py --build base=../build-base --build head=../build-head \
+            --data covertype 500000x50 100000x20 200000x8 50000x100 \
             --reps "${{ inputs.reps || '5' }}" --out out/speed.md
           { echo "## Speed ($(nproc) CPUs, $(uname -m))"; cat out/speed.md; } >> "$GITHUB_STEP_SUMMARY"
 
