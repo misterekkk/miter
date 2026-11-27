@@ -105,13 +105,13 @@ void build_sym_feature_hist(const std::uint8_t* col, const std::uint32_t* rows, 
                             int n_threads, std::size_t n_small, const std::uint8_t* small_bit,
                             SymmetricWorkspace& sym, HistBin* hist_f, HistBin* prev_f) noexcept;
 
-ObliqueSplitCandidate
-find_sym_oblique_split(const Dataset& ds, const std::uint32_t* leaf_rows, std::size_t n_root,
-                       bool is_contiguous, const std::uint8_t* leaf_ids, std::size_t n_leaves,
-                       const float* g_seq, const float* h_seq, const double* leaf_g,
-                       const double* leaf_h, const std::int32_t* leaf_c, const double* parent_score,
-                       std::size_t tree_index, int level, const Params& params,
-                       ObliqueScratch& scratch, SymmetricWorkspace& sym) noexcept;
+ObliqueSplitCandidate find_sym_oblique_split(
+    const Dataset& ds, const std::uint32_t* leaf_rows, std::size_t n_root, bool is_contiguous,
+    const std::uint8_t* leaf_ids, std::size_t n_leaves, const float* g_seq, const float* h_seq,
+    const double* leaf_g, const double* leaf_h, const std::int32_t* leaf_c,
+    const double* parent_score, std::size_t tree_index, int level, const Params& params,
+    ObliqueScratch& scratch, SymmetricWorkspace& sym, const std::int16_t* codes_override = nullptr,
+    std::size_t n_rows_override = 0U) noexcept;
 
 ObliqueSplitCandidate find_sym_oblique_split_sampled(
     const Dataset& ds, const std::uint32_t* rows, std::size_t n_root, bool is_contiguous,

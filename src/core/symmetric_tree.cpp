@@ -110,6 +110,8 @@ void advance_sym_leaves(const SymSplitChoice& /*unused*/, std::uint8_t* leaf_ids
 
 void SymmetricWorkspace::prepare(const Dataset& ds, const Params& params) {
     const std::size_t n = ds.n_rows();
+    samp_codes.clear();
+    samp_codes_stride = 0U;
     const int d = (params.max_depth > 0) ? params.max_depth : 6;
     max_depth = static_cast<std::size_t>(std::clamp(d, 1, 8));
     max_level_leaves = std::size_t{1} << (max_depth - 1U);

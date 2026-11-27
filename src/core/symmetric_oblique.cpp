@@ -400,6 +400,31 @@ void scan_sym_oblique_hist(const HistBin* hist, std::size_t n_leaves, const doub
     }
 }
 
+// Projections w0*x0 + w1*x1 + w2*x2 of rows [c0, c1) into out (INT32_MIN where a code is missing),
+// with their min and max over the valid rows (INT32_MAX / INT32_MIN when none). A separate function
+// so the loop's min/max reductions are recognized and vectorized.
+void project3_i32(const std::int16_t* x0, const std::int16_t* x1, const std::int16_t* x2,
+                  std::int32_t w0, std::int32_t w1, std::int32_t w2, std::size_t c0, std::size_t c1,
+                  std::int32_t* out, std::int32_t& lo_out, std::int32_t& hi_out) noexcept {
+    constexpr std::int32_t kLo = std::numeric_limits<std::int32_t>::max();
+    constexpr std::int32_t kHi = std::numeric_limits<std::int32_t>::min();
+    std::int32_t lo = kLo;
+    std::int32_t hi = kHi;
+    for (std::size_t i = c0; i < c1; ++i) {
+        const std::int16_t a = x0[i];
+        const std::int16_t b = x1[i];
+        const std::int16_t c = x2[i];
+        const bool missing =
+            (a == kQ16SignedNanCode) | (b == kQ16SignedNanCode) | (c == kQ16SignedNanCode);
+        const std::int32_t p = w0 * a + w1 * b + w2 * c;
+        out[i] = missing ? kHi : p;
+        lo = std::min(lo, missing ? kLo : p);
+        hi = std::max(hi, missing ? kHi : p);
+    }
+    lo_out = lo;
+    hi_out = hi;
+}
+
 } // namespace
 
 ObliqueSplitCandidate
@@ -408,7 +433,8 @@ find_sym_oblique_split(const Dataset& ds, const std::uint32_t* leaf_rows, std::s
                        const float* g_seq, const float* h_seq, const double* leaf_g,
                        const double* leaf_h, const std::int32_t* leaf_c, const double* parent_score,
                        std::size_t tree_index, int level, const Params& params,
-                       ObliqueScratch& scratch, SymmetricWorkspace& sym) noexcept {
+                       ObliqueScratch& scratch, SymmetricWorkspace& sym,
+                       const std::int16_t* codes_override, std::size_t n_rows_override) noexcept {
     ObliqueSplitCandidate best;
     const std::size_t p_elig = scratch.eligible_features.size();
     if (params.m_mult <= 0 || p_elig < 2U || scratch.cur_m == 0U || n_root < 2U) {
@@ -416,8 +442,11 @@ find_sym_oblique_split(const Dataset& ds, const std::uint32_t* leaf_rows, std::s
     }
 
     const std::size_t m = scratch.cur_m;
-    const std::size_t n_rows = ds.n_rows();
-    const std::int16_t* codes = ds.codes_col_major().data();
+    // codes_override: a column-major code matrix of exactly the rows searched (the sampled path's
+    // materialized sample), so the search reads contiguous columns instead of gathering by row.
+    const std::size_t n_rows = (codes_override != nullptr) ? n_rows_override : ds.n_rows();
+    const std::int16_t* codes =
+        (codes_override != nullptr) ? codes_override : ds.codes_col_major().data();
 
     std::uint32_t picked[kObliqueMaxK] = {};
     double raw_w[kObliqueMaxK] = {};
@@ -944,9 +973,34 @@ ObliqueSplitCandidate find_sym_oblique_split_sampled(
     ps.min_data_in_leaf = std::max(1, static_cast<int>(std::floor(params.min_data_in_leaf * frac)));
     ps.min_sum_hessian_in_leaf = params.min_sum_hessian_in_leaf * frac;
     ps.min_gain_to_split = 0.0;
-    const ObliqueSplitCandidate pick = find_sym_oblique_split(
-        ds, sym.samp_rows.data(), n_s, false, sym.samp_leaf.data(), n_leaves, sym.samp_g.data(),
-        sym.samp_h.data(), sg, sh, sc, sps, tree_index, level, ps, scratch, sym);
+    // Without bagging the sampled rows are the same for every tree and level of this fit, so their
+    // codes are gathered once into a contiguous matrix (bounded at 64M codes) and searched in
+    // place.
+    const std::size_t n_all = ds.n_rows();
+    const std::size_t n_num = (n_all > 0U) ? ds.codes_col_major().size() / n_all : 0U;
+    constexpr std::size_t kMaxSampCodes = std::size_t{1} << 26U;
+    const bool materialize = is_contiguous && n_root == n_all && n_num * n_s <= kMaxSampCodes;
+    if (materialize && sym.samp_codes_stride != stride) {
+        const std::int16_t* src = ds.codes_col_major().data();
+        sym.samp_codes.resize(n_num * n_s);
+        for (std::size_t f = 0; f < n_num; ++f) {
+            const std::int16_t* col = src + f * n_all;
+            std::int16_t* dst = sym.samp_codes.data() + f * n_s;
+            for (std::size_t t = 0; t < n_s; ++t) {
+                dst[t] = col[t * stride];
+            }
+        }
+        sym.samp_codes_stride = stride;
+    }
+    const ObliqueSplitCandidate pick =
+        materialize
+            ? find_sym_oblique_split(ds, sym.samp_rows.data(), n_s, true, sym.samp_leaf.data(),
+                                     n_leaves, sym.samp_g.data(), sym.samp_h.data(), sg, sh, sc,
+                                     sps, tree_index, level, ps, scratch, sym,
+                                     sym.samp_codes.data(), n_s)
+            : find_sym_oblique_split(ds, sym.samp_rows.data(), n_s, false, sym.samp_leaf.data(),
+                                     n_leaves, sym.samp_g.data(), sym.samp_h.data(), sg, sh, sc,
+                                     sps, tree_index, level, ps, scratch, sym);
     ObliqueSplitCandidate best;
     if (!pick.valid) {
         return best;
@@ -962,10 +1016,19 @@ ObliqueSplitCandidate find_sym_oblique_split_sampled(
     constexpr std::size_t kRefitChunk = 32768U;
     const std::size_t n_chunks = (n_root + kRefitChunk - 1U) / kRefitChunk;
     [[maybe_unused]] const int n_threads = std::max(resolve_num_threads(params.n_jobs), 1);
-    sym.samp_proj.resize(n_root);
+    // narrow: k <= 3 on contiguous rows, where |p| <= 3 * 2^14 * 32767 < 2^31 - 1, so projections
+    // are exact in int32 (INT32_MIN marks a missing row) and the loops vectorize.
+    const bool narrow = is_contiguous && k <= 3;
+    constexpr std::int32_t kNanProj32 = std::numeric_limits<std::int32_t>::min();
+    if (narrow) {
+        sym.samp_proj32.resize(n_root);
+    } else {
+        sym.samp_proj.resize(n_root);
+    }
     sym.samp_chunk_min.assign(n_chunks, std::numeric_limits<std::int64_t>::max());
     sym.samp_chunk_max.assign(n_chunks, kNanProj);
-    std::int64_t* projv = sym.samp_proj.data();
+    std::int64_t* projv = narrow ? nullptr : sym.samp_proj.data();
+    std::int32_t* projv32 = narrow ? sym.samp_proj32.data() : nullptr;
     std::int64_t* cmin = sym.samp_chunk_min.data();
     std::int64_t* cmax = sym.samp_chunk_max.data();
 #ifdef _OPENMP
@@ -976,6 +1039,26 @@ ObliqueSplitCandidate find_sym_oblique_split_sampled(
         const std::size_t c1 = std::min(n_root, c0 + kRefitChunk);
         std::int64_t lo = std::numeric_limits<std::int64_t>::max();
         std::int64_t hi = kNanProj;
+        if (narrow) {
+            // Branch-free form of the general loop below (k = 2 reuses column 0 with weight 0).
+            const std::int16_t* x0 = codes + static_cast<std::size_t>(pick.num_indices[0]) * n_rows;
+            const std::int16_t* x1 = codes + static_cast<std::size_t>(pick.num_indices[1]) * n_rows;
+            const std::int16_t* x2 =
+                (k == 3) ? codes + static_cast<std::size_t>(pick.num_indices[2]) * n_rows : x0;
+            const std::int32_t w0 = pick.weights[0];
+            const std::int32_t w1 = pick.weights[1];
+            const std::int32_t w2 = (k == 3) ? pick.weights[2] : 0;
+            std::int32_t lo32 = 0;
+            std::int32_t hi32 = 0;
+            project3_i32(x0, x1, x2, w0, w1, w2, c0, c1, projv32, lo32, hi32);
+            if (hi32 != kNanProj32) {
+                lo = lo32;
+                hi = hi32;
+            }
+            cmin[ci] = lo;
+            cmax[ci] = hi;
+            continue;
+        }
         for (std::size_t i = c0; i < c1; ++i) {
             const std::size_t r = is_contiguous ? i : rows[i];
             std::int64_t p = 0;
@@ -1014,6 +1097,11 @@ ObliqueSplitCandidate find_sym_oblique_split_sampled(
     const std::size_t hist_size = n_leaves * kStride;
     sym.samp_hist.assign(n_chunks * hist_size, HistBin{});
     HistBin* chunk_hists = sym.samp_hist.data();
+    // For k <= 3, |p| < 3 * 2^14 * 2^15, so (p - pmin) * kObliqueBins < 2^38 and range < 2^34: the
+    // exact multiply-shift division applies (same quotient as oblique_bin_index, no hardware div).
+    const bool fast_div = k <= 3;
+    FastDiv64 div;
+    div.prepare(static_cast<std::uint64_t>(range));
 #ifdef _OPENMP
 #pragma omp parallel for schedule(static) num_threads(n_threads) if (n_chunks > 1U)
 #endif
@@ -1022,9 +1110,15 @@ ObliqueSplitCandidate find_sym_oblique_split_sampled(
         const std::size_t c1 = std::min(n_root, c0 + kRefitChunk);
         HistBin* h = chunk_hists + static_cast<std::size_t>(ci) * hist_size;
         for (std::size_t i = c0; i < c1; ++i) {
-            const std::int64_t p = projv[i];
-            const std::size_t b = (p == kNanProj) ? static_cast<std::size_t>(kObliqueBins)
-                                                  : oblique_bin_index(p, pmin, range);
+            const std::int64_t p =
+                narrow ? (projv32[i] == kNanProj32 ? kNanProj : projv32[i]) : projv[i];
+            std::size_t b = static_cast<std::size_t>(kObliqueBins);
+            if (p != kNanProj) {
+                b = fast_div ? static_cast<std::size_t>(
+                                   div.div(static_cast<std::uint64_t>(p - pmin) *
+                                           static_cast<std::uint64_t>(kObliqueBins)))
+                             : oblique_bin_index(p, pmin, range);
+            }
             HistBin& hb = h[static_cast<std::size_t>(leaf_ids[i]) * kStride + b];
             hb.g += static_cast<double>(g_seq[i]);
             hb.h += static_cast<double>(h_seq[i]);

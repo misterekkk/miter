@@ -58,8 +58,11 @@ struct SymmetricWorkspace {
     std::vector<std::uint8_t> samp_leaf;
     std::vector<HistBin> samp_hist;
     std::vector<std::int64_t> samp_proj;
+    std::vector<std::int32_t> samp_proj32; // k <= 3 refit on contiguous rows
     std::vector<std::int64_t> samp_chunk_min;
     std::vector<std::int64_t> samp_chunk_max;
+    std::vector<std::int16_t> samp_codes; // sampled rows' codes, column-major (no bagging only)
+    std::size_t samp_codes_stride = 0;    // row stride samp_codes was built for; 0 = none
     // efb: bundles of mutually exclusive numeric features. A bundle column holds 0 where every
     // member is at its default (most frequent) bin, else 1 + member offset + the member's bin slot.
     struct EfbBundle {
