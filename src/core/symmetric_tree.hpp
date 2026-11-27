@@ -57,6 +57,9 @@ struct SymmetricWorkspace {
     std::vector<float> samp_h;
     std::vector<std::uint8_t> samp_leaf;
     std::vector<HistBin> samp_hist;
+    std::vector<std::int64_t> samp_proj;
+    std::vector<std::int64_t> samp_chunk_min;
+    std::vector<std::int64_t> samp_chunk_max;
 
     void prepare(const Dataset& ds, const Params& params);
 };

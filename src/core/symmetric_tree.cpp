@@ -2120,51 +2120,97 @@ ObliqueSplitCandidate find_sym_oblique_split_sampled(
         return best;
     }
 
-    // Exact pass for the chosen direction on all rows.
+    // Exact pass for the chosen direction on all rows, over fixed row chunks: per-chunk
+    // projections, ranges and histograms in parallel, reduced in chunk order, so the sums do not
+    // depend on the number of threads.
     const std::size_t n_rows = ds.n_rows();
     const std::int16_t* codes = ds.codes_col_major().data();
     const int k = pick.k;
-    std::int64_t pmin = std::numeric_limits<std::int64_t>::max();
-    std::int64_t pmax = std::numeric_limits<std::int64_t>::min();
-    bool any_nan = false;
-    const auto proj = [&](std::size_t r, std::int64_t& p) noexcept {
-        p = 0;
-        for (int q = 0; q < k; ++q) {
-            const std::int16_t c =
-                codes[static_cast<std::size_t>(pick.num_indices[q]) * n_rows + r];
-            if (c == kQ16SignedNanCode) {
-                return false;
+    constexpr std::int64_t kNanProj = std::numeric_limits<std::int64_t>::min();
+    constexpr std::size_t kRefitChunk = 32768U;
+    const std::size_t n_chunks = (n_root + kRefitChunk - 1U) / kRefitChunk;
+    [[maybe_unused]] const int n_threads = std::max(resolve_num_threads(params.n_jobs), 1);
+    sym.samp_proj.resize(n_root);
+    sym.samp_chunk_min.assign(n_chunks, std::numeric_limits<std::int64_t>::max());
+    sym.samp_chunk_max.assign(n_chunks, kNanProj);
+    std::int64_t* projv = sym.samp_proj.data();
+    std::int64_t* cmin = sym.samp_chunk_min.data();
+    std::int64_t* cmax = sym.samp_chunk_max.data();
+#ifdef _OPENMP
+#pragma omp parallel for schedule(static) num_threads(n_threads) if (n_chunks > 1U)
+#endif
+    for (std::ptrdiff_t ci = 0; ci < static_cast<std::ptrdiff_t>(n_chunks); ++ci) {
+        const std::size_t c0 = static_cast<std::size_t>(ci) * kRefitChunk;
+        const std::size_t c1 = std::min(n_root, c0 + kRefitChunk);
+        std::int64_t lo = std::numeric_limits<std::int64_t>::max();
+        std::int64_t hi = kNanProj;
+        for (std::size_t i = c0; i < c1; ++i) {
+            const std::size_t r = is_contiguous ? i : rows[i];
+            std::int64_t p = 0;
+            bool missing = false;
+            for (int q = 0; q < k; ++q) {
+                const std::int16_t c =
+                    codes[static_cast<std::size_t>(pick.num_indices[q]) * n_rows + r];
+                if (c == kQ16SignedNanCode) {
+                    missing = true;
+                    break;
+                }
+                p += static_cast<std::int64_t>(pick.weights[q]) * static_cast<std::int64_t>(c);
             }
-            p += static_cast<std::int64_t>(pick.weights[q]) * static_cast<std::int64_t>(c);
+            if (missing) {
+                projv[i] = kNanProj;
+            } else {
+                projv[i] = p;
+                lo = std::min(lo, p);
+                hi = std::max(hi, p);
+            }
         }
-        return true;
-    };
-    for (std::size_t i = 0; i < n_root; ++i) {
-        const std::size_t r = is_contiguous ? i : rows[i];
-        std::int64_t p = 0;
-        if (proj(r, p)) {
-            pmin = std::min(pmin, p);
-            pmax = std::max(pmax, p);
-        } else {
-            any_nan = true;
-        }
+        cmin[ci] = lo;
+        cmax[ci] = hi;
     }
-    if (pmin >= pmax) {
+    std::int64_t pmin = std::numeric_limits<std::int64_t>::max();
+    std::int64_t pmax = kNanProj;
+    for (std::size_t ci = 0; ci < n_chunks; ++ci) {
+        pmin = std::min(pmin, cmin[ci]);
+        pmax = std::max(pmax, cmax[ci]);
+    }
+    if (pmax == kNanProj || pmin >= pmax) {
         return best;
     }
     const std::int64_t range = pmax - pmin + 1;
     constexpr std::size_t kStride = static_cast<std::size_t>(kObliqueBins) + 1U;
-    sym.samp_hist.assign(n_leaves * kStride, HistBin{});
-    HistBin* hist = sym.samp_hist.data();
-    for (std::size_t i = 0; i < n_root; ++i) {
-        const std::size_t r = is_contiguous ? i : rows[i];
-        std::int64_t p = 0;
-        const std::size_t b =
-            proj(r, p) ? oblique_bin_index(p, pmin, range) : static_cast<std::size_t>(kObliqueBins);
-        HistBin& hb = hist[static_cast<std::size_t>(leaf_ids[i]) * kStride + b];
-        hb.g += static_cast<double>(g_seq[i]);
-        hb.h += static_cast<double>(h_seq[i]);
-        hb.c += 1;
+    const std::size_t hist_size = n_leaves * kStride;
+    sym.samp_hist.assign(n_chunks * hist_size, HistBin{});
+    HistBin* chunk_hists = sym.samp_hist.data();
+#ifdef _OPENMP
+#pragma omp parallel for schedule(static) num_threads(n_threads) if (n_chunks > 1U)
+#endif
+    for (std::ptrdiff_t ci = 0; ci < static_cast<std::ptrdiff_t>(n_chunks); ++ci) {
+        const std::size_t c0 = static_cast<std::size_t>(ci) * kRefitChunk;
+        const std::size_t c1 = std::min(n_root, c0 + kRefitChunk);
+        HistBin* h = chunk_hists + static_cast<std::size_t>(ci) * hist_size;
+        for (std::size_t i = c0; i < c1; ++i) {
+            const std::int64_t p = projv[i];
+            const std::size_t b = (p == kNanProj) ? static_cast<std::size_t>(kObliqueBins)
+                                                  : oblique_bin_index(p, pmin, range);
+            HistBin& hb = h[static_cast<std::size_t>(leaf_ids[i]) * kStride + b];
+            hb.g += static_cast<double>(g_seq[i]);
+            hb.h += static_cast<double>(h_seq[i]);
+            hb.c += 1;
+        }
+    }
+    bool any_nan = false;
+    HistBin* hist = chunk_hists; // chunk 0 accumulates the others, in chunk order
+    for (std::size_t ci = 1; ci < n_chunks; ++ci) {
+        const HistBin* h = chunk_hists + ci * hist_size;
+        for (std::size_t j = 0; j < hist_size; ++j) {
+            hist[j].g += h[j].g;
+            hist[j].h += h[j].h;
+            hist[j].c += h[j].c;
+        }
+    }
+    for (std::size_t l = 0; l < n_leaves; ++l) {
+        any_nan = any_nan || (hist[l * kStride + static_cast<std::size_t>(kObliqueBins)].c > 0);
     }
     double best_gain = -std::numeric_limits<double>::infinity();
     std::int64_t best_thr = 0;
