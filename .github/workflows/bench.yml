@@ -62,8 +62,9 @@ jobs:
           BASE: ${{ inputs.base || 'main' }}
           HEAD_REF: ${{ inputs.head || github.sha }}
         run: |
-          git worktree add ../base "$BASE"
-          git worktree add ../head "$HEAD_REF"
+          resolve() { git rev-parse --verify -q "origin/$1^{commit}" || git rev-parse --verify "$1^{commit}"; }
+          git worktree add --detach ../base "$(resolve "$BASE")"
+          git worktree add --detach ../head "$(resolve "$HEAD_REF")"
           echo "base: $(git -C ../base rev-parse --short HEAD) ($BASE)" | tee -a "$GITHUB_STEP_SUMMARY"
           echo "head: $(git -C ../head rev-parse --short HEAD) ($HEAD_REF)" | tee -a "$GITHUB_STEP_SUMMARY"
           python -m pip install --no-build-isolation --no-deps --target ../build-base ../base
