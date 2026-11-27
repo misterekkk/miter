@@ -255,6 +255,8 @@ class _BaseMiterEstimator(_SklearnBase):
         oblique_min_distinct: int = 0,
         oblique_sample_rows: int = 65536,
         efb: bool = True,
+        oblique_binary_penalty: float = 0.0,
+        oblique_gain_margin: float = 0.0,
         robust: bool = False,
         cat_mode: str = "k1",
         cat_oblique_ts: bool = False,
@@ -295,6 +297,8 @@ class _BaseMiterEstimator(_SklearnBase):
         self.oblique_min_distinct = oblique_min_distinct
         self.oblique_sample_rows = oblique_sample_rows
         self.efb = efb
+        self.oblique_binary_penalty = oblique_binary_penalty
+        self.oblique_gain_margin = oblique_gain_margin
         self.robust = robust
         self.cat_mode = cat_mode
         self.cat_oblique_ts = cat_oblique_ts
@@ -389,6 +393,12 @@ class _BaseMiterEstimator(_SklearnBase):
         if not isinstance(self.efb, (bool, np.bool_)):
             raise ValueError(f"efb must be a bool, got {self.efb!r}")
         p.efb = bool(self.efb)
+        for name in ("oblique_binary_penalty", "oblique_gain_margin"):
+            v = float(getattr(self, name))
+            if not np.isfinite(v) or v < 0.0:
+                raise ValueError(f"{name} must be finite and >= 0, got {getattr(self, name)!r}")
+        p.oblique_binary_penalty = float(self.oblique_binary_penalty)
+        p.oblique_gain_margin = float(self.oblique_gain_margin)
         if isinstance(self.max_ctr_complexity, str):
             if self.max_ctr_complexity != "auto":
                 raise ValueError(
@@ -661,6 +671,8 @@ class _BaseMiterEstimator(_SklearnBase):
             oblique_min_distinct=p.oblique_min_distinct,
             oblique_sample_rows=p.oblique_sample_rows,
             efb=p.efb,
+            oblique_binary_penalty=p.oblique_binary_penalty,
+            oblique_gain_margin=p.oblique_gain_margin,
             max_ctr_complexity=("auto" if p.max_ctr_complexity == -1 else p.max_ctr_complexity),
             ctr_prior_weight=p.ctr_prior_weight,
             ctr_n_permutations=p.ctr_n_permutations,

@@ -60,6 +60,8 @@ _FORWARDED = (
     "oblique_min_distinct",
     "oblique_sample_rows",
     "efb",
+    "oblique_binary_penalty",
+    "oblique_gain_margin",
     "quantizer",
     "max_ctr_complexity",
     "ctr_prior_weight",

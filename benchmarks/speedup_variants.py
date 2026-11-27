@@ -16,6 +16,9 @@ VARIANTS: dict[str, dict[str, Any]] = {
     "E2_64K": {"oblique_sample_rows": 65536},  # the candidate default, for the speed check
     "DEF2": {},  # the current default (E2 adopted); TabArena baseline for E3
     "E3": {"efb": True},  # on top of the current default (E2 adopted)
+    # E4: oblique gain penalties (exp_speedups_e4_prereg.md).
+    "E4A": {"oblique_binary_penalty": 0.25},
+    "E4B": {"oblique_gain_margin": 0.05},
     # Exploratory ablation of the method's components (relative to the current default).
     "AB_NO_OBLIQUE": {"m_mult": 0},
     "AB_LEAFWISE": {"grow_policy": "leafwise"},

@@ -57,6 +57,8 @@ class Params:
     oblique_min_distinct: int
     oblique_sample_rows: int
     efb: bool
+    oblique_binary_penalty: float
+    oblique_gain_margin: float
     max_ctr_complexity: int
     ctr_prior_weight: float
     ctr_n_permutations: int

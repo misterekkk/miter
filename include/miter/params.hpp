@@ -68,6 +68,12 @@ struct Params {
     /// Symmetric trees: bundle mutually exclusive sparse numeric features (e.g. one-hot columns)
     /// into one histogram pass per bundle; splits stay on the original features (false = off).
     bool efb = false;
+    /// Symmetric trees: an oblique candidate's gain is multiplied by
+    /// max(0, 1 - oblique_binary_penalty * (binary features in its projection)) (0 = off).
+    double oblique_binary_penalty = 0.0;
+    /// Symmetric trees: oblique gains are divided by (1 + oblique_gain_margin), so an oblique split
+    /// must beat axis / categorical / CTR splits by that margin (0 = off).
+    double oblique_gain_margin = 0.0;
     /// CatBoost-style native online ordered CTR max combination complexity
     /// (-1 = auto, 0 = off, 1..3).
     int max_ctr_complexity = 0;

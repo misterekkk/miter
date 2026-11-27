@@ -1226,7 +1226,7 @@ void scan_sym_oblique_hist(const HistBin* hist, std::size_t n_leaves, const doub
                            const double* parent_score, double lam, double min_h, std::int32_t min_c,
                            double min_gain, std::int64_t pmin, std::int64_t range, bool check_nan,
                            double& best_gain, std::int64_t& best_thr, bool& best_nan_left,
-                           bool& found) noexcept {
+                           bool& found, double scale = 1.0) noexcept {
     constexpr std::size_t kStride = static_cast<std::size_t>(kObliqueBins) + 1U;
     double gl[kSymMaxLeaves] = {};
     double hl[kSymMaxLeaves] = {};
@@ -1252,8 +1252,8 @@ void scan_sym_oblique_hist(const HistBin* hist, std::size_t n_leaves, const doub
             double gain = 0.0;
             if (eval_multi_leaf_gain(gl, hl, cl, leaf_g, leaf_h, leaf_c, parent_score, n_leaves,
                                      lam, min_h, min_c, min_gain, gain) &&
-                gain > best_gain) {
-                best_gain = gain;
+                gain * scale > best_gain) {
+                best_gain = gain * scale;
                 best_thr = oblique_bin_threshold(pmin, range, b);
                 best_nan_left = (cum_hl >= (total_h_all - cum_hl));
                 found = true;
@@ -1268,8 +1268,8 @@ void scan_sym_oblique_hist(const HistBin* hist, std::size_t n_leaves, const doub
             double gain_a = 0.0;
             if (eval_multi_leaf_gain(gl_nan, hl_nan, cl_nan, leaf_g, leaf_h, leaf_c, parent_score,
                                      n_leaves, lam, min_h, min_c, min_gain, gain_a) &&
-                gain_a > best_gain) {
-                best_gain = gain_a;
+                gain_a * scale > best_gain) {
+                best_gain = gain_a * scale;
                 best_thr = oblique_bin_threshold(pmin, range, b);
                 best_nan_left = true;
                 found = true;
@@ -1277,8 +1277,8 @@ void scan_sym_oblique_hist(const HistBin* hist, std::size_t n_leaves, const doub
             double gain_b = 0.0;
             if (eval_multi_leaf_gain(gl, hl, cl, leaf_g, leaf_h, leaf_c, parent_score, n_leaves,
                                      lam, min_h, min_c, min_gain, gain_b) &&
-                gain_b > best_gain) {
-                best_gain = gain_b;
+                gain_b * scale > best_gain) {
+                best_gain = gain_b * scale;
                 best_thr = oblique_bin_threshold(pmin, range, b);
                 best_nan_left = false;
                 found = true;
@@ -1296,8 +1296,8 @@ void scan_sym_oblique_hist(const HistBin* hist, std::size_t n_leaves, const doub
         double gain = 0.0;
         if (eval_multi_leaf_gain(gl, hl, cl, leaf_g, leaf_h, leaf_c, parent_score, n_leaves, lam,
                                  min_h, min_c, min_gain, gain) &&
-            gain > best_gain) {
-            best_gain = gain;
+            gain * scale > best_gain) {
+            best_gain = gain * scale;
             best_thr = pmin + range;
             best_nan_left = false;
             found = true;
@@ -1364,6 +1364,8 @@ find_sym_oblique_split(const Dataset& ds, const std::uint32_t* leaf_rows, std::s
             has_nan |= scratch.num_has_nan[num_idx];
         }
         scratch.cand_has_nan[j] = has_nan;
+        scratch.cand_scale[j] =
+            oblique_gain_scale(params, scratch, scratch.cand_num_idx.data() + j * kObliqueMaxK, k);
         if (has_nan != 0U) {
             any_has_nan = true;
         }
@@ -1486,7 +1488,8 @@ find_sym_oblique_split(const Dataset& ds, const std::uint32_t* leaf_rows, std::s
                         bool found = false;
                         scan_sym_oblique_hist(hist, n_leaves, leaf_g, leaf_h, leaf_c, parent_score,
                                               lam, min_h, min_c, min_gain, pmin, range,
-                                              c_nan_tot > 0, cg, thr, nl, found);
+                                              c_nan_tot > 0, cg, thr, nl, found,
+                                              scratch.cand_scale[j]);
                         if (found) {
                             cand.gain = cg;
                             cand.k = k;
@@ -1576,7 +1579,8 @@ find_sym_oblique_split(const Dataset& ds, const std::uint32_t* leaf_rows, std::s
             bool nl = true;
             bool found = false;
             scan_sym_oblique_hist(hist, n_leaves, leaf_g, leaf_h, leaf_c, parent_score, lam, min_h,
-                                  min_c, min_gain, pmin, range, c_nan_tot > 0, cg, thr, nl, found);
+                                  min_c, min_gain, pmin, range, c_nan_tot > 0, cg, thr, nl, found,
+                                  scratch.cand_scale[j]);
             if (found) {
                 best.gain = cg;
                 best.k = k;
@@ -1695,7 +1699,8 @@ find_sym_oblique_split(const Dataset& ds, const std::uint32_t* leaf_rows, std::s
             bool found = false;
             scan_sym_oblique_hist(hist, n_leaves, leaf_g, leaf_h, leaf_c, parent_score, lam, min_h,
                                   min_c, min_gain, static_cast<std::int64_t>(scratch.cand_pmin[j]),
-                                  scratch.active_ranges[a], check_nan, cg, thr, nl, found);
+                                  scratch.active_ranges[a], check_nan, cg, thr, nl, found,
+                                  scratch.cand_scale[j]);
             if (found) {
                 cand.gain = cg;
                 cand.k = cm.k;
@@ -1783,7 +1788,8 @@ find_sym_oblique_split(const Dataset& ds, const std::uint32_t* leaf_rows, std::s
         bool found = false;
         scan_sym_oblique_hist(hist, n_leaves, leaf_g, leaf_h, leaf_c, parent_score, lam, min_h,
                               min_c, min_gain, static_cast<std::int64_t>(scratch.cand_pmin[j]),
-                              scratch.active_ranges[a], check_nan, cg, thr, nl, found);
+                              scratch.active_ranges[a], check_nan, cg, thr, nl, found,
+                              scratch.cand_scale[j]);
         if (found) {
             best.gain = cg;
             best.k = cm.k;
@@ -2219,7 +2225,8 @@ ObliqueSplitCandidate find_sym_oblique_split_sampled(
     scan_sym_oblique_hist(hist, n_leaves, leaf_g, leaf_h, leaf_c, parent_score, params.lambda_l2,
                           params.min_sum_hessian_in_leaf, params.min_data_in_leaf,
                           params.min_gain_to_split, pmin, range, any_nan, best_gain, best_thr,
-                          best_nan_left, found);
+                          best_nan_left, found,
+                          oblique_gain_scale(params, scratch, pick.num_indices, pick.k));
     if (!found) {
         return best;
     }
