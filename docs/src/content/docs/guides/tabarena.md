@@ -13,7 +13,7 @@ from miter.tabarena import MiterModel
 
 predictor = TabularPredictor(label="target").fit(
     train_df,
-    hyperparameters={MiterModel: [{}, {"grow_policy": "symmetric", "max_depth": 6}]},
+    hyperparameters={MiterModel: [{}, {"grow_policy": "leafwise"}]},
 )
 ```
 

@@ -3,7 +3,11 @@ title: Parameters
 description: Every constructor parameter of MiterRegressor and MiterClassifier.
 ---
 
-Both estimators take the same keyword arguments.
+Both estimators take the same keyword arguments. Since v1.0 the default is **symmetric trees of
+depth 6** with `min_data_in_leaf=1`, `lambda_l2=3` and `m_mult=4`. This was the strongest single
+configuration on held-out data (see [Benchmarks](../../benchmarks/)). Three parameters default to
+`None`, which means "the default of the tree shape": symmetric trees take the values above, and
+leaf-wise trees take 20, 1.0 and 2.
 
 ## Boosting
 
@@ -20,12 +24,12 @@ Both estimators take the same keyword arguments.
 
 | parameter | default | meaning |
 |---|---|---|
-| `grow_policy` | `"leafwise"` | `"leafwise"` (best-first) or `"symmetric"` (oblivious: one split per level) |
-| `num_leaves` | 31 | leaves per tree, leaf-wise growth |
-| `max_depth` | -1 | leaf-wise: depth limit (-1 = none); symmetric: depth 1–8 (default 6) |
-| `min_data_in_leaf` | 20 | minimum rows per leaf |
+| `grow_policy` | `"symmetric"` | `"symmetric"` (oblivious: one split per level, like CatBoost) or `"leafwise"` (best-first, like LightGBM) |
+| `num_leaves` | 31 | leaves per tree (leaf-wise only) |
+| `max_depth` | -1 | symmetric: depth 1–8 (-1 = 6); leaf-wise: depth limit (-1 = none) |
+| `min_data_in_leaf` | `None` | minimum rows per leaf (symmetric 1, leaf-wise 20) |
 | `min_sum_hessian_in_leaf` | 1e-3 | minimum hessian per leaf |
-| `lambda_l2` | 1.0 | L2 regularisation of leaf values |
+| `lambda_l2` | `None` | L2 regularisation of leaf values (symmetric 3.0, leaf-wise 1.0) |
 | `min_gain_to_split` | 0.0 | minimum gain to split |
 | `max_bin` | 255 | axis bins per numeric feature |
 
@@ -33,8 +37,8 @@ Both estimators take the same keyword arguments.
 
 | parameter | default | meaning |
 |---|---|---|
-| `preset` | `"default"` | `"accurate"` sets `m_mult=4`; `"fast"` uses oblique splits only at depth 0–1 |
-| `m_mult` | 2 | oblique candidates per node = `m_mult · ceil(sqrt(p))` |
+| `preset` | `"default"` | `"accurate"` doubles the default `m_mult`; `"fast"` uses oblique splits only at depth 0–1 |
+| `m_mult` | `None` | oblique candidates per node = `m_mult · ceil(sqrt(p))` (symmetric 4, leaf-wise 2) |
 | `k_proj` | 0 | features per candidate (0 = random 2 or 3; above 3 predicts via miter's own evaluator) |
 
 See [Oblique splits](../../concepts/oblique-splits/) for how candidates are drawn and scored.
@@ -78,12 +82,11 @@ See [Categorical features](../categorical/).
 | `bagging_fraction` | 1.0 | fraction of rows per tree, sampled without replacement |
 | `extra_trees` | False | one random valid threshold per feature instead of the best one |
 
-## A strong configuration
+## Worth trying
 
-On TabArena and on held-out OpenML data, symmetric trees with the auto quantizer and CTRs were the
-best single configuration we measured (see [Benchmarks](../../benchmarks/)):
-
-```python
-MiterClassifier(grow_policy="symmetric", max_depth=6, min_data_in_leaf=1, lambda_l2=3.0,
-                quantizer="auto", max_ctr_complexity="auto", ctr_n_permutations=4)
-```
+- **High-cardinality categorical features:** `max_ctr_complexity="auto", ctr_n_permutations=4`.
+  On TabArena this helped binary classification the most.
+- **Skewed numeric features:** `quantizer="auto"`.
+- **Large data, where training time matters:** `preset="fast"`, or `grow_policy="leafwise"`
+  (about half the training time of the default).
+- **Small data (under ~1000 rows):** shallower trees, `max_depth=4`.

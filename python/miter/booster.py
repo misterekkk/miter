@@ -234,10 +234,10 @@ class _BaseMiterEstimator(_SklearnBase):
         learning_rate: float = 0.05,
         num_leaves: int = 31,
         max_depth: int = -1,
-        grow_policy: str = "leafwise",
-        min_data_in_leaf: int = 20,
+        grow_policy: str = "symmetric",
+        min_data_in_leaf: int | None = None,
         min_sum_hessian_in_leaf: float = 1e-3,
-        lambda_l2: float = 1.0,
+        lambda_l2: float | None = None,
         min_gain_to_split: float = 0.0,
         max_bin: int = 255,
         max_cat_to_onehot: int = 4,
@@ -246,7 +246,7 @@ class _BaseMiterEstimator(_SklearnBase):
         cat_smooth: float = 10.0,
         cat_l2: float = 10.0,
         max_cat_threshold: int = 32,
-        m_mult: int = 2,
+        m_mult: int | None = None,
         k_proj: int = 0,
         preset: str = "default",
         feature_fraction: float = 1.0,
@@ -333,9 +333,12 @@ class _BaseMiterEstimator(_SklearnBase):
             raise ValueError(
                 f"Unknown grow_policy: {self.grow_policy!r} (expected 'leafwise' or 'symmetric')"
             )
-        p.min_data_in_leaf = int(self.min_data_in_leaf)
+        # None = the default of the tree shape: symmetric trees (the default since v1.0) use the
+        # S6_M4 setting (min_data_in_leaf 1, lambda_l2 3, m_mult 4); leaf-wise trees keep 20 / 1 / 2.
+        symmetric = self.grow_policy == "symmetric"
+        p.min_data_in_leaf = (1 if symmetric else 20) if self.min_data_in_leaf is None else int(self.min_data_in_leaf)
         p.min_sum_hessian_in_leaf = float(self.min_sum_hessian_in_leaf)
-        p.lambda_l2 = float(self.lambda_l2)
+        p.lambda_l2 = (3.0 if symmetric else 1.0) if self.lambda_l2 is None else float(self.lambda_l2)
         p.min_gain_to_split = float(self.min_gain_to_split)
         p.max_bin = int(self.max_bin)
         p.max_cat_to_onehot = int(self.max_cat_to_onehot)
@@ -344,14 +347,16 @@ class _BaseMiterEstimator(_SklearnBase):
         p.cat_smooth = float(self.cat_smooth)
         p.cat_l2 = float(self.cat_l2)
         p.max_cat_threshold = int(self.max_cat_threshold)
+        base_m_mult = (4 if symmetric else 2) if self.m_mult is None else int(self.m_mult)
         if self.preset == "fast":
-            p.m_mult = int(self.m_mult)
+            p.m_mult = base_m_mult
             p.oblique_max_depth = 1
         elif self.preset == "accurate":
-            p.m_mult = 4 if self.m_mult == 2 else int(self.m_mult)
+            # Twice the default number of oblique candidates, unless m_mult is set explicitly.
+            p.m_mult = 2 * base_m_mult if self.m_mult is None else base_m_mult
             p.oblique_max_depth = -1
         else:
-            p.m_mult = int(self.m_mult)
+            p.m_mult = base_m_mult
             p.oblique_max_depth = -1
         p.k_proj = int(self.k_proj)
         p.early_stopping_rounds = 0 if self.early_stopping_rounds is None else int(self.early_stopping_rounds)

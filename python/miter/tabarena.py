@@ -26,11 +26,7 @@ from autogluon.core.models import AbstractModel
 _DEFAULTS: dict[str, Any] = {
     "n_estimators": 10000,
     "learning_rate": 0.05,
-    "num_leaves": 31,
-    "min_data_in_leaf": 20,
-    "lambda_l2": 1.0,
     "early_stopping_rounds": 50,
-    "m_mult": 2,
     "k_proj": 0,
     "preset": "default",
 }

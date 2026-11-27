@@ -108,13 +108,17 @@ CatBoost-style online target statistics, enabled with `max_ctr_complexity` (0 = 
 
 ## Tree growth
 
-- **Leaf-wise (`grow_policy="leafwise"`, default).** Best-first up to `num_leaves`. Both children of
+- **Leaf-wise (`grow_policy="leafwise"`).** Best-first up to `num_leaves`. Both children of
   a split are evaluated immediately, and a priority queue picks the next leaf by gain. Ties go to
   the lower leaf id.
-- **Symmetric (`grow_policy="symmetric"`).** Oblivious trees: every level uses one split for all of
+- **Symmetric (`grow_policy="symmetric"`, the default of the Python estimators).** Oblivious trees: every level uses one split for all of
   its nodes, chosen by the gain summed over the level. Oblique and CTR candidates compete like axis
   ones. Depth is `max_depth` (1–8, default 6), so a tree has `2^depth` leaves addressed by a bit
   index. Histograms use pairwise subtraction across the level.
+
+The Python estimators resolve `min_data_in_leaf`, `lambda_l2` and `m_mult` from the tree shape when
+they are left as `None`: symmetric 1 / 3.0 / 4, leaf-wise 20 / 1.0 / 2. The C++ `Params` struct
+keeps the leaf-wise values as its defaults.
 
 ## Boosting (src/core/booster.*, src/core/objective.*)
 

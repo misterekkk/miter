@@ -18,7 +18,7 @@ from source you need a C++20 compiler and CMake 3.20+; on macOS also `brew insta
 ```python
 from miter import MiterRegressor
 
-reg = MiterRegressor()                                # up to 5000 trees, early stopping after 50 rounds
+reg = MiterRegressor()                                # symmetric trees, up to 5000, early stopping after 50 rounds
 reg.fit(X_train, y_train, eval_set=[(X_val, y_val)])  # without eval_set: no early stopping
 pred = reg.predict(X_test)
 
@@ -49,9 +49,9 @@ and iteration).
 
 ## What to try next
 
-- `grow_policy="symmetric"`: symmetric (oblivious) trees of depth 6, often better on small and
-  medium data. Combined with `quantizer="auto"` and `max_ctr_complexity="auto"` it is the strongest
-  single configuration in our [benchmarks](../../benchmarks/).
+- The default trains symmetric (oblivious) trees of depth 6. `grow_policy="leafwise"` switches to
+  LightGBM-style best-first trees, which train about twice as fast.
+- `max_ctr_complexity="auto"`: CatBoost-style CTRs for high-cardinality categorical features.
 - `preset="accurate"`: twice as many oblique candidates per node, about 2× the oblique cost.
 - `preset="fast"`: oblique splits only near the root, for large data.
 
