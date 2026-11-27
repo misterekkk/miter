@@ -145,16 +145,55 @@ void build_axis_hist_multi(const std::uint8_t* const* cols, const std::uint32_t*
                            std::size_t n_root, bool is_contiguous, const std::uint8_t* leaf_ids,
                            const std::size_t* strides, const float* g_seq, const float* h_seq,
                            HistBin* const* hists) noexcept {
+    // E5 PROTOTYPE (speed probe only, changes summation order): two lanes, even rows into the
+    // output histogram and odd rows into a second one, added at the end.
+    static thread_local std::vector<HistBin> lane1;
+    std::size_t nl = 0;
     for (std::size_t t = 0; t < n_root; ++t) {
+        nl = std::max<std::size_t>(nl, leaf_ids[t]);
+    }
+    nl += 1U;
+    std::size_t off[G + 1] = {};
+    for (std::size_t gi = 0; gi < G; ++gi) {
+        off[gi + 1] = off[gi] + nl * strides[gi];
+    }
+    lane1.assign(off[G], HistBin{});
+    std::size_t t = 0;
+    for (; t + 2U <= n_root; t += 2U) {
+        const std::size_t ra = is_contiguous ? t : leaf_rows[t];
+        const std::size_t rb = is_contiguous ? t + 1U : leaf_rows[t + 1U];
+        const std::size_t la = leaf_ids[t];
+        const std::size_t lb = leaf_ids[t + 1U];
+        const double ga = static_cast<double>(g_seq[t]);
+        const double ha = static_cast<double>(h_seq[t]);
+        const double gb = static_cast<double>(g_seq[t + 1U]);
+        const double hb = static_cast<double>(h_seq[t + 1U]);
+        for (std::size_t gi = 0; gi < G; ++gi) {
+            HistBin& da = hists[gi][la * strides[gi] + cols[gi][ra]];
+            da.g += ga;
+            da.h += ha;
+            da.c += 1;
+            HistBin& db = lane1[off[gi] + lb * strides[gi] + cols[gi][rb]];
+            db.g += gb;
+            db.h += hb;
+            db.c += 1;
+        }
+    }
+    for (; t < n_root; ++t) {
         const std::size_t r = is_contiguous ? t : leaf_rows[t];
         const std::size_t l = leaf_ids[t];
-        const double gv = static_cast<double>(g_seq[t]);
-        const double hv = static_cast<double>(h_seq[t]);
         for (std::size_t gi = 0; gi < G; ++gi) {
             HistBin& dst = hists[gi][l * strides[gi] + cols[gi][r]];
-            dst.g += gv;
-            dst.h += hv;
+            dst.g += static_cast<double>(g_seq[t]);
+            dst.h += static_cast<double>(h_seq[t]);
             dst.c += 1;
+        }
+    }
+    for (std::size_t gi = 0; gi < G; ++gi) {
+        for (std::size_t b = 0; b < off[gi + 1] - off[gi]; ++b) {
+            hists[gi][b].g += lane1[off[gi] + b].g;
+            hists[gi][b].h += lane1[off[gi] + b].h;
+            hists[gi][b].c += lane1[off[gi] + b].c;
         }
     }
 }
