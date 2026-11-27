@@ -10,7 +10,7 @@ pip install miter                      # numpy only
 pip install "miter[sklearn,pandas]"    # with scikit-learn and pandas support
 ```
 
-Wheels exist for Linux (x86_64, aarch64), macOS (arm64) and Windows (x64), Python 3.10+. To build
+Wheels exist for Linux (x86_64, aarch64), macOS 15+ (arm64, x86_64) and Windows (x64), Python 3.10+. To build
 from source you need a C++20 compiler and CMake 3.20+; on macOS also `brew install libomp`.
 
 ## Regression

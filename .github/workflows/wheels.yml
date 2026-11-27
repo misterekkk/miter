@@ -36,8 +36,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # x86_64 Linux, aarch64 Linux, Windows x64, macOS arm64
-        os: [ubuntu-latest, ubuntu-24.04-arm, windows-latest, macos-latest]
+        # x86_64 Linux, aarch64 Linux, Windows x64, macOS 15+ arm64 and x86_64 (the runner's
+        # Homebrew libomp sets the minimum macOS version of the wheels)
+        os: [ubuntu-latest, ubuntu-24.04-arm, windows-latest, macos-15, macos-15-intel]
     steps:
       - uses: actions/checkout@v4
 
@@ -49,11 +50,6 @@ jobs:
       - name: Build and test wheels
         shell: bash
         run: |
-          if [[ "${RUNNER_OS}" == "macOS" ]]; then
-            # Homebrew's libomp is built for the runner's macOS; the wheel cannot target older.
-            export MACOSX_DEPLOYMENT_TARGET="$(sw_vers -productVersion | cut -d. -f1).0"
-            export CIBW_ENVIRONMENT_PASS_MACOS="MACOSX_DEPLOYMENT_TARGET"
-          fi
           python -m pip install "cibuildwheel>=3,<4"
           python -m cibuildwheel --output-dir wheelhouse
 

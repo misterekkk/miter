@@ -81,4 +81,18 @@ test-command = "pytest {project}/tests/python -q"
 
 [tool.cibuildwheel.macos]
 before-all = "brew install libomp"
-# delocate bundles libomp into the wheel; MACOSX_DEPLOYMENT_TARGET is set by the workflow.
+# delocate bundles libomp into the wheel. Homebrew's libomp on the macOS 15 runners is built for
+# macOS 15, so the wheels cannot claim less.
+environment = { MACOSX_DEPLOYMENT_TARGET = "15.0" }
+
+# The wheel tag: scikit-build-core takes it from _PYTHON_HOST_PLATFORM, which cibuildwheel sets
+# to the python.org baseline unless given, ignoring MACOSX_DEPLOYMENT_TARGET.
+[[tool.cibuildwheel.overrides]]
+select = "*-macosx_arm64"
+inherit.environment = "append"
+environment = { _PYTHON_HOST_PLATFORM = "macosx-15.0-arm64" }
+
+[[tool.cibuildwheel.overrides]]
+select = "*-macosx_x86_64"
+inherit.environment = "append"
+environment = { _PYTHON_HOST_PLATFORM = "macosx-15.0-x86_64" }

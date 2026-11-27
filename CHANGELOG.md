@@ -40,6 +40,6 @@ The first public release.
   - `MiterRegressor` and `MiterClassifier`, scikit-learn compatible (they pass `check_estimator`).
   - Exact pickling and JSON `save_model` / `load_model`.
   - `miter.tabarena.MiterModel` for AutoGluon and TabArena.
-- **Wheels** for Linux (x86_64, aarch64), macOS (arm64) and Windows (x64), Python 3.10+ (abi3 from
+- **Wheels** for Linux (x86_64, aarch64), macOS 15+ (arm64, x86_64) and Windows (x64), Python 3.10+ (abi3 from
   3.12).
 - **License:** Apache License 2.0.

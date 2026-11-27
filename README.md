@@ -30,7 +30,7 @@ clf = MiterClassifier().fit(X_train, y_train, eval_set=[(X_val, y_val)])
 proba = clf.predict_proba(X_test)
 ```
 
-Wheels for Linux (x86_64, aarch64), macOS (arm64) and Windows (x64); Python 3.10+.
+Wheels for Linux (x86_64, aarch64), macOS 15+ (arm64, x86_64) and Windows (x64); Python 3.10+.
 
 ## Why miter
 
