@@ -1,0 +1,105 @@
+name: Benchmark A/B
+
+# Training speed and model bit-identity of a branch (head) against a base ref, on x86_64 and aarch64
+# Linux runners. Both builds are measured in the same job, interleaved run by run. Runs on pushes to
+# perf/** branches and by hand (any base and head refs).
+on:
+  push:
+    branches: ['perf/**']
+    paths:
+      - 'src/**'
+      - 'include/**'
+      - 'python/**'
+      - 'CMakeLists.txt'
+      - 'benchmarks/ci/**'
+      - '.github/workflows/bench.yml'
+  workflow_dispatch:
+    inputs:
+      base:
+        description: "Base ref (reference build)"
+        required: false
+        default: "main"
+      head:
+        description: "Head ref (defaults to the ref the workflow runs on)"
+        required: false
+        default: ""
+      reps:
+        description: "Interleaved runs per build and setting"
+        required: false
+        default: "5"
+
+concurrency:
+  group: bench-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  ab:
+    name: A/B (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, ubuntu-24.04-arm]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install build and benchmark dependencies
+        run: python -m pip install scikit-build-core nanobind cmake ninja numpy pandas scikit-learn
+
+      - name: Build base and head
+        env:
+          BASE: ${{ inputs.base || 'main' }}
+          HEAD_REF: ${{ inputs.head || github.sha }}
+        run: |
+          git worktree add ../base "$BASE"
+          git worktree add ../head "$HEAD_REF"
+          echo "base: $(git -C ../base rev-parse --short HEAD) ($BASE)" | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "head: $(git -C ../head rev-parse --short HEAD) ($HEAD_REF)" | tee -a "$GITHUB_STEP_SUMMARY"
+          python -m pip install --no-build-isolation --no-deps --target ../build-base ../base
+          python -m pip install --no-build-isolation --no-deps --target ../build-head ../head
+
+      - name: Cache covertype
+        uses: actions/cache@v4
+        with:
+          path: ~/scikit_learn_data
+          key: sklearn-covtype-v1
+
+      - name: Model hashes
+        run: |
+          mkdir -p out
+          PYTHONPATH=../build-base python benchmarks/ci/model_hashes.py out/hash-base.txt > /dev/null
+          PYTHONPATH=../build-head python benchmarks/ci/model_hashes.py out/hash-head.txt > /dev/null
+          {
+            echo "## Model hashes ($(nproc) CPUs, $(uname -m))"
+            if diff -q out/hash-base.txt out/hash-head.txt > /dev/null; then
+              echo "Identical: $(wc -l < out/hash-head.txt) models and predictions."
+            else
+              echo "**Differ** in $(diff out/hash-base.txt out/hash-head.txt | grep -c '^>') of $(wc -l < out/hash-head.txt):"
+              echo '```'; diff out/hash-base.txt out/hash-head.txt | head -40; echo '```'
+            fi
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Speed (interleaved)
+        run: |
+          python benchmarks/ci/speed_ab.py --build base=../build-base --build head=../build-head \
+            --reps "${{ inputs.reps || '5' }}" --out out/speed.md
+          { echo "## Speed ($(nproc) CPUs, $(uname -m))"; cat out/speed.md; } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bench-${{ matrix.os }}
+          path: |
+            out/speed.md
+            out/hash-base.txt
+            out/hash-head.txt
