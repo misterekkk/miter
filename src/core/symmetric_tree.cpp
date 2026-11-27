@@ -169,20 +169,16 @@ find_sym_ctr_split(const Dataset& ds, const std::vector<std::uint32_t>& active_c
     for (const std::uint32_t f : active_cat) {
         const std::size_t cm = ds.cat_sub_index(f);
         if (state.cat_cardinalities[cm] > onehot_max) {
-            cand_projs.push_back(CtrProjection{{f}, {}});
+            cand_projs.push_back(CtrProjection{{f}});
         }
     }
     if (depth >= 1U && eff_max_cplx >= 2) {
         const auto max_cplx = static_cast<std::size_t>(eff_max_cplx);
         for (const auto& base : used_projs) {
-            if (base.complexity() >= max_cplx || base.num_conds.size() > 1U) {
+            if (base.complexity() >= max_cplx) {
                 continue;
             }
             for (const std::uint32_t f : active_cat) {
-                if (!base.num_conds.empty() && params.ctr_num_skip_onehot &&
-                    state.cat_cardinalities[ds.cat_sub_index(f)] <= onehot_max) {
-                    continue;
-                }
                 if (std::find(base.cat_features.begin(), base.cat_features.end(), f) !=
                     base.cat_features.end()) {
                     continue;
@@ -190,7 +186,6 @@ find_sym_ctr_split(const Dataset& ds, const std::vector<std::uint32_t>& active_c
                 CtrProjection next = base;
                 next.cat_features.push_back(f);
                 std::sort(next.cat_features.begin(), next.cat_features.end());
-                std::sort(next.num_conds.begin(), next.num_conds.end());
                 cand_projs.push_back(std::move(next));
             }
         }
@@ -321,24 +316,6 @@ find_sym_ctr_split(const Dataset& ds, const std::vector<std::uint32_t>& active_c
         return best;
     }
 
-    std::size_t n_existing_num_projs = 0U;
-    std::vector<std::uint8_t> proj_is_new;
-    if (params.ctr_new_table_penalty > 0.0 && ctr_ctx.model != nullptr) {
-        proj_is_new.assign(n_projs, 0U);
-        const auto& existing = ctr_ctx.model->ctr_projections;
-        for (const CtrProjection& ep : existing) {
-            if (!ep.num_conds.empty()) {
-                ++n_existing_num_projs;
-            }
-        }
-        for (std::size_t pi = 0U; pi < n_projs; ++pi) {
-            if (!cand_projs[pi].num_conds.empty() &&
-                std::find(existing.begin(), existing.end(), cand_projs[pi]) == existing.end()) {
-                proj_is_new[pi] = 1U;
-            }
-        }
-    }
-
     const std::size_t min_rep = (n >= 40U) ? std::max<std::size_t>(20U, n / 20U) : (n / 2U);
     std::vector<CtrSplitCandidate> job_results(jobs.size());
     auto score_one = [&](std::size_t ji, std::size_t tid) {
@@ -388,15 +365,6 @@ find_sym_ctr_split(const Dataset& ds, const std::vector<std::uint32_t>& active_c
                                   (std::sqrt(frac_u) + 10.0 / std::sqrt(nd));
             } else {
                 denom = 1.0 + 0.25 * reg * frac_u;
-            }
-        }
-        if (!proj.num_conds.empty()) {
-            if (params.ctr_num_gain_margin > 1.0) {
-                denom *= params.ctr_num_gain_margin;
-            }
-            if (params.ctr_new_table_penalty > 0.0 && proj_is_new[job.proj_idx] != 0U) {
-                const double growth = 1.0 + static_cast<double>(n_existing_num_projs) / 32.0;
-                denom *= (1.0 + params.ctr_new_table_penalty * growth);
             }
         }
 
@@ -2453,20 +2421,12 @@ Tree grow_symmetric_tree(const Dataset& ds, const float* g, const float* h, cons
             break;
         }
         if (choice.kind == NodeKind::Categorical) {
-            add_unique_ctr_proj(used_projs, CtrProjection{{choice.cat.feature}, {}});
+            add_unique_ctr_proj(used_projs, CtrProjection{{choice.cat.feature}});
         } else if (choice.kind == NodeKind::Ctr) {
             choice.ctr_id = ctr_ctx->state->register_ctr(choice.ctr.proj, choice.ctr.kind,
                                                          ctr_ctx->target_id, choice.ctr.prior_id,
                                                          choice.ctr.prior_value, *ctr_ctx->model);
             add_unique_ctr_proj(used_projs, choice.ctr.proj);
-        } else if (choice.kind == NodeKind::Axis && params.ctr_num_combinations &&
-                   (params.ctr_num_max_depth < 0 ||
-                    static_cast<int>(d) <= params.ctr_num_max_depth)) {
-            add_unique_ctr_proj(
-                used_projs,
-                CtrProjection{{},
-                              {CtrBinaryCond{choice.axis.feature, choice.axis.threshold_u16,
-                                             choice.axis.nan_go_left}}});
         }
         level_splits[d] = choice;
         actual_depth = d + 1U;

@@ -249,12 +249,6 @@ std::size_t CtrCacheKeyHash::operator()(const CtrCacheKey& k) const noexcept {
     for (const std::uint32_t f : k.proj.cat_features) {
         mix(f);
     }
-    mix(k.proj.num_conds.size());
-    for (const CtrBinaryCond& c : k.proj.num_conds) {
-        mix(c.feature);
-        mix(c.threshold_u16);
-        mix(c.nan_go_left ? 1U : 0U);
-    }
     return h;
 }
 
@@ -269,7 +263,6 @@ int resolve_effective_ctr_complexity(const Dataset& ds,
     }
     const std::size_t p_cat = ds.n_cat_features();
     const std::size_t n = ds.n_rows();
-    const bool has_num = (ds.n_num_features() > 0U);
     if (p_cat == 0U) {
         return 0;
     }
@@ -291,18 +284,12 @@ int resolve_effective_ctr_complexity(const Dataset& ds,
         return (n_very_high_card >= 1U) ? 1 : 0;
     }
     if (p_cat == 1U) {
-        if (params.ctr_num_combinations && has_num) {
-            if (params.ctr_num_skip_onehot && n_high_card == 0U) {
-                return 0;
-            }
-            return 2;
-        }
         return (n_high_card >= 1U) ? 1 : 0;
     }
     if (n < 8000U) {
         return 2;
     }
-    if (p_cat >= 3U || (params.ctr_num_combinations && has_num)) {
+    if (p_cat >= 3U) {
         return 3;
     }
     return 2;
@@ -402,66 +389,33 @@ std::uint32_t CtrTrainingState::register_ctr(const CtrProjection& proj, CtrKind 
     return new_id;
 }
 
-namespace {
-
-void compute_projection_hashes_spans(const Dataset& ds, std::span<const std::uint32_t> cat_features,
-                                     std::span<const CtrBinaryCond> num_conds,
-                                     std::uint64_t* out_hashes) noexcept {
-    const std::size_t n = ds.n_rows();
-    if (cat_features.empty() && num_conds.empty()) {
-        std::fill_n(out_hashes, n, 0ULL);
-        return;
-    }
-    bool first = true;
-    const std::uint32_t* cat_base = ds.cat_hashes_col_major().data();
-    for (const std::uint32_t f : cat_features) {
-        const std::size_t cf = ds.cat_sub_index(f);
-        const std::uint32_t* hf = cat_base + cf * n;
-        if (first) {
-            for (std::size_t i = 0; i < n; ++i) {
-                out_hashes[i] = static_cast<std::uint64_t>(hf[i]);
-            }
-            first = false;
-        } else {
-            for (std::size_t i = 0; i < n; ++i) {
-                out_hashes[i] = combine_cat_hash(out_hashes[i], static_cast<std::uint64_t>(hf[i]));
-            }
-        }
-    }
-    const std::int16_t* code_base = ds.codes_col_major().data();
-    for (const CtrBinaryCond& cond : num_conds) {
-        const std::size_t nf = ds.num_sub_index(cond.feature);
-        const std::int16_t* cf = code_base + nf * n;
-        const std::uint16_t thr = cond.threshold_u16;
-        const bool nan_left = cond.nan_go_left;
-        if (first) {
-            for (std::size_t i = 0; i < n; ++i) {
-                const std::uint16_t u = Q16Quantizer::to_unsigned_code(cf[i]);
-                const bool go_left = (u == kQ16NanCode) ? nan_left : (u < thr);
-                out_hashes[i] = go_left ? kCtrNumLeftHash : kCtrNumRightHash;
-            }
-            first = false;
-        } else {
-            for (std::size_t i = 0; i < n; ++i) {
-                const std::uint16_t u = Q16Quantizer::to_unsigned_code(cf[i]);
-                const bool go_left = (u == kQ16NanCode) ? nan_left : (u < thr);
-                out_hashes[i] =
-                    combine_cat_hash(out_hashes[i], go_left ? kCtrNumLeftHash : kCtrNumRightHash);
-            }
-        }
-    }
-}
-
-} // namespace
-
 void compute_projection_hashes(const Dataset& ds, const CtrProjection& proj,
                                std::uint64_t* out_hashes) noexcept {
-    compute_projection_hashes_spans(ds, proj.cat_features, proj.num_conds, out_hashes);
+    compute_projection_hashes(ds, std::span<const std::uint32_t>{proj.cat_features}, out_hashes);
 }
 
 void compute_projection_hashes(const Dataset& ds, std::span<const std::uint32_t> cat_features,
                                std::uint64_t* out_hashes) noexcept {
-    compute_projection_hashes_spans(ds, cat_features, {}, out_hashes);
+    const std::size_t n = ds.n_rows();
+    if (cat_features.empty()) {
+        std::fill_n(out_hashes, n, 0ULL);
+        return;
+    }
+    const std::uint32_t* cat_base = ds.cat_hashes_col_major().data();
+    {
+        const std::size_t cf = ds.cat_sub_index(cat_features[0]);
+        const std::uint32_t* hf = cat_base + cf * n;
+        for (std::size_t i = 0; i < n; ++i) {
+            out_hashes[i] = static_cast<std::uint64_t>(hf[i]);
+        }
+    }
+    for (std::size_t k = 1U; k < cat_features.size(); ++k) {
+        const std::size_t cf = ds.cat_sub_index(cat_features[k]);
+        const std::uint32_t* hf = cat_base + cf * n;
+        for (std::size_t i = 0; i < n; ++i) {
+            out_hashes[i] = combine_cat_hash(out_hashes[i], static_cast<std::uint64_t>(hf[i]));
+        }
+    }
 }
 
 void compute_projection_hashes(const TransformedData& td,

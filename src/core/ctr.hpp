@@ -16,8 +16,6 @@ namespace miter {
 
 inline constexpr std::uint32_t kMissingCatHash = 0x9e3779b9U;
 inline constexpr std::uint64_t kCtrHashMagic = 0x4906ba494954cb65ULL;
-inline constexpr std::uint64_t kCtrNumLeftHash = 0x517cc1b727220a95ULL;
-inline constexpr std::uint64_t kCtrNumRightHash = 0x94d049bb133111ebULL;
 inline constexpr std::size_t kMaxCtrCacheBytes = 128ULL * 1024ULL * 1024ULL;
 
 std::uint32_t cat_hash_string(std::string_view s) noexcept;

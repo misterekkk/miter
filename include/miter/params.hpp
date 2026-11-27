@@ -69,16 +69,6 @@ struct Params {
     int ctr_max_borders = 15;
     /// Sample-size-aware complexity regularization weight for native CTR combinations (>= 0).
     double ctr_model_size_reg = 0.5;
-    /// Whether to allow binary numeric-split x categorical CTR combinations.
-    bool ctr_num_combinations = false;
-    /// Multiplicative gain hurdle required for numeric x categorical CTR splits (>= 1.0).
-    double ctr_num_gain_margin = 1.0;
-    /// Maximum tree depth at which Axis splits are recorded for numeric x cat CTR (-1 = all).
-    int ctr_num_max_depth = -1;
-    /// Progressive penalty for creating brand-new numeric x cat CTR projections (>= 0.0).
-    double ctr_new_table_penalty = 0.0;
-    /// When true, numeric x cat combinations skip low-cardinality (<= max_cat_to_onehot) cats.
-    bool ctr_num_skip_onehot = false;
     /// Per-feature 16-bit numeric quantization mode (Linear, Quantile, or Auto).
     QuantizerMode quantizer_mode = QuantizerMode::Linear;
 };

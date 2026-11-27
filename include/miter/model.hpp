@@ -48,22 +48,12 @@ enum class CtrKind : std::uint8_t {
     Counter = 1,
 };
 
-struct CtrBinaryCond {
-    std::uint32_t feature = 0;
-    std::uint16_t threshold_u16 = 0;
-    bool nan_go_left = true;
-
-    bool operator==(const CtrBinaryCond&) const = default;
-    auto operator<=>(const CtrBinaryCond&) const = default;
-};
-
 struct CtrProjection {
     std::vector<std::uint32_t> cat_features;
-    std::vector<CtrBinaryCond> num_conds;
 
     bool operator==(const CtrProjection&) const = default;
     auto operator<=>(const CtrProjection&) const = default;
-    std::size_t complexity() const noexcept { return cat_features.size() + num_conds.size(); }
+    std::size_t complexity() const noexcept { return cat_features.size(); }
 };
 
 struct CtrTable {

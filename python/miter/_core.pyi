@@ -59,11 +59,6 @@ class Params:
     ctr_n_permutations: int
     ctr_max_borders: int
     ctr_model_size_reg: float
-    ctr_num_combinations: bool
-    ctr_num_gain_margin: float
-    ctr_num_max_depth: int
-    ctr_new_table_penalty: float
-    ctr_num_skip_onehot: bool
     quantizer_mode: QuantizerMode
     def __init__(self) -> None: ...
 

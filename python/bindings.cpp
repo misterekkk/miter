@@ -559,11 +559,6 @@ NB_MODULE(_core, m) {
         .def_rw("ctr_n_permutations", &miter::Params::ctr_n_permutations)
         .def_rw("ctr_max_borders", &miter::Params::ctr_max_borders)
         .def_rw("ctr_model_size_reg", &miter::Params::ctr_model_size_reg)
-        .def_rw("ctr_num_combinations", &miter::Params::ctr_num_combinations)
-        .def_rw("ctr_num_gain_margin", &miter::Params::ctr_num_gain_margin)
-        .def_rw("ctr_num_max_depth", &miter::Params::ctr_num_max_depth)
-        .def_rw("ctr_new_table_penalty", &miter::Params::ctr_new_table_penalty)
-        .def_rw("ctr_num_skip_onehot", &miter::Params::ctr_num_skip_onehot)
         .def_rw("quantizer_mode", &miter::Params::quantizer_mode);
 
     nb::class_<miter::Model>(m, "Model")

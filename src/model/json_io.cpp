@@ -527,21 +527,6 @@ std::string model_to_json(const Model& model) {
     if (model.params.ctr_model_size_reg != 0.5) {
         os << ", \"ctr_model_size_reg\": " << model.params.ctr_model_size_reg;
     }
-    if (model.params.ctr_num_combinations) {
-        os << ", \"ctr_num_combinations\": 1";
-    }
-    if (model.params.ctr_num_gain_margin != 1.0) {
-        os << ", \"ctr_num_gain_margin\": " << model.params.ctr_num_gain_margin;
-    }
-    if (model.params.ctr_num_max_depth != -1) {
-        os << ", \"ctr_num_max_depth\": " << model.params.ctr_num_max_depth;
-    }
-    if (model.params.ctr_new_table_penalty != 0.0) {
-        os << ", \"ctr_new_table_penalty\": " << model.params.ctr_new_table_penalty;
-    }
-    if (model.params.ctr_num_skip_onehot) {
-        os << ", \"ctr_num_skip_onehot\": 1";
-    }
     if (model.params.quantizer_mode == QuantizerMode::Quantile) {
         os << ", \"quantizer_mode\": \"quantile\"";
     } else if (model.params.quantizer_mode == QuantizerMode::Auto) {
@@ -613,35 +598,14 @@ std::string model_to_json(const Model& model) {
                 os << ", ";
             }
             const auto& proj = model.ctr_projections[i];
-            if (proj.num_conds.empty()) {
-                os << "[";
-                for (std::size_t k = 0; k < proj.cat_features.size(); ++k) {
-                    if (k > 0U) {
-                        os << ", ";
-                    }
-                    os << proj.cat_features[k];
+            os << "[";
+            for (std::size_t k = 0; k < proj.cat_features.size(); ++k) {
+                if (k > 0U) {
+                    os << ", ";
                 }
-                os << "]";
-            } else {
-                os << "{\"cat_features\": [";
-                for (std::size_t k = 0; k < proj.cat_features.size(); ++k) {
-                    if (k > 0U) {
-                        os << ", ";
-                    }
-                    os << proj.cat_features[k];
-                }
-                os << "], \"num_conds\": [";
-                for (std::size_t k = 0; k < proj.num_conds.size(); ++k) {
-                    if (k > 0U) {
-                        os << ", ";
-                    }
-                    const CtrBinaryCond& nc = proj.num_conds[k];
-                    os << "{\"feature\": " << nc.feature
-                       << ", \"threshold_u16\": " << nc.threshold_u16
-                       << ", \"nan_go_left\": " << (nc.nan_go_left ? "true" : "false") << "}";
-                }
-                os << "]}";
+                os << proj.cat_features[k];
             }
+            os << "]";
         }
         os << "],\n";
     }
@@ -873,23 +837,6 @@ Model model_from_json(std::string_view json_text) {
         if (const auto csr = p.find("ctr_model_size_reg"); csr != p.end()) {
             model.params.ctr_model_size_reg = csr->second.as_double();
         }
-        if (const auto cnc = p.find("ctr_num_combinations"); cnc != p.end()) {
-            model.params.ctr_num_combinations =
-                cnc->second.is_bool() ? cnc->second.as_bool() : (cnc->second.as_i64() != 0);
-        }
-        if (const auto cgm = p.find("ctr_num_gain_margin"); cgm != p.end()) {
-            model.params.ctr_num_gain_margin = cgm->second.as_double();
-        }
-        if (const auto cmd = p.find("ctr_num_max_depth"); cmd != p.end()) {
-            model.params.ctr_num_max_depth = static_cast<int>(cmd->second.as_i64());
-        }
-        if (const auto cnt = p.find("ctr_new_table_penalty"); cnt != p.end()) {
-            model.params.ctr_new_table_penalty = cnt->second.as_double();
-        }
-        if (const auto cso = p.find("ctr_num_skip_onehot"); cso != p.end()) {
-            model.params.ctr_num_skip_onehot =
-                cso->second.is_bool() ? cso->second.as_bool() : (cso->second.as_i64() != 0);
-        }
         if (const auto qm = p.find("quantizer_mode"); qm != p.end()) {
             const std::string& qmv = qm->second.as_string();
             if (qmv == "linear") {
@@ -970,46 +917,13 @@ Model model_from_json(std::string_view json_text) {
     if (const auto cp_it = root.find("ctr_projections"); cp_it != root.end()) {
         for (const auto& pv : cp_it->second.as_array()) {
             CtrProjection proj;
-            if (pv.is_array()) {
-                for (const auto& fv : pv.as_array()) {
-                    const std::int64_t fi = fv.as_i64();
-                    if (fi < 0 || static_cast<std::size_t>(fi) >= model.n_features ||
-                        model.feature_kinds[static_cast<std::size_t>(fi)] != 1U) {
-                        throw std::runtime_error("Invalid ctr_projection feature index in JSON");
-                    }
-                    proj.cat_features.push_back(static_cast<std::uint32_t>(fi));
+            for (const auto& fv : pv.as_array()) {
+                const std::int64_t fi = fv.as_i64();
+                if (fi < 0 || static_cast<std::size_t>(fi) >= model.n_features ||
+                    model.feature_kinds[static_cast<std::size_t>(fi)] != 1U) {
+                    throw std::runtime_error("Invalid ctr_projection feature index in JSON");
                 }
-            } else {
-                const auto& po = pv.as_object();
-                if (const auto cf_it = po.find("cat_features"); cf_it != po.end()) {
-                    for (const auto& fv : cf_it->second.as_array()) {
-                        const std::int64_t fi = fv.as_i64();
-                        if (fi < 0 || static_cast<std::size_t>(fi) >= model.n_features ||
-                            model.feature_kinds[static_cast<std::size_t>(fi)] != 1U) {
-                            throw std::runtime_error(
-                                "Invalid ctr_projection cat_features index in JSON");
-                        }
-                        proj.cat_features.push_back(static_cast<std::uint32_t>(fi));
-                    }
-                }
-                if (const auto nc_it = po.find("num_conds"); nc_it != po.end()) {
-                    for (const auto& cv : nc_it->second.as_array()) {
-                        const auto& co = cv.as_object();
-                        const std::int64_t fi = require_field(co, "feature").as_i64();
-                        const std::int64_t thr = require_field(co, "threshold_u16").as_i64();
-                        if (fi < 0 || static_cast<std::size_t>(fi) >= model.n_features ||
-                            model.feature_kinds[static_cast<std::size_t>(fi)] != 0U || thr < 0 ||
-                            thr > 65535) {
-                            throw std::runtime_error(
-                                "Invalid ctr_projection num_conds entry in JSON");
-                        }
-                        CtrBinaryCond cond;
-                        cond.feature = static_cast<std::uint32_t>(fi);
-                        cond.threshold_u16 = static_cast<std::uint16_t>(thr);
-                        cond.nan_go_left = require_field(co, "nan_go_left").as_bool();
-                        proj.num_conds.push_back(cond);
-                    }
-                }
+                proj.cat_features.push_back(static_cast<std::uint32_t>(fi));
             }
             model.ctr_projections.push_back(std::move(proj));
         }

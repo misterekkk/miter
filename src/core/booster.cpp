@@ -99,15 +99,6 @@ void validate_params(const Params& params) {
     if (!std::isfinite(params.ctr_model_size_reg) || params.ctr_model_size_reg < 0.0) {
         throw std::invalid_argument("ctr_model_size_reg must be finite and >= 0");
     }
-    if (!std::isfinite(params.ctr_num_gain_margin) || params.ctr_num_gain_margin < 1.0) {
-        throw std::invalid_argument("ctr_num_gain_margin must be finite and >= 1.0");
-    }
-    if (params.ctr_num_max_depth < -1) {
-        throw std::invalid_argument("ctr_num_max_depth must be >= -1");
-    }
-    if (!std::isfinite(params.ctr_new_table_penalty) || params.ctr_new_table_penalty < 0.0) {
-        throw std::invalid_argument("ctr_new_table_penalty must be finite and >= 0.0");
-    }
     if (params.quantizer_mode != QuantizerMode::Linear &&
         params.quantizer_mode != QuantizerMode::Quantile &&
         params.quantizer_mode != QuantizerMode::Auto) {
