@@ -61,7 +61,9 @@ jobs:
             ${{ matrix.cc }} $FLAGS -c "$C/$f/$f.c" -I"$C/$f" -o "$f.o"
           done
           LIBM=$([ "$RUNNER_OS" = Windows ] && echo "" || echo "-lm")
-          ${{ matrix.cc }} $FLAGS benchmarks/ci/core_math_bench.c exp.o log.o log1p.o sin.o cos.o -o bench $LIBM
+          # macOS's libm has no roundeven, which the x86-64 baseline (no SSE4.1) calls.
+          EXTRA=$([ "$RUNNER_OS" = macOS ] && echo "benchmarks/ci/roundeven_fallback.c" || echo "")
+          ${{ matrix.cc }} $FLAGS benchmarks/ci/core_math_bench.c $EXTRA exp.o log.o log1p.o sin.o cos.o -o bench $LIBM
 
       - name: Benchmark
         shell: bash
