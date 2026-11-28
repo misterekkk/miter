@@ -563,6 +563,7 @@ NB_MODULE(_core, m) {
         .def_rw("ctr_n_permutations", &miter::Params::ctr_n_permutations)
         .def_rw("ctr_max_borders", &miter::Params::ctr_max_borders)
         .def_rw("ctr_min_cardinality", &miter::Params::ctr_min_cardinality)
+        .def_rw("enforce_min_hessian", &miter::Params::enforce_min_hessian)
         .def_rw("ctr_model_size_reg", &miter::Params::ctr_model_size_reg)
         .def_rw("quantizer_mode", &miter::Params::quantizer_mode);
 

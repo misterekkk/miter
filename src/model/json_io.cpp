@@ -530,6 +530,9 @@ std::string model_to_json(const Model& model) {
            << ", \"ctr_n_permutations\": " << model.params.ctr_n_permutations
            << ", \"ctr_max_borders\": " << model.params.ctr_max_borders;
     }
+    if (model.params.enforce_min_hessian) {
+        os << ", \"enforce_min_hessian\": true";
+    }
     if (model.params.ctr_min_cardinality != 0) {
         os << ", \"ctr_min_cardinality\": " << model.params.ctr_min_cardinality;
     }
@@ -850,6 +853,9 @@ Model model_from_json(std::string_view json_text) {
         }
         if (const auto cmb = p.find("ctr_max_borders"); cmb != p.end()) {
             model.params.ctr_max_borders = static_cast<int>(cmb->second.as_i64());
+        }
+        if (const auto emh = p.find("enforce_min_hessian"); emh != p.end()) {
+            model.params.enforce_min_hessian = emh->second.as_bool();
         }
         if (const auto cmc = p.find("ctr_min_cardinality"); cmc != p.end()) {
             model.params.ctr_min_cardinality = static_cast<int>(cmc->second.as_i64());

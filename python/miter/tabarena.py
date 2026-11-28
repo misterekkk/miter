@@ -61,6 +61,7 @@ _FORWARDED = (
     "ctr_n_permutations",
     "ctr_max_borders",
     "ctr_min_cardinality",
+    "enforce_min_hessian",
     "ctr_model_size_reg",
 )
 

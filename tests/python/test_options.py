@@ -156,3 +156,23 @@ def test_ctr_min_cardinality_leaves_low_cardinality_features_to_k1(tmp_path: Any
     np.testing.assert_array_equal(type(some).load_model(str(path)).predict(X), some.predict(X))
     with pytest.raises(ValueError, match="ctr_min_cardinality"):
         MiterRegressor(ctr_min_cardinality=-1).fit(X, y)
+
+
+def test_enforce_min_hessian_applies_the_bound_in_symmetric_trees(tmp_path: Any) -> None:
+    rng = np.random.default_rng(6)
+    X = rng.normal(size=(2000, 5))
+    y = (X[:, 0] + 0.5 * rng.normal(size=2000) > 1.8).astype(int)  # about 5% positives
+    kw = dict(n_estimators=40, random_state=0, early_stopping_rounds=None, min_sum_hessian_in_leaf=2.0)
+    loose = MiterClassifier(**kw).fit(X, y)
+    strict = MiterClassifier(enforce_min_hessian=True, **kw).fit(X, y)
+    # With lambda_l2 = 3 the bound was not applied in symmetric trees; enforcing it changes the model.
+    assert not np.array_equal(loose.predict_proba(X), strict.predict_proba(X))
+    # min_sum_hessian_in_leaf at its default without the switch: unchanged models.
+    base = MiterClassifier(n_estimators=40, random_state=0, early_stopping_rounds=None).fit(X, y)
+    np.testing.assert_array_equal(base.predict_proba(X),
+                                  MiterClassifier(n_estimators=40, random_state=0, early_stopping_rounds=None,
+                                                  enforce_min_hessian=False).fit(X, y).predict_proba(X))
+    path = tmp_path / "m.json"
+    strict.save_model(str(path))
+    assert '"enforce_min_hessian": true' in path.read_text()
+    np.testing.assert_array_equal(type(strict).load_model(str(path)).predict_proba(X), strict.predict_proba(X))

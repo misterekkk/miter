@@ -264,7 +264,7 @@ Tree grow_symmetric_tree(const Dataset& ds, const float* g, const float* h, cons
          ctr_ctx->state->effective_max_complexity > 0 && ds.n_cat_features() > 0U);
     std::size_t actual_depth = 0U;
     const double lam = params.lambda_l2;
-    const double min_h = params.min_sum_hessian_in_leaf;
+    const double min_h = sym_detail::sym_min_hessian(params);
     const std::int32_t min_c = params.min_data_in_leaf;
     const double min_gain = params.min_gain_to_split;
     const int n_threads =

@@ -32,6 +32,12 @@ struct SymSplitChoice {
     std::uint32_t ctr_id = 0;
 };
 
+/// The hessian bound symmetric split searches apply: `min_sum_hessian_in_leaf` when `lambda_l2 == 0`
+/// or `enforce_min_hessian` is set, otherwise 0 (no bound; the historical behaviour).
+inline double sym_min_hessian(const Params& p) noexcept {
+    return (p.lambda_l2 == 0.0 || p.enforce_min_hessian) ? p.min_sum_hessian_in_leaf : 0.0;
+}
+
 inline bool eval_multi_leaf_gain(const double* gl_arr, const double* hl_arr,
                                  const std::int32_t* cl_arr, const double* leaf_g,
                                  const double* leaf_h, const std::int32_t* leaf_c,
@@ -51,7 +57,7 @@ inline bool eval_multi_leaf_gain(const double* gl_arr, const double* hl_arr,
         }
         const double hl = hl_arr[l];
         const double hr = leaf_h[l] - hl;
-        if (lam == 0.0 && (hl < min_h || hr < min_h)) {
+        if (hl < min_h || hr < min_h) {  // min_h is sym_min_hessian(): 0 when not applied
             return false;
         }
         const double gl = gl_arr[l];

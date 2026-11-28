@@ -64,6 +64,10 @@ ARMS: dict[str, Arm] = {
     "MDL20_CLF": _clf_only({"min_data_in_leaf": 20}),
     "L2_10_CLF": _clf_only({"lambda_l2": 10.0}),
     "MSH1_CLF": _clf_only({"min_sum_hessian_in_leaf": 1.0}),
+    # Amendment 1: symmetric trees ignored min_sum_hessian_in_leaf unless lambda_l2 == 0.
+    "MSHFIX": lambda kind, n: {"enforce_min_hessian": True},
+    "MSHFIX01_CLF": _clf_only({"enforce_min_hessian": True, "min_sum_hessian_in_leaf": 0.1}),
+    "MSHFIX1_CLF": _clf_only({"enforce_min_hessian": True, "min_sum_hessian_in_leaf": 1.0}),
     # H4: CTR on single features above a cardinality threshold.
     "CTR_K16": _ctr_card(16),
     "CTR_K32": _ctr_card(32),

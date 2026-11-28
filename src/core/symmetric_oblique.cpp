@@ -533,7 +533,7 @@ find_sym_oblique_split(const Dataset& ds, const std::uint32_t* leaf_rows, std::s
     }
 
     const double lam = params.lambda_l2;
-    const double min_h = params.min_sum_hessian_in_leaf;
+    const double min_h = sym_min_hessian(params);
     const std::int32_t min_c = params.min_data_in_leaf;
     const double min_gain = params.min_gain_to_split;
     const int n_threads =
@@ -1223,7 +1223,7 @@ ObliqueSplitCandidate find_sym_oblique_split_sampled(
     bool best_nan_left = true;
     bool found = false;
     scan_sym_oblique_hist(hist, n_leaves, leaf_g, leaf_h, leaf_c, parent_score, params.lambda_l2,
-                          params.min_sum_hessian_in_leaf, params.min_data_in_leaf,
+                          sym_min_hessian(params), params.min_data_in_leaf,
                           params.min_gain_to_split, pmin, range, any_nan, best_gain, best_thr,
                           best_nan_left, found);
     if (!found) {

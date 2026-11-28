@@ -61,6 +61,7 @@ class Params:
     ctr_n_permutations: int
     ctr_max_borders: int
     ctr_min_cardinality: int
+    enforce_min_hessian: bool
     ctr_model_size_reg: float
     quantizer_mode: QuantizerMode
     def __init__(self) -> None: ...
