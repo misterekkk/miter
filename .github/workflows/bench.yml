@@ -37,8 +37,41 @@ permissions:
   contents: read
 
 jobs:
+  # Downloads covertype and saves it to the cache. The A/B job builds and runs code from arbitrary
+  # refs, so it only restores the cache and never saves it: nothing written there can reach a
+  # later run.
+  datasets:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Look up covertype cache
+        id: lookup
+        uses: actions/cache/restore@v6
+        with:
+          path: ~/scikit_learn_data
+          key: sklearn-covtype-v1
+          lookup-only: true
+
+      - uses: actions/setup-python@v7
+        if: steps.lookup.outputs.cache-hit != 'true'
+        with:
+          python-version: "3.12"
+
+      - name: Download covertype
+        if: steps.lookup.outputs.cache-hit != 'true'
+        run: |
+          python -m pip install scikit-learn
+          python -c "from sklearn.datasets import fetch_covtype; fetch_covtype()"
+
+      - name: Save covertype cache
+        if: steps.lookup.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: ~/scikit_learn_data
+          key: sklearn-covtype-v1
+
   ab:
     name: A/B (${{ matrix.os }})
+    needs: datasets
     runs-on: ${{ matrix.os }}
     timeout-minutes: 120
     strategy:
@@ -46,11 +79,11 @@ jobs:
       matrix:
         os: [ubuntu-latest, ubuntu-24.04-arm]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
 
@@ -70,8 +103,8 @@ jobs:
           python -m pip install --no-build-isolation --no-deps --target ../build-base ../base
           python -m pip install --no-build-isolation --no-deps --target ../build-head ../head
 
-      - name: Cache covertype
-        uses: actions/cache@v4
+      - name: Restore covertype
+        uses: actions/cache/restore@v6
         with:
           path: ~/scikit_learn_data
           key: sklearn-covtype-v1
@@ -82,7 +115,7 @@ jobs:
           PYTHONPATH=../build-base python benchmarks/ci/model_hashes.py out/hash-base.txt > /dev/null
           PYTHONPATH=../build-head python benchmarks/ci/model_hashes.py out/hash-head.txt > /dev/null
           {
-            echo "## Model hashes ($(nproc) CPUs, $(uname -m))"
+            echo "## Model hashes ($(nproc) CPUs, $(uname -m), $(lscpu | sed -n 's/^Model name: *//p' | head -1))"
             if diff -q out/hash-base.txt out/hash-head.txt > /dev/null; then
               echo "Identical: $(wc -l < out/hash-head.txt) models and predictions."
             else
@@ -94,10 +127,11 @@ jobs:
       - name: Speed (interleaved)
         run: |
           python benchmarks/ci/speed_ab.py --build base=../build-base --build head=../build-head \
+            --data covertype 500000x50 100000x20 200000x8 50000x100 \
             --reps "${{ inputs.reps || '5' }}" --out out/speed.md
           { echo "## Speed ($(nproc) CPUs, $(uname -m))"; cat out/speed.md; } >> "$GITHUB_STEP_SUMMARY"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: bench-${{ matrix.os }}

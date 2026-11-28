@@ -33,6 +33,7 @@ using sym_detail::expand_efb_member;
 using sym_detail::find_sym_ctr_split;
 using sym_detail::find_sym_oblique_split;
 using sym_detail::find_sym_oblique_split_sampled;
+using sym_detail::hist_group_size;
 using sym_detail::kPurposeExtraTrees;
 using sym_detail::kSymMaxLeaves;
 using sym_detail::scan_sym_axis_feature;
@@ -353,12 +354,14 @@ Tree grow_symmetric_tree(const Dataset& ds, const float* g, const float* h, cons
                 return !sym.efb_bundle_of.empty() && sym.efb_bundle_of[f] >= 0;
             };
             const bool par = n_threads > 1 && n_root * n_num_act >= 20000U;
-            // In parallel, smaller groups when there are too few features to balance the threads.
-            const auto nt = static_cast<std::size_t>(n_threads);
-            const std::size_t grp = !par                     ? kAxisGroup
-                                    : (n_num_act >= 8U * nt) ? 4U
-                                    : (n_num_act >= 4U * nt) ? 2U
-                                                             : 1U;
+            // In parallel, the group size never raises the per-thread work (hist_group_size); EFB
+            // members are cheap single tasks and are not counted.
+            std::size_t n_reg = 0U;
+            for (const std::uint32_t f : active_num) {
+                n_reg += is_efb(f) ? 0U : 1U;
+            }
+            const std::size_t grp =
+                par ? hist_group_size(n_reg, static_cast<std::size_t>(n_threads)) : kAxisGroup;
             std::vector<std::pair<std::size_t, std::size_t>> groups;
             for (std::size_t i = 0; i < n_num_act;) {
                 std::size_t len = 1U;

@@ -807,7 +807,7 @@ find_sym_oblique_split(const Dataset& ds, const std::uint32_t* leaf_rows, std::s
         // sym_oblique_pass2_multi); smaller groups when there are too few candidates to keep every
         // thread busy. Each candidate's result lands in its own slot, so grouping changes nothing.
         const auto nt = static_cast<std::size_t>(n_threads);
-        const std::size_t grp = (n_active >= 4U * nt) ? 4U : (n_active >= 2U * nt) ? 2U : 1U;
+        const std::size_t grp = hist_group_size(n_active, nt);
         const std::size_t n_groups = (n_active + grp - 1U) / grp;
 #ifdef _OPENMP
 #pragma omp parallel for schedule(dynamic, 1) num_threads(n_threads)
