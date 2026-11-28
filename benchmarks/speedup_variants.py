@@ -22,6 +22,8 @@ VARIANTS: dict[str, dict[str, Any]] = {
     "E4B": {"oblique_gain_margin": 0.05},
     # E6: presets (exp_e6_options_prereg.md). Both failed and `preset` was removed; the variants were
     # {"preset": "accurate"} (m_mult 8) and {"preset": "fast"} (oblique splits at depth 0-1 only).
+    # Regression check before 0.1.1: the library defaults again, compared with E3 (the same default).
+    "R011": {},
     # Exploratory ablation of the method's components (relative to the current default).
     "AB_NO_OBLIQUE": {"m_mult": 0},
     "AB_LEAFWISE": {"grow_policy": "leafwise"},
