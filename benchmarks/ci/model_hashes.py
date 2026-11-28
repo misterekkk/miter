@@ -16,8 +16,17 @@ from miter import MiterClassifier, MiterRegressor
 
 rng = np.random.default_rng(0)
 
+def normal(shape):
+    """Approximately normal values from arithmetic alone (sum of 12 uniforms - 6): numpy's
+    normal sampler calls the system's exp/log in its tails, which differ between platforms."""
+    out = np.zeros(shape)
+    for _ in range(12):
+        out = out + rng.random(shape)
+    return out - 6.0
+
+
 def make(n, p, task, cats=0, sparse=0, missing=0.0):
-    X = rng.normal(size=(n, p))
+    X = normal((n, p))
     if missing:
         X[rng.random(X.shape) < missing] = np.nan
     cols = {f"x{i}": X[:, i] for i in range(p)}
@@ -34,12 +43,13 @@ def make(n, p, task, cats=0, sparse=0, missing=0.0):
     def c(i: int) -> np.ndarray:
         return np.nan_to_num(X[:, i % p])
 
-    z = c(0) * 1.5 + np.sin(c(1) * 2) + c(2) * c(3)
+    t = c(1) * 2  # a cubic instead of sin: no libm call, the same bits on every platform
+    z = c(0) * 1.5 + (t - t * t * t / 6.0) + c(2) * c(3)
     if cats:
         z = z + df["c0"].cat.codes.to_numpy() % 3 * 0.7
     if sparse:
         z = z + 0.4 * df["s0"].to_numpy() - 0.3 * df["s1"].to_numpy()
-    z = z + rng.normal(scale=0.5, size=n)
+    z = z + 0.5 * normal(n)
     if task == "reg":
         y = z
     elif task == "bin":
