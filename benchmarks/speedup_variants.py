@@ -24,6 +24,9 @@ VARIANTS: dict[str, dict[str, Any]] = {
     # {"preset": "accurate"} (m_mult 8) and {"preset": "fast"} (oblique splits at depth 0-1 only).
     # Regression check before 0.1.1: the library defaults again, compared with E3 (the same default).
     "R011": {},
+    # E7 phase A (development data only, exp_e7_ctr_default_prereg.md): CTR candidates.
+    "E7_C1": {"max_ctr_complexity": 1},
+    "E7_C1P4": {"max_ctr_complexity": 1, "ctr_n_permutations": 4},
     # Exploratory ablation of the method's components (relative to the current default).
     "AB_NO_OBLIQUE": {"m_mult": 0},
     "AB_LEAFWISE": {"grow_policy": "leafwise"},
