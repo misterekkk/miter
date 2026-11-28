@@ -76,6 +76,13 @@ CONFIGS = [
 ]
 
 out = []
+# The inputs themselves, so that a cross-platform difference can be told apart from a data one.
+for name, (X, y) in DATA.items():
+    num = X.select_dtypes("number").to_numpy(dtype=np.float64)
+    cat = "|".join(X[c].astype(str).str.cat(sep=",") for c in X.columns if X[c].dtype == "category")
+    hx = hashlib.sha256(np.ascontiguousarray(num).tobytes() + cat.encode()).hexdigest()[:16]
+    hy = hashlib.sha256(np.ascontiguousarray(y, dtype=np.float64).tobytes()).hexdigest()[:16]
+    out.append(f"data {name} nj=0 model={hx} pred={hy}")
 for name, kw in CONFIGS:
     X, y = DATA[name]
     for nj in (1, 4):
@@ -91,7 +98,7 @@ for name, kw in CONFIGS:
             path = os.path.join(d, "m.bin")
             try:
                 m.save_model(path)
-                hm = hashlib.sha256(open(path, "rb").read()).hexdigest()[:16]
+                hm = hashlib.sha256(open(path, "rb").read().replace(b"\r\n", b"\n")).hexdigest()[:16]
             except NotImplementedError:
                 hm = "n/a"
         pred = m.predict_proba(X) if hasattr(m, "predict_proba") else m.predict(X)

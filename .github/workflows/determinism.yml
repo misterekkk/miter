@@ -1,0 +1,92 @@
+name: Cross-platform determinism
+
+# The same seed must give the same model and predictions on every platform, not only on every
+# thread count. Each platform writes the hashes of 27 configurations × 1 and 4 threads
+# (benchmarks/ci/model_hashes.py); the last job compares them. Report-only for now: classification
+# still differs between platforms (gradients use the system's exp/log); it becomes a required check
+# once miter uses its own exp/log.
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'include/**'
+      - 'python/**'
+      - 'CMakeLists.txt'
+      - 'benchmarks/ci/model_hashes.py'
+      - '.github/workflows/determinism.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: determinism-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  hashes:
+    name: Hashes (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, ubuntu-24.04-arm, macos-15, macos-15-intel, windows-latest]
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Install miter
+        run: python -m pip install . numpy pandas
+
+      - name: Model hashes
+        shell: bash
+        run: |
+          mkdir -p out
+          python benchmarks/ci/model_hashes.py "out/hash-${{ matrix.os }}.txt" > /dev/null
+          echo "$(python -c 'import platform; print(platform.system(), platform.machine())')" > "out/platform-${{ matrix.os }}.txt"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: hashes-${{ matrix.os }}
+          path: out/
+
+  compare:
+    name: Compare platforms
+    needs: hashes
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          path: out
+          merge-multiple: true
+
+      - name: Compare (report only)
+        run: |
+          python - <<'PY' | tee -a "$GITHUB_STEP_SUMMARY"
+          import glob, os
+          ref = "ubuntu-latest"
+          def load(os_name):
+              rows = {}
+              for line in open(f"out/hash-{os_name}.txt"):
+                  key, rest = line.rsplit(" model=", 1)
+                  model, pred = rest.split()
+                  rows[key] = (model, pred.removeprefix("pred="))
+              return rows
+          names = sorted(p[len("out/hash-"):-4] for p in glob.glob("out/hash-*.txt"))
+          base = load(ref)
+          print(f"## Cross-platform determinism (reference: {ref}, {len(base)} models)\n")
+          print("| platform | system | predictions identical | models identical | differing configurations |")
+          print("|---|---|---:|---:|---|")
+          for name in names:
+              other = load(name)
+              system = open(f"out/platform-{name}.txt").read().strip()
+              same_pred = sum(other[k][1] == v[1] for k, v in base.items() if k in other)
+              same_model = sum(other[k][0] == v[0] for k, v in base.items() if k in other)
+              diff = sorted({k.rsplit(" nj=", 1)[0] for k, v in base.items() if k in other and other[k][1] != v[1]})
+              shown = "; ".join(diff[:6]) + (" …" if len(diff) > 6 else "")
+              print(f"| {name} | {system} | {same_pred}/{len(base)} | {same_model}/{len(base)} | {shown or '—'} |")
+          PY
