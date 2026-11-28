@@ -1,7 +1,7 @@
 """Interleaved A/B training-speed comparison of two miter builds.
 
     python benchmarks/ci/speed_ab.py --build base=DIR_A --build head=DIR_B --reps 5 --out ab.md
-    python benchmarks/ci/speed_ab.py --build def=DIR --build fast=DIR --params fast='{"preset": "fast"}' ...
+    python benchmarks/ci/speed_ab.py --build def=DIR --build m2=DIR --params m2='{"m_mult": 2}' ...
 
 Each build is an installed copy of miter (`pip install --target DIR .`). Every measurement runs in
 a fresh process, and the builds alternate run by run, so drifts in machine speed (other load,

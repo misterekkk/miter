@@ -29,7 +29,6 @@ N_TREES = 100
 
 MITER_CONFIGS: dict[str, dict[str, Any]] = {
     "miter default": {},  # symmetric depth 6, m_mult 4 (S6_M4)
-    "miter fast": {"preset": "fast"},
     "miter leaf-wise": {"grow_policy": "leafwise"},  # the default before v1.0
     "miter + auto quantizer + CTR": {"quantizer": "auto", "max_ctr_complexity": "auto", "ctr_n_permutations": 4},
 }

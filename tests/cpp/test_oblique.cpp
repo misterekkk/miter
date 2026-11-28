@@ -305,7 +305,7 @@ TEST(ObliqueTest, PresetsDepthLimitAndZeroMult) {
     }
     const auto ds = miter::Dataset::fit_numeric(x.data(), n, p, false);
 
-    // fast preset: oblique_max_depth = 1 -> no oblique splits at depth >= 2
+    // oblique_max_depth = 1 -> no oblique splits at depth >= 2
     miter::Params fast_params;
     fast_params.n_estimators = 5;
     fast_params.num_leaves = 16;

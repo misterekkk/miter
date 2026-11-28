@@ -61,7 +61,7 @@ DATA = {
 
 CONFIGS = [
     ("reg", {}), ("bin", {}), ("multi", {}), ("sparse", {}), ("sparse", {"efb": False}),
-    ("reg", {"preset": "fast"}), ("reg", {"max_depth": 8}), ("reg", {"max_depth": 4, "k_proj": 2}),
+    ("reg", {"m_mult": 2}), ("reg", {"max_depth": 8}), ("reg", {"max_depth": 4, "k_proj": 2}),
     ("bin", {"max_ctr_complexity": 2}),
     ("multi", {"extra_trees": True}),
     ("reg", {"bagging_fraction": 0.7, "feature_fraction": 0.8}),

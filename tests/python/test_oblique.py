@@ -25,19 +25,19 @@ def test_oblique_beats_axis_on_diagonal_boundary() -> None:
     assert acc_obl > 0.90
 
 
-def test_oblique_presets_kproj_nan_determinism_and_roundtrip(tmp_path: Path) -> None:
+def test_oblique_m_mult_kproj_nan_determinism_and_roundtrip(tmp_path: Path) -> None:
     rng = np.random.default_rng(2028)
     X = rng.normal(size=(240, 5))
     X[::12, 3] = np.nan
     y = 2.0 * (X[:, 0] - 0.5 * X[:, 1] + 0.25 * X[:, 2]) + 0.1 * rng.normal(size=240)
 
-    for preset, k_proj in [("default", 0), ("fast", 0), ("accurate", 3)]:
+    for m_mult, k_proj in [(None, 0), (2, 0), (8, 3)]:
         reg1 = MiterRegressor(
             n_estimators=15,
             learning_rate=0.1,
             num_leaves=8,
             min_data_in_leaf=5,
-            preset=preset,
+            m_mult=m_mult,
             k_proj=k_proj,
             random_state=11,
         ).fit(X, y)
@@ -46,7 +46,7 @@ def test_oblique_presets_kproj_nan_determinism_and_roundtrip(tmp_path: Path) -> 
             learning_rate=0.1,
             num_leaves=8,
             min_data_in_leaf=5,
-            preset=preset,
+            m_mult=m_mult,
             k_proj=k_proj,
             random_state=11,
         ).fit(X, y)
@@ -56,7 +56,7 @@ def test_oblique_presets_kproj_nan_determinism_and_roundtrip(tmp_path: Path) -> 
         np.testing.assert_array_equal(p1, reg1._train_scores_)
         np.testing.assert_array_equal(p1, p2)
 
-        path = tmp_path / f"m_{preset}_{k_proj}.json"
+        path = tmp_path / f"m_{m_mult}_{k_proj}.json"
         reg1.save_model(str(path))
         loaded = MiterRegressor.load_model(str(path))
         np.testing.assert_array_equal(loaded.predict(X), p1)

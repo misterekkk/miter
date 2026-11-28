@@ -52,7 +52,5 @@ and iteration).
 - The default trains symmetric (oblivious) trees of depth 6. `grow_policy="leafwise"` switches to
   LightGBM-style best-first trees, which train about twice as fast.
 - `max_ctr_complexity="auto"`: CatBoost-style CTRs for high-cardinality categorical features.
-- `preset="accurate"`: twice as many oblique candidates per node, about 2× the oblique cost.
-- `preset="fast"`: oblique splits only near the root, for large data.
 
 All parameters are on the [Parameters](../parameters/) page.

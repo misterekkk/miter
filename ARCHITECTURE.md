@@ -74,7 +74,7 @@ default direction.
 
 ### Oblique (src/core/oblique.*)
 
-At each node, `m = m_mult · ceil(sqrt(p))` candidates (`m_mult = 2`; 4 with `preset="accurate"`):
+At each node, `m = m_mult · ceil(sqrt(p))` candidates (`m_mult` = 4 for symmetric trees, 2 for leaf-wise):
 
 1. Draw `k ∈ {2, 3}` distinct numeric features and Gaussian weights. Quantize the weights to int16
    with `max |wq| = 2¹⁴`. Only the integer weights are stored and used.

@@ -28,7 +28,6 @@ _DEFAULTS: dict[str, Any] = {
     "learning_rate": 0.05,
     "early_stopping_rounds": 50,
     "k_proj": 0,
-    "preset": "default",
 }
 
 # Hyperparameters forwarded to the estimator when present in a config (others are rejected).
@@ -51,7 +50,6 @@ _FORWARDED = (
     "max_cat_threshold",
     "m_mult",
     "k_proj",
-    "preset",
     "feature_fraction",
     "bagging_fraction",
     "extra_trees",

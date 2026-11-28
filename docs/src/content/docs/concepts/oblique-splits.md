@@ -34,7 +34,8 @@ The node takes the best split among all candidates, axis, categorical and obliqu
   projection. In our measurements, global or quantile bins for projections lost up to 18% on some
   datasets.
 - **Random directions.** Directions guided by gradients never beat random ones in our experiments,
-  and they cost more. More random candidates help a little: `preset="accurate"` doubles them.
+  and they cost more. More random candidates than the default did not help either: doubling
+  them gave a median of 0.00% on 32 held-out datasets.
 - **Integer arithmetic.** It removes floating-point differences between training and prediction,
   between platforms and between thread counts. A row goes left in prediction exactly when it went
   left in training.
@@ -42,8 +43,7 @@ The node takes the best split among all candidates, axis, categorical and obliqu
 ## Cost
 
 Oblique candidates make training slower than an axis-only GBDT, roughly 1.5–9× LightGBM per tree
-depending on the data. `preset="fast"` keeps oblique splits only at depth 0–1, where they matter
-most. Prediction runs through [lignum](https://github.com/misterekkk/lignum) and is faster than
+depending on the data. Prediction runs through [lignum](https://github.com/misterekkk/lignum) and is faster than
 LightGBM's own `predict` for the same number of trees.
 
 ## Symmetric trees

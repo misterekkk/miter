@@ -37,7 +37,6 @@ leaf-wise trees take 20, 1.0 and 2.
 
 | parameter | default | meaning |
 |---|---|---|
-| `preset` | `"default"` | `"accurate"` doubles the default `m_mult`; `"fast"` uses oblique splits only at depth 0–1 |
 | `m_mult` | `None` | oblique candidates per node = `m_mult · ceil(sqrt(p))` (symmetric 4, leaf-wise 2) |
 | `k_proj` | 0 | features per candidate: 0 (random 2 or 3), 2 or 3 |
 | `oblique_sample_rows` | 65536 | symmetric trees: above this many rows, oblique directions are chosen on a strided sample of this size, and the winner's threshold and gain are computed exactly on all rows (0 = off). About 2.5× faster training on 500k rows. |
@@ -82,6 +81,6 @@ See [Categorical features](../categorical/).
 - **High-cardinality categorical features:** `max_ctr_complexity="auto", ctr_n_permutations=4`.
   On TabArena this helped binary classification the most.
 - **Skewed numeric features:** `quantizer="auto"`.
-- **Large data, where training time matters:** `preset="fast"`, or `grow_policy="leafwise"`
-  (about half the training time of the default).
+- **Large data, where training time matters:** `grow_policy="leafwise"` (about half the training
+  time of the default).
 - **Small data (under ~1000 rows):** shallower trees, `max_depth=4`.

@@ -30,14 +30,6 @@ def test_explicit_values_win() -> None:
     assert (p.min_data_in_leaf, p.lambda_l2, p.m_mult) == (7, 0.5, 3)
 
 
-def test_presets_scale_from_the_shape_default() -> None:
-    assert MiterRegressor(preset="accurate")._build_params().m_mult == 8
-    assert MiterRegressor(grow_policy="leafwise", preset="accurate")._build_params().m_mult == 4
-    assert MiterRegressor(preset="accurate", m_mult=5)._build_params().m_mult == 5
-    fast = MiterRegressor(preset="fast")._build_params()
-    assert (fast.m_mult, fast.oblique_max_depth) == (4, 1)
-
-
 def test_default_model_trains_symmetric_trees() -> None:
     rng = np.random.default_rng(0)
     X = rng.standard_normal((400, 5))

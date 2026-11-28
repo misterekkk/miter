@@ -145,8 +145,7 @@ miter stops after about 580 trees (median), CatBoost after 1130 and LightGBM aft
 
 **Where the time goes.**
 - **Oblique candidates.** About 70% of miter's training time goes into them; with axis splits alone,
-  miter trains as fast as LightGBM. `preset="fast"` keeps oblique splits near the root only and
-  halves the time.
+  miter trains as fast as LightGBM.
 - **Binary columns.** Data with many binary (one-hot) columns is the slow case, because every column
   enters the oblique pool. covertype (581k rows, 44 of 54 columns binary) takes 57 s for 100 trees
   on one thread, compared with CatBoost's 8.2 s and LightGBM's 1.6 s.

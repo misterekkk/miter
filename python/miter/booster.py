@@ -247,7 +247,6 @@ class _BaseMiterEstimator(_SklearnBase):
         max_cat_threshold: int = 32,
         m_mult: int | None = None,
         k_proj: int = 0,
-        preset: str = "default",
         feature_fraction: float = 1.0,
         bagging_fraction: float = 1.0,
         extra_trees: bool = False,
@@ -282,7 +281,6 @@ class _BaseMiterEstimator(_SklearnBase):
         self.max_cat_threshold = max_cat_threshold
         self.m_mult = m_mult
         self.k_proj = k_proj
-        self.preset = preset
         self.feature_fraction = feature_fraction
         self.bagging_fraction = bagging_fraction
         self.extra_trees = extra_trees
@@ -300,8 +298,6 @@ class _BaseMiterEstimator(_SklearnBase):
         self.random_state = random_state
 
     def _build_params(self) -> _core.Params:
-        if self.preset not in ("default", "fast", "accurate"):
-            raise ValueError(f"Unknown preset: {self.preset!r}")
         for name in ("feature_fraction", "bagging_fraction"):
             value = float(getattr(self, name))
             if not (0.0 < value <= 1.0):  # also rejects NaN
@@ -333,17 +329,8 @@ class _BaseMiterEstimator(_SklearnBase):
         p.cat_smooth = float(self.cat_smooth)
         p.cat_l2 = float(self.cat_l2)
         p.max_cat_threshold = int(self.max_cat_threshold)
-        base_m_mult = (4 if symmetric else 2) if self.m_mult is None else int(self.m_mult)
-        if self.preset == "fast":
-            p.m_mult = base_m_mult
-            p.oblique_max_depth = 1
-        elif self.preset == "accurate":
-            # Twice the default number of oblique candidates, unless m_mult is set explicitly.
-            p.m_mult = 2 * base_m_mult if self.m_mult is None else base_m_mult
-            p.oblique_max_depth = -1
-        else:
-            p.m_mult = base_m_mult
-            p.oblique_max_depth = -1
+        p.m_mult = (4 if symmetric else 2) if self.m_mult is None else int(self.m_mult)
+        p.oblique_max_depth = -1
         if isinstance(self.k_proj, bool) or int(self.k_proj) not in (0, 2, 3):
             raise ValueError(f"k_proj must be 0 (2 or 3 at random), 2 or 3, got {self.k_proj!r}")
         p.k_proj = int(self.k_proj)

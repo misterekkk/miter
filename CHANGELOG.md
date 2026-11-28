@@ -43,6 +43,10 @@ Models saved with them by 0.1.0 still load (the options only affected training).
   between categories are covered by the CTR splits (`max_ctr_complexity`).
 - `oblique_min_distinct` (E1), `oblique_binary_penalty` and `oblique_gain_margin` (E4): no
   effect on held-out quality (`benchmarks/results/exp_speedups_e{1,4}_summary.md`).
+- `preset` (E6): `"accurate"` (twice the oblique candidates) gained nothing (median −0.00% on 32
+  held-out datasets, 16/32 wins) for 1.2× the training time; `"fast"` (oblique splits at depth 0–1
+  only) cost +0.6% error and saved only 17–26% of the time on large data
+  (`benchmarks/results/exp_e6_presets_summary.md`). `m_mult` still sets the number of candidates.
 - `k_proj` above 3: never tested; `k_proj` is now 0 (2 or 3 at random), 2 or 3, which lignum
   always holds.
 

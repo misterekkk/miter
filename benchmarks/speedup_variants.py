@@ -20,9 +20,8 @@ VARIANTS: dict[str, dict[str, Any]] = {
     # E4: oblique gain penalties (exp_speedups_e4_prereg.md).
     "E4A": {"oblique_binary_penalty": 0.25},
     "E4B": {"oblique_gain_margin": 0.05},
-    # E6: presets (exp_e6_options_prereg.md).
-    "E6_ACC": {"preset": "accurate"},
-    "E6_FAST": {"preset": "fast"},
+    # E6: presets (exp_e6_options_prereg.md). Both failed and `preset` was removed; the variants were
+    # {"preset": "accurate"} (m_mult 8) and {"preset": "fast"} (oblique splits at depth 0-1 only).
     # Exploratory ablation of the method's components (relative to the current default).
     "AB_NO_OBLIQUE": {"m_mult": 0},
     "AB_LEAFWISE": {"grow_policy": "leafwise"},
