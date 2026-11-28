@@ -6,6 +6,17 @@ All notable changes to miter. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- **`min_sum_hessian_in_leaf` is now applied in symmetric trees when `lambda_l2 != 0`.** It was
+  checked only when `lambda_l2 == 0`, so with the default `lambda_l2=1.0` symmetric trees ignored it
+  (leaf-wise trees always applied it). A side of a split that holds only zero-weight rows counts as
+  empty, as a side without rows does, so `sample_weight=0` stays equivalent to removing the row.
+  - **Effect at the default bound (1e-3):** none of the 62 cross-platform reference models changes;
+    in experiment E8 the fix alone was neutral (median +0.02% over the datasets it changes,
+    `benchmarks/results/exp_e8_defaults_summary.md` on branch `exp/e8`). It matters when the bound
+    is raised.
+
 ### Changed
 
 - **Faster training on large data:** `oblique_sample_rows=65536` is now the default (symmetric

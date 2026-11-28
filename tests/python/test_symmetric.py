@@ -157,3 +157,19 @@ def test_symmetric_large_n_thread_invariance() -> None:
     }
     np.testing.assert_array_equal(m1.predict(df), m4.predict(df))
     np.testing.assert_array_equal(m1._train_scores_, m1.predict(df))
+
+
+def test_min_sum_hessian_in_leaf_applies_with_l2() -> None:
+    """The hessian bound holds in symmetric trees whatever lambda_l2 is (it was skipped when
+    lambda_l2 != 0); a side with only zero-weight rows still counts as empty, not as too light."""
+    X, y = _reg_data()
+    kw = dict(grow_policy="symmetric", n_estimators=5, early_stopping_rounds=None, n_jobs=1, lambda_l2=1.0)
+    free = MiterRegressor(**kw).fit(X, y)
+    bound = MiterRegressor(min_sum_hessian_in_leaf=1e9, **kw).fit(X, y)
+    assert np.unique(free.predict(X)).size > 1
+    assert np.unique(bound.predict(X)).size == 1  # no split can give each side a hessian of 1e9
+    w = np.ones(len(y))
+    w[::3] = 0.0
+    weighted = MiterRegressor(**kw).fit(X, y, sample_weight=w)
+    removed = MiterRegressor(**kw).fit(X[w > 0], y[w > 0])
+    assert np.isfinite(weighted.predict(X)).all() and np.isfinite(removed.predict(X)).all()

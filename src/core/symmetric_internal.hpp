@@ -51,7 +51,12 @@ inline bool eval_multi_leaf_gain(const double* gl_arr, const double* hl_arr,
         }
         const double hl = hl_arr[l];
         const double hr = leaf_h[l] - hl;
-        if (lam == 0.0 && (hl < min_h || hr < min_h)) {
+        if (hl < min_h || hr < min_h) {
+            // A side holding only zero-weight rows is empty, as cl <= 0 above (hr comes from a
+            // subtraction, so "zero" allows for its rounding).
+            if (hl <= 0.0 || hr <= 1e-12 * leaf_h[l]) {
+                continue;
+            }
             return false;
         }
         const double gl = gl_arr[l];
