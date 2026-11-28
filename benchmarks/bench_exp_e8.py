@@ -68,6 +68,10 @@ ARMS: dict[str, Arm] = {
     "MSHFIX": lambda kind, n: {"enforce_min_hessian": True},
     "MSHFIX01_CLF": _clf_only({"enforce_min_hessian": True, "min_sum_hessian_in_leaf": 0.1}),
     "MSHFIX1_CLF": _clf_only({"enforce_min_hessian": True, "min_sum_hessian_in_leaf": 1.0}),
+    # Amendment 3: by task type. Multiclass gains from the stronger bound, imbalanced binary loses.
+    "MSH_ADAPT": lambda kind, n: (
+        {"enforce_min_hessian": True, "min_sum_hessian_in_leaf": 0.1} if kind == "mc"
+        else {"enforce_min_hessian": True}),
     # H4: CTR on single features above a cardinality threshold.
     "CTR_K16": _ctr_card(16),
     "CTR_K32": _ctr_card(32),
