@@ -1,0 +1,85 @@
+name: CORE-MATH speed
+
+# How fast CORE-MATH's correctly rounded exp/log/log1p/sin/cos are against each platform's libm, and
+# how often the libm's results differ from the correctly rounded ones. Decides whether miter can use
+# them for cross-platform identical results (determinism.yml). x86-64 runs twice: the
+# baseline the wheels are built for (no FMA instruction, CORE-MATH's fma becomes a call) and x86-64-v3.
+# Runs on pushes to its branch (workflow_dispatch needs the file on main) and by hand.
+on:
+  push:
+    branches: [perf/core-math-bench]
+  workflow_dispatch:
+    inputs:
+      reps:
+        description: "Repetitions per function (median, mean and minimum are reported)"
+        default: "40"
+      runs:
+        description: "Separate runs of the benchmark per job"
+        default: "3"
+
+permissions:
+  contents: read
+
+env:
+  CORE_MATH_REPO: https://gitlab.inria.fr/core-math/core-math.git
+  CORE_MATH_COMMIT: b464d7d0280f4c5091b8d2fff80b6cb03ab1d37f
+
+jobs:
+  bench:
+    name: ${{ matrix.os }} (${{ matrix.cc }} ${{ matrix.arch_flags || 'default' }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest, cc: gcc, arch_flags: "-march=x86-64 -mtune=generic" }
+          - { os: ubuntu-latest, cc: gcc, arch_flags: "-march=x86-64-v3" }
+          - { os: ubuntu-24.04-arm, cc: gcc }
+          - { os: macos-15, cc: clang }
+          - { os: macos-15-intel, cc: clang, arch_flags: "-march=x86-64" }
+          - { os: macos-15-intel, cc: clang, arch_flags: "-march=x86-64-v3" }
+          - { os: windows-latest, cc: clang, arch_flags: "-march=x86-64" }
+          - { os: windows-latest, cc: clang, arch_flags: "-march=x86-64-v3" }
+          - { os: windows-11-arm, cc: clang }
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: CORE-MATH sources (pinned commit)
+        shell: bash
+        run: |
+          git clone --quiet --filter=blob:none "$CORE_MATH_REPO" core-math
+          git -C core-math checkout --quiet "$CORE_MATH_COMMIT"
+
+      - name: Build
+        shell: bash
+        run: |
+          set -e
+          C=core-math/src/binary64
+          FLAGS="-O2 -std=gnu11 ${{ matrix.arch_flags }}"
+          ${{ matrix.cc }} --version | head -1
+          for f in exp log log1p sin cos; do
+            ${{ matrix.cc }} $FLAGS -c "$C/$f/$f.c" -I"$C/$f" -o "$f.o"
+          done
+          LIBM=$([ "$RUNNER_OS" = Windows ] && echo "" || echo "-lm")
+          ${{ matrix.cc }} $FLAGS benchmarks/ci/core_math_bench.c exp.o log.o log1p.o sin.o cos.o -o bench $LIBM
+
+      - name: Benchmark
+        shell: bash
+        run: |
+          {
+            echo "### ${{ matrix.os }}, ${{ matrix.cc }} ${{ matrix.arch_flags || '(default target)' }}"
+            echo
+            case "$RUNNER_OS" in
+              Linux)   CPU=$(grep -m1 -E 'model name|^Model' /proc/cpuinfo | cut -d: -f2- || true); [ -n "$CPU" ] || CPU=$(lscpu | grep -m1 'Model name' | cut -d: -f2-) ;;
+              macOS)   CPU=$(sysctl -n machdep.cpu.brand_string) ;;
+              Windows) CPU="$PROCESSOR_IDENTIFIER" ;;
+            esac
+            echo "$(uname -sm); CPU:$CPU; ${{ inputs.runs || '3' }} runs × ${{ inputs.reps || '40' }} repetitions of 1M calls"
+            for i in $(seq 1 ${{ inputs.runs || '3' }}); do
+              echo
+              echo "Run $i"
+              echo
+              ./bench ${{ inputs.reps || '40' }}
+            done
+            echo
+          } | tee -a "$GITHUB_STEP_SUMMARY"
