@@ -74,6 +74,9 @@ struct Params {
     int ctr_n_permutations = 1;
     /// Maximum split borders discretized per native CTR candidate (in [1, 255]).
     int ctr_max_borders = 15;
+    /// Native CTR splits only on categorical features with more categories than this; features
+    /// with fewer are left to K1 splits (0 = the `max_cat_to_onehot` bound alone).
+    int ctr_min_cardinality = 0;
     /// Sample-size-aware complexity regularization weight for native CTR combinations (>= 0).
     double ctr_model_size_reg = 0.5;
     /// Per-feature 16-bit numeric quantization mode (Linear, Quantile, or Auto).

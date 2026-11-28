@@ -256,6 +256,7 @@ class _BaseMiterEstimator(_SklearnBase):
         ctr_prior_weight: float = 1.0,
         ctr_n_permutations: int = 1,
         ctr_max_borders: int = 15,
+        ctr_min_cardinality: int = 0,
         ctr_model_size_reg: float = 0.5,
         quantizer: str = "linear",
         early_stopping_rounds: int | None = 50,
@@ -290,6 +291,7 @@ class _BaseMiterEstimator(_SklearnBase):
         self.ctr_prior_weight = ctr_prior_weight
         self.ctr_n_permutations = ctr_n_permutations
         self.ctr_max_borders = ctr_max_borders
+        self.ctr_min_cardinality = ctr_min_cardinality
         self.ctr_model_size_reg = ctr_model_size_reg
         self.quantizer = quantizer
         self.early_stopping_rounds = early_stopping_rounds
@@ -373,6 +375,9 @@ class _BaseMiterEstimator(_SklearnBase):
         p.ctr_prior_weight = float(self.ctr_prior_weight)
         p.ctr_n_permutations = int(self.ctr_n_permutations)
         p.ctr_max_borders = int(self.ctr_max_borders)
+        if isinstance(self.ctr_min_cardinality, bool) or int(self.ctr_min_cardinality) < 0:
+            raise ValueError(f"ctr_min_cardinality must be an int >= 0, got {self.ctr_min_cardinality!r}")
+        p.ctr_min_cardinality = int(self.ctr_min_cardinality)
         reg = float(self.ctr_model_size_reg)
         if not np.isfinite(reg) or reg < 0.0:
             raise ValueError(
@@ -588,6 +593,7 @@ class _BaseMiterEstimator(_SklearnBase):
             ctr_prior_weight=p.ctr_prior_weight,
             ctr_n_permutations=p.ctr_n_permutations,
             ctr_max_borders=p.ctr_max_borders,
+            ctr_min_cardinality=p.ctr_min_cardinality,
             ctr_model_size_reg=p.ctr_model_size_reg,
             quantizer=(
                 "quantile"

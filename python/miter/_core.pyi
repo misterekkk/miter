@@ -60,6 +60,7 @@ class Params:
     ctr_prior_weight: float
     ctr_n_permutations: int
     ctr_max_borders: int
+    ctr_min_cardinality: int
     ctr_model_size_reg: float
     quantizer_mode: QuantizerMode
     def __init__(self) -> None: ...

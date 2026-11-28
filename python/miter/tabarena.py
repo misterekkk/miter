@@ -60,6 +60,7 @@ _FORWARDED = (
     "ctr_prior_weight",
     "ctr_n_permutations",
     "ctr_max_borders",
+    "ctr_min_cardinality",
     "ctr_model_size_reg",
 )
 

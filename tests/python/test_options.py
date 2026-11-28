@@ -132,3 +132,27 @@ def test_options_survive_pickle() -> None:
     np.testing.assert_array_equal(m.predict(X), m2.predict(X))
     assert m2.get_params()["feature_fraction"] == 0.5
     assert m2.get_params()["extra_trees"] is True
+
+
+def test_ctr_min_cardinality_leaves_low_cardinality_features_to_k1(tmp_path: Any) -> None:
+    import pandas as pd
+
+    rng = np.random.default_rng(5)
+    n = 3000
+    lo = rng.integers(0, 10, n)  # 10 categories
+    hi = rng.integers(0, 200, n)  # 200 categories
+    x = rng.normal(size=n)
+    y = 0.3 * lo + np.sin(hi) + x + 0.1 * rng.normal(size=n)
+    X = pd.DataFrame({"lo": pd.Categorical(lo), "hi": pd.Categorical(hi), "x": x})
+    kw = dict(n_estimators=30, random_state=0, max_ctr_complexity=1, early_stopping_rounds=None)
+    off = MiterRegressor(n_estimators=30, random_state=0, early_stopping_rounds=None).fit(X, y)
+    # A threshold above every cardinality leaves no CTR candidate: same model as CTR off.
+    none = MiterRegressor(ctr_min_cardinality=1000, **kw).fit(X, y)
+    np.testing.assert_array_equal(none.predict(X), off.predict(X))
+    some = MiterRegressor(ctr_min_cardinality=32, **kw).fit(X, y)
+    path = tmp_path / "m.json"
+    some.save_model(str(path))
+    assert '"ctr_min_cardinality": 32' in path.read_text()
+    np.testing.assert_array_equal(type(some).load_model(str(path)).predict(X), some.predict(X))
+    with pytest.raises(ValueError, match="ctr_min_cardinality"):
+        MiterRegressor(ctr_min_cardinality=-1).fit(X, y)

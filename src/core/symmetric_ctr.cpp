@@ -111,10 +111,12 @@ find_sym_ctr_split(const Dataset& ds, const std::vector<std::uint32_t>& active_c
 
     std::vector<CtrProjection> cand_projs;
     cand_projs.reserve(active_cat.size() * (used_projs.size() + 1U));
-    const auto onehot_max = static_cast<std::size_t>(params.max_cat_to_onehot);
+    const std::size_t min_card =
+        std::max<std::size_t>(static_cast<std::size_t>(params.max_cat_to_onehot),
+                              static_cast<std::size_t>(std::max(params.ctr_min_cardinality, 0)));
     for (const std::uint32_t f : active_cat) {
         const std::size_t cm = ds.cat_sub_index(f);
-        if (state.cat_cardinalities[cm] > onehot_max) {
+        if (state.cat_cardinalities[cm] > min_card) {
             cand_projs.push_back(CtrProjection{{f}});
         }
     }
