@@ -23,6 +23,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
 from bench_exp_external_holdout import _split_cv, eval_metrics, load_dataset  # noqa: E402
+from bench_exp_scaling_defaults import fit_predict_any  # noqa: E402
 from bench_exp_speedups import FIELDS, _fit  # noqa: E402
 from scipy.stats import wilcoxon  # noqa: E402
 
@@ -33,7 +34,10 @@ VARIANTS: dict[str, dict[str, Any]] = {
     "E7_C1": {"max_ctr_complexity": 1},
     "E7_C1P4": {"max_ctr_complexity": 1, "ctr_n_permutations": 4},
     "E7_AUTO": {"max_ctr_complexity": "auto", "ctr_n_permutations": 4},
+    # Frozen by amendment 2: the phase-B candidate.
+    "D1": {"max_ctr_complexity": 1, "ctr_n_permutations": 4},
 }
+REFERENCE = "CAT"  # CatBoost, fixed learning rate 0.05, depth 6 (bench_exp_scaling_defaults.fit_predict_any)
 
 # (kind, name, OpenML dataset id)
 DEV: list[tuple[str, str, int]] = [
@@ -72,6 +76,7 @@ def cmd_run(set_name: str, variants: list[str], shard: int, nshards: int) -> Non
     for i, (kind, name, did, fold) in enumerate(jobs):
         if i % nshards != shard:
             continue
+        assert all(v in VARIANTS or v == REFERENCE for v in variants), variants
         todo = [v for v in variants if not _csv(set_name, v, name, fold).exists()]
         if not todo:
             continue
@@ -83,7 +88,11 @@ def cmd_run(set_name: str, variants: list[str], shard: int, nshards: int) -> Non
             continue
         for v in todo:
             try:
-                pred, trees, secs = _fit(kind, VARIANTS[v], X.iloc[a], y[a], X.iloc[b], y[b], X.iloc[te], fold)
+                if v == REFERENCE:
+                    pred, trees, secs = fit_predict_any(kind, v, X.iloc[a], y[a], X.iloc[b], y[b], X.iloc[te],
+                                                        cat_cols, fold)
+                else:
+                    pred, trees, secs = _fit(kind, VARIANTS[v], X.iloc[a], y[a], X.iloc[b], y[b], X.iloc[te], fold)
                 met, _ = eval_metrics(kind, y[te], pred)
             except Exception as e:
                 print(f"FAIL fit {name} f{fold} {v}: {type(e).__name__}: {e}", flush=True)
