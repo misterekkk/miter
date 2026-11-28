@@ -54,9 +54,6 @@ jobs:
   deploy:
     needs: build
     runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
+    # No `environment:`, as in lignum: the site is still deployed, without a Deployments entry.
     steps:
-      - id: deployment
-        uses: actions/deploy-pages@v5
+      - uses: actions/deploy-pages@v5
