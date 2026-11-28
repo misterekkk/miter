@@ -45,13 +45,13 @@ jobs:
     steps:
       - name: Look up covertype cache
         id: lookup
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v6
         with:
           path: ~/scikit_learn_data
           key: sklearn-covtype-v1
           lookup-only: true
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         if: steps.lookup.outputs.cache-hit != 'true'
         with:
           python-version: "3.12"
@@ -64,7 +64,7 @@ jobs:
 
       - name: Save covertype cache
         if: steps.lookup.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v6
         with:
           path: ~/scikit_learn_data
           key: sklearn-covtype-v1
@@ -79,11 +79,11 @@ jobs:
       matrix:
         os: [ubuntu-latest, ubuntu-24.04-arm]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
 
@@ -104,7 +104,7 @@ jobs:
           python -m pip install --no-build-isolation --no-deps --target ../build-head ../head
 
       - name: Restore covertype
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v6
         with:
           path: ~/scikit_learn_data
           key: sklearn-covtype-v1
@@ -131,7 +131,7 @@ jobs:
             --reps "${{ inputs.reps || '5' }}" --out out/speed.md
           { echo "## Speed ($(nproc) CPUs, $(uname -m))"; cat out/speed.md; } >> "$GITHUB_STEP_SUMMARY"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: bench-${{ matrix.os }}
