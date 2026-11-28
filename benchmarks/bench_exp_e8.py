@@ -114,7 +114,10 @@ def _split(pool: list[tuple[str, str, int]], seed: int) -> tuple[list, list]:
 GEN_DEV, GEN_CONF = _split(GENERAL, 2026)
 IMB_DEV, IMB_CONF = _split(IMBALANCED, 2027)
 
+from bench_exp_scaling_defaults import PART3_DATASETS  # noqa: E402
+
 SETS: dict[str, list[tuple[str, str, int]]] = {
+    "heldout": list(PART3_DATASETS),  # rule 3: no harm on the 32 held-out datasets
     "dev": GEN_DEV + IMB_DEV,  # H1-H3 development
     "conf": GEN_CONF + IMB_CONF,  # H1-H3 confirmation
     "ctr_dev": E7_DEV + E7_CONTROL,  # H4 development (seen in E7)
